@@ -202,11 +202,12 @@ func main() {
 		return
 	}
 
-	fmt.Printf("Verbinden met database: %s:%s/%s (schema: %s)\n",
+	fmt.Printf("Database: %s:%s/%s (schema: %s)\n",
 		config.Database.Host, config.Database.Port, config.Database.Name, config.Database.Schema)
-	fmt.Printf("Afbeelding instellingen: %dx%d pixels, kwaliteit %d, weiger_kleinere: %t, verklein_grotere: waar\n",
+	fmt.Printf("Instellingen: %dx%d pixels, kwaliteit %d, kleinere afbeeldingen: %s\n",
 		config.Image.TargetWidth, config.Image.TargetHeight, config.Image.Quality,
-		config.Image.RejectSmaller)
+		map[bool]string{true: "weigeren", false: "toestaan"}[config.Image.RejectSmaller])
+	fmt.Println("─────────────────────────────────────────────────")
 
 	db, err := sql.Open("postgres", config.DatabaseURL())
 	if err != nil {
@@ -251,21 +252,21 @@ func processArtistImage(db *sql.DB, config *Config, artistName, imageURL, imageP
 		return fmt.Errorf("kon artiest niet vinden: %w", err)
 	}
 
+	status := "nieuwe afbeelding"
 	if hasExistingImage {
-		fmt.Printf("Artiest gevonden: %s (ID: %s) - bestaande afbeelding wordt vervangen\n", artistName, artistID)
-	} else {
-		fmt.Printf("Artiest gevonden: %s (ID: %s) - geen bestaande afbeelding\n", artistName, artistID)
+		status = "vervangen bestaande"
 	}
+	fmt.Printf("Artiest: %s (%s)\n", artistName, status)
 
 	var imageData []byte
 	if imageURL != "" {
-		fmt.Printf("Afbeelding downloaden van: %s\n", imageURL)
+		fmt.Printf("Bron: %s\n", imageURL)
 		imageData, err = downloadImage(imageURL)
 		if err != nil {
 			return fmt.Errorf("kon afbeelding niet downloaden: %w", err)
 		}
 	} else {
-		fmt.Printf("Afbeelding lezen van: %s\n", imagePath)
+		fmt.Printf("Bron: %s\n", imagePath)
 		imageData, err = readImageFile(imagePath)
 		if err != nil {
 			return fmt.Errorf("kon afbeelding bestand niet lezen: %w", err)
@@ -277,8 +278,8 @@ func processArtistImage(db *sql.DB, config *Config, artistName, imageURL, imageP
 		return fmt.Errorf("kon afbeelding informatie niet verkrijgen: %w", err)
 	}
 
-	fmt.Printf("Originele afbeelding: %s, %dx%d, %d bytes\n",
-		originalFormat, originalWidth, originalHeight, len(imageData))
+	fmt.Printf("Origineel: %s %dx%d (%d KB)\n",
+		originalFormat, originalWidth, originalHeight, len(imageData)/1024)
 
 	// Validate image format
 	if err := validateImageFormat(originalFormat); err != nil {
@@ -296,10 +297,12 @@ func processArtistImage(db *sql.DB, config *Config, artistName, imageURL, imageP
 
 	// Verklein grotere afbeeldingen naar doelgrootte
 	if originalWidth > targetWidth || originalHeight > targetHeight {
-		fmt.Printf("Afbeelding wordt verkleind van %dx%d naar max %dx%d\n",
+		fmt.Printf("Actie: verkleinen van %dx%d naar max %dx%d\n",
 			originalWidth, originalHeight, targetWidth, targetHeight)
 	} else if originalWidth == targetWidth && originalHeight == targetHeight {
-		fmt.Printf("Afbeelding heeft exacte doelafmetingen: %dx%d\n", targetWidth, targetHeight)
+		fmt.Printf("Actie: optimaliseren (exacte doelafmetingen)\n")
+	} else {
+		fmt.Printf("Actie: optimaliseren (binnen doelafmetingen)\n")
 	}
 
 	optimizer := NewImageOptimizer(config.Image)
@@ -318,25 +321,21 @@ func processArtistImage(db *sql.DB, config *Config, artistName, imageURL, imageP
 		optimizedWidth, optimizedHeight = originalWidth, originalHeight
 	}
 
-	fmt.Printf("Geoptimaliseerde afbeelding: %s, %dx%d, %d bytes\n", newFormat, optimizedWidth, optimizedHeight, optimizedSize)
-	fmt.Printf("Grootte reductie: %d bytes (%.1f%%)\n", savings, savingsPercent)
-
-	if optimizedWidth != originalWidth || optimizedHeight != originalHeight {
-		fmt.Printf("Verkleind van %dx%d naar %dx%d (max 640x640 voor albumhoezen)\n",
-			originalWidth, originalHeight, optimizedWidth, optimizedHeight)
-	}
+	fmt.Printf("Resultaat: %s %dx%d (%d KB, %.1f%% kleiner)\n", 
+		newFormat, optimizedWidth, optimizedHeight, optimizedSize/1024, savingsPercent)
 
 	if dryRun {
-		fmt.Println("DROGE RUN: Zou artiest afbeelding bijwerken maar doet dit niet daadwerkelijk")
+		fmt.Println()
+		fmt.Println("DRY RUN: Zou artiest afbeelding bijwerken maar doet dit niet daadwerkelijk")
 		return nil
 	}
 
-	fmt.Printf("Database direct bijwerken...\n")
+	fmt.Println("Database bijwerken...")
 	if err := updateArtistImageInDB(db, config.Database.Schema, artistID, optimizedData); err != nil {
 		return fmt.Errorf("kon database niet bijwerken: %w", err)
 	}
 
-	fmt.Printf("Artiest afbeelding voor %s succesvol bijgewerkt in database\n", artistName)
+	fmt.Printf("Succes: Afbeelding voor %s bijgewerkt\n", artistName)
 	return nil
 }
 
@@ -421,28 +420,32 @@ func nukeAllImages(db *sql.DB, schema string, dryRun bool) error {
 		return nil
 	}
 
-	fmt.Printf("WAARSCHUWING: Deze actie zal ALLE afbeeldingen verwijderen van %d artiesten:\n\n", len(artists))
+	fmt.Printf("WAARSCHUWING: Alle afbeeldingen verwijderen van %d artiesten\n", len(artists))
+	fmt.Println("═══════════════════════════════════════════════════════")
 
 	// Toon eerste 20 artiesten, dan samenvatting als er meer zijn
 	displayLimit := 20
 	for i, artist := range artists {
 		if i < displayLimit {
-			fmt.Printf("  %s (ID: %s)\n", artist.Name, artist.ID)
+			fmt.Printf("  • %s\n", artist.Name)
 		} else if i == displayLimit {
 			fmt.Printf("  ... en %d meer artiesten\n", len(artists)-displayLimit)
 			break
 		}
 	}
 
-	fmt.Printf("\nTotaal: %d artiesten zullen hun afbeelding verliezen.\n", len(artists))
+	fmt.Println("═══════════════════════════════════════════════════════")
+	fmt.Printf("Totaal: %d artiesten verliezen hun afbeelding\n", len(artists))
 
 	if dryRun {
-		fmt.Println("\nDROGE RUN: Zou alle afbeeldingen verwijderen maar doet dit niet daadwerkelijk")
+		fmt.Println()
+		fmt.Println("DRY RUN: Zou alle afbeeldingen verwijderen maar doet dit niet daadwerkelijk")
 		return nil
 	}
 
+	fmt.Println()
 	// Bevestiging vragen
-	fmt.Print("\nBen je ZEKER dat je ALLE afbeeldingen wilt verwijderen? Type 'VERWIJDER ALLES' om te bevestigen: ")
+	fmt.Print("Ben je ZEKER dat je ALLE afbeeldingen wilt verwijderen? Type 'VERWIJDER ALLES' om te bevestigen: ")
 	var confirmation string
 	fmt.Scanln(&confirmation)
 
@@ -474,10 +477,12 @@ func listArtistsWithoutImages(db *sql.DB, schema string) error {
 		return fmt.Errorf("kon artiesten zonder afbeeldingen niet ophalen: %w", err)
 	}
 
-	fmt.Printf("Artiesten zonder afbeeldingen (%d gevonden):\n", len(artists))
+	fmt.Printf("Artiesten zonder afbeeldingen (%d gevonden, max 50 getoond):\n", len(artists))
+	fmt.Println("─────────────────────────────────────────────────")
 	for _, artist := range artists {
-		fmt.Printf("  %s (ID: %s)\n", artist.Name, artist.ID)
+		fmt.Printf("  • %s\n", artist.Name)
 	}
+	fmt.Println("─────────────────────────────────────────────────")
 
 	return nil
 }
