@@ -1,0 +1,32 @@
+# Example configuration for aeron-imgbatch
+
+# Database Configuration
+database:
+  host: localhost
+  port: 5432
+  name: aeron_db
+  user: aeron_user
+  password: aeron_password
+  schema: aeron
+  sslmode: disable
+
+# Image Processing Configuration
+image:
+  # Target image dimensions
+  target_width: 640
+  target_height: 640
+  
+  # JPEG quality (1-100)
+  quality: 90
+  
+  # Use Jpegli encoder for better compression
+  use_jpegli: true
+  
+  # Maximum file size in MB
+  max_file_size_mb: 20
+  
+  # Processing behavior
+  reject_smaller: true    # Reject images smaller than target size
+  
+  # Note: Larger images are always resized to target dimensions
+  # Supported formats: JPG, JPEG, PNG (always allowed)

@@ -1,0 +1,632 @@
+package main
+
+import (
+	"bytes"
+	"database/sql"
+	"flag"
+	"fmt"
+	"image"
+	"image/jpeg"
+	"image/png"
+	"io"
+	"log"
+	"net/http"
+	"os"
+	"slices"
+
+	"github.com/gen2brain/jpegli"
+	_ "github.com/lib/pq"
+	"gopkg.in/yaml.v3"
+)
+
+// Constants
+const (
+	MaxFileSize     = 20 * 1024 * 1024 // 20MB
+	DefaultWidth    = 640
+	DefaultHeight   = 640
+	DefaultQuality  = 90
+	DefaultHost     = "localhost"
+	DefaultPort     = "5432"
+	DefaultDatabase = "aeron_db"
+	DefaultUser     = "aeron_user"
+	DefaultPassword = "aeron_password"
+	DefaultSchema   = "aeron"
+	DefaultSSLMode  = "disable"
+)
+
+// Supported formats
+var SupportedFormats = []string{"jpeg", "jpg", "png"}
+
+// Artist represents an artist record
+type Artist struct {
+	ID       string
+	Name     string
+	HasImage bool
+}
+
+type DatabaseConfig struct {
+	Host     string `yaml:"host"`
+	Port     string `yaml:"port"`
+	Name     string `yaml:"name"`
+	User     string `yaml:"user"`
+	Password string `yaml:"password"`
+	Schema   string `yaml:"schema"`
+	SSLMode  string `yaml:"sslmode"`
+}
+
+type ImageConfig struct {
+	TargetWidth   int  `yaml:"target_width"`
+	TargetHeight  int  `yaml:"target_height"`
+	Quality       int  `yaml:"quality"`
+	UseJpegli     bool `yaml:"use_jpegli"`
+	MaxFileSizeMB int  `yaml:"max_file_size_mb"`
+	RejectSmaller bool `yaml:"reject_smaller"`
+}
+
+type Config struct {
+	Database DatabaseConfig `yaml:"database"`
+	Image    ImageConfig    `yaml:"image"`
+}
+
+func (c *Config) DatabaseURL() string {
+	return fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=%s",
+		c.Database.User, c.Database.Password, c.Database.Host, c.Database.Port, c.Database.Name, c.Database.SSLMode)
+}
+
+type ImageOptimizer struct {
+	Config ImageConfig
+}
+
+func NewImageOptimizer(config ImageConfig) *ImageOptimizer {
+	return &ImageOptimizer{
+		Config: config,
+	}
+}
+
+func loadConfig(configPath string) (*Config, error) {
+	// Default configuration
+	config := &Config{
+		Database: DatabaseConfig{
+			Host:     DefaultHost,
+			Port:     DefaultPort,
+			Name:     DefaultDatabase,
+			User:     DefaultUser,
+			Password: DefaultPassword,
+			Schema:   DefaultSchema,
+			SSLMode:  DefaultSSLMode,
+		},
+		Image: ImageConfig{
+			TargetWidth:   DefaultWidth,
+			TargetHeight:  DefaultHeight,
+			Quality:       DefaultQuality,
+			UseJpegli:     true,
+			MaxFileSizeMB: MaxFileSize / (1024 * 1024),
+			RejectSmaller: true,
+		},
+	}
+
+	// Try to load config file
+	if configPath == "" {
+		// Look for config.yaml in current directory
+		if _, err := os.Stat("config.yaml"); err == nil {
+			configPath = "config.yaml"
+		} else {
+			// No config file found, use defaults
+			return config, nil
+		}
+	}
+
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			fmt.Printf("Config file %s not found, using defaults\n", configPath)
+			return config, nil
+		}
+		return nil, fmt.Errorf("failed to read config file: %w", err)
+	}
+
+	if err := yaml.Unmarshal(data, config); err != nil {
+		return nil, fmt.Errorf("failed to parse config file: %w", err)
+	}
+
+	return config, nil
+}
+
+func main() {
+	var (
+		artistName = flag.String("artist", "", "Artiest naam om bij te werken (vereist)")
+		imageURL   = flag.String("url", "", "URL van de afbeelding om te downloaden en optimaliseren")
+		imagePath  = flag.String("file", "", "Lokaal pad naar afbeelding bestand")
+		listMode   = flag.Bool("list", false, "Toon artiesten zonder afbeeldingen")
+		dryRun     = flag.Bool("dry-run", false, "Toon wat gedaan zou worden zonder daadwerkelijk bij te werken")
+		showTools  = flag.Bool("tools", false, "Toon beschikbare optimalisatie tools")
+		configFile = flag.String("config", "", "Pad naar config bestand (standaard: config.yaml)")
+	)
+	flag.Parse()
+
+	if *artistName == "" && !*listMode && !*showTools {
+		fmt.Println("Gebruik:")
+		fmt.Println("  Artiest afbeelding bijwerken vanuit URL:")
+		fmt.Println("    ./aeron-imgbatch -artist=\"OneRepublic\" -url=\"https://example.com/image.jpg\"")
+		fmt.Println("  Artiest afbeelding bijwerken vanuit lokaal bestand:")
+		fmt.Println("    ./aeron-imgbatch -artist=\"OneRepublic\" -file=\"/pad/naar/image.jpg\"")
+		fmt.Println("  Artiesten zonder afbeeldingen tonen:")
+		fmt.Println("    ./aeron-imgbatch -list")
+		fmt.Println("  Beschikbare optimalisatie tools tonen:")
+		fmt.Println("    ./aeron-imgbatch -tools")
+		fmt.Println("")
+		fmt.Println("Configuratie:")
+		fmt.Println("  -config=/pad/naar/config.yaml   Gebruik aangepast config bestand")
+		fmt.Println("  Standaard: zoekt naar config.yaml in huidige directory")
+		fmt.Println("")
+		fmt.Println("  Afbeelding Vereisten (configureerbaar in config.yaml):")
+		fmt.Println("  - Doelgrootte: 640x640 pixels")
+		fmt.Println("  - Kleinere afbeeldingen worden geweigerd")
+		fmt.Println("  - Grotere afbeeldingen worden verkleind naar doelgrootte")
+		fmt.Println("  - Ondersteunde formaten: JPG, JPEG, PNG (altijd toegestaan)")
+		flag.Usage()
+		os.Exit(1)
+	}
+
+	// Configuratie laden
+	config, err := loadConfig(*configFile)
+	if err != nil {
+		log.Fatal("Kon configuratie niet laden:", err)
+	}
+
+	if *showTools {
+		showAvailableTools()
+		return
+	}
+
+	fmt.Printf("Verbinden met database: %s:%s/%s (schema: %s)\n", 
+		config.Database.Host, config.Database.Port, config.Database.Name, config.Database.Schema)
+	fmt.Printf("Afbeelding instellingen: %dx%d pixels, kwaliteit %d, weiger_kleinere: %t, verklein_grotere: waar\n",
+		config.Image.TargetWidth, config.Image.TargetHeight, config.Image.Quality, 
+		config.Image.RejectSmaller)
+
+	db, err := sql.Open("postgres", config.DatabaseURL())
+	if err != nil {
+		log.Fatal("Kon niet verbinden met database:", err)
+	}
+	defer db.Close()
+
+	if err := db.Ping(); err != nil {
+		log.Fatal("Kon database niet bereiken:", err)
+	}
+
+	if *listMode {
+		if err := listArtistsWithoutImages(db, config.Database.Schema); err != nil {
+			log.Fatal("Kon artiesten niet tonen:", err)
+		}
+		return
+	}
+
+	if *imageURL == "" && *imagePath == "" {
+		log.Fatal("Zowel -url of -file moet gespecificeerd worden")
+	}
+
+	if *imageURL != "" && *imagePath != "" {
+		log.Fatal("Kan niet zowel -url als -file specificeren")
+	}
+
+	if err := processArtistImage(db, config, *artistName, *imageURL, *imagePath, *dryRun); err != nil {
+		log.Fatal("Kon artiest afbeelding niet verwerken:", err)
+	}
+}
+
+func processArtistImage(db *sql.DB, config *Config, artistName, imageURL, imagePath string, dryRun bool) error {
+	artistID, hasExistingImage, err := findArtistByExactName(db, config.Database.Schema, artistName)
+	if err != nil {
+		return fmt.Errorf("kon artiest niet vinden: %w", err)
+	}
+
+	if hasExistingImage {
+		fmt.Printf("Artiest gevonden: %s (ID: %s) - bestaande afbeelding wordt vervangen\n", artistName, artistID)
+	} else {
+		fmt.Printf("Artiest gevonden: %s (ID: %s) - geen bestaande afbeelding\n", artistName, artistID)
+	}
+
+	var imageData []byte
+	if imageURL != "" {
+		fmt.Printf("Afbeelding downloaden van: %s\n", imageURL)
+		imageData, err = downloadImage(imageURL)
+		if err != nil {
+			return fmt.Errorf("kon afbeelding niet downloaden: %w", err)
+		}
+	} else {
+		fmt.Printf("Afbeelding lezen van: %s\n", imagePath)
+		imageData, err = readImageFile(imagePath)
+		if err != nil {
+			return fmt.Errorf("kon afbeelding bestand niet lezen: %w", err)
+		}
+	}
+
+	originalFormat, originalWidth, originalHeight, err := getImageInfo(imageData)
+	if err != nil {
+		return fmt.Errorf("kon afbeelding informatie niet verkrijgen: %w", err)
+	}
+
+	fmt.Printf("Originele afbeelding: %s, %dx%d, %d bytes\n", 
+		originalFormat, originalWidth, originalHeight, len(imageData))
+
+	// Validate image format
+	if err := validateImageFormat(originalFormat); err != nil {
+		return err
+	}
+
+	// Controleer afbeelding afmetingen volgens configuratie
+	targetWidth := config.Image.TargetWidth
+	targetHeight := config.Image.TargetHeight
+
+	if config.Image.RejectSmaller && (originalWidth < targetWidth || originalHeight < targetHeight) {
+		return fmt.Errorf("afbeelding te klein: %dx%d (vereist: minimaal %dx%d)", 
+			originalWidth, originalHeight, targetWidth, targetHeight)
+	}
+
+	// Verklein altijd grotere afbeeldingen naar doelgrootte (geen weigering)
+	if originalWidth > targetWidth || originalHeight > targetHeight {
+		fmt.Printf("Afbeelding wordt verkleind van %dx%d naar max %dx%d\n", 
+			originalWidth, originalHeight, targetWidth, targetHeight)
+	} else if originalWidth == targetWidth && originalHeight == targetHeight {
+		fmt.Printf("Afbeelding heeft exacte doelafmetingen: %dx%d\n", targetWidth, targetHeight)
+	}
+
+	optimizer := NewImageOptimizer(config.Image)
+	optimizedData, newFormat, err := optimizer.OptimizeImage(imageData)
+	if err != nil {
+		return fmt.Errorf("kon afbeelding niet optimaliseren: %w", err)
+	}
+
+	originalSize := len(imageData)
+	optimizedSize := len(optimizedData)
+	savings := originalSize - optimizedSize
+	savingsPercent := float64(savings) / float64(originalSize) * 100
+
+	_, optimizedWidth, optimizedHeight, err := getImageInfo(optimizedData)
+	if err != nil {
+		optimizedWidth, optimizedHeight = originalWidth, originalHeight
+	}
+	
+	fmt.Printf("Geoptimaliseerde afbeelding: %s, %dx%d, %d bytes\n", newFormat, optimizedWidth, optimizedHeight, optimizedSize)
+	fmt.Printf("Grootte reductie: %d bytes (%.1f%%)\n", savings, savingsPercent)
+	
+	if optimizedWidth != originalWidth || optimizedHeight != originalHeight {
+		fmt.Printf("Verkleind van %dx%d naar %dx%d (max 640x640 voor albumhoezen)\n", 
+			originalWidth, originalHeight, optimizedWidth, optimizedHeight)
+	}
+
+	if dryRun {
+		fmt.Println("DROGE RUN: Zou artiest afbeelding bijwerken maar doet dit niet daadwerkelijk")
+		return nil
+	}
+
+	fmt.Printf("Database direct bijwerken...\n")
+	if err := updateArtistImageInDB(db, config.Database.Schema, artistID, optimizedData); err != nil {
+		return fmt.Errorf("kon database niet bijwerken: %w", err)
+	}
+
+	fmt.Printf("Artiest afbeelding voor %s succesvol bijgewerkt in database\n", artistName)
+	return nil
+}
+
+func findArtistByExactName(db *sql.DB, schema, artistName string) (string, bool, error) {
+	query := fmt.Sprintf(`SELECT artistid, CASE WHEN picture IS NOT NULL THEN true ELSE false END as has_image 
+	                      FROM %s.artist WHERE artist = $1`, schema)
+	
+	var artistID string
+	var hasImage bool
+	err := db.QueryRow(query, artistName).Scan(&artistID, &hasImage)
+	
+	if err == sql.ErrNoRows {
+		return "", false, fmt.Errorf("geen artiest gevonden met exacte naam '%s'", artistName)
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("database fout: %w", err)
+	}
+	
+	return artistID, hasImage, nil
+}
+
+func updateArtistImageInDB(db *sql.DB, schema, artistID string, imageData []byte) error {
+	query := fmt.Sprintf(`UPDATE %s.artist SET picture = $1 WHERE artistid = $2`, schema)
+	_, err := db.Exec(query, imageData, artistID)
+	if err != nil {
+		return fmt.Errorf("kon artiest afbeelding niet bijwerken: %w", err)
+	}
+	return nil
+}
+
+func listArtistsWithoutImages(db *sql.DB, schema string) error {
+	query := fmt.Sprintf(`SELECT artistid, artist FROM %s.artist 
+	                      WHERE picture IS NULL 
+	                      ORDER BY artist 
+	                      LIMIT 50`, schema)
+	
+	rows, err := db.Query(query)
+	if err != nil {
+		return fmt.Errorf("failed to query artists: %w", err)
+	}
+	defer rows.Close()
+
+	var artists []Artist
+
+	for rows.Next() {
+		var artist Artist
+		if err := rows.Scan(&artist.ID, &artist.Name); err != nil {
+			return fmt.Errorf("failed to scan artist: %w", err)
+		}
+		artists = append(artists, artist)
+	}
+
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("error iterating rows: %w", err)
+	}
+
+	fmt.Printf("Artists without images (%d found):\n", len(artists))
+	for _, artist := range artists {
+		fmt.Printf("  %s (ID: %s)\n", artist.Name, artist.ID)
+	}
+
+	return nil
+}
+
+func downloadImage(url string) ([]byte, error) {
+	resp, err := http.Get(url)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("failed to download image: HTTP %d", resp.StatusCode)
+	}
+
+	return readImageFromReader(resp.Body)
+}
+
+func readImageFile(path string) ([]byte, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	return readImageFromReader(file)
+}
+
+func readImageFromReader(r io.Reader) ([]byte, error) {
+	data, err := io.ReadAll(r)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read image data: %w", err)
+	}
+
+	if err := validateImageSize(data); err != nil {
+		return nil, err
+	}
+
+	if err := validateImageData(data); err != nil {
+		return nil, err
+	}
+
+	return data, nil
+}
+
+func validateImageSize(data []byte) error {
+	if len(data) > MaxFileSize {
+		return fmt.Errorf("image size (%d bytes) exceeds maximum allowed size (%d bytes)", len(data), MaxFileSize)
+	}
+	return nil
+}
+
+func validateImageData(data []byte) error {
+	if len(data) == 0 {
+		return fmt.Errorf("empty image data")
+	}
+
+	_, _, err := image.DecodeConfig(bytes.NewReader(data))
+	if err != nil {
+		return fmt.Errorf("invalid image data: %w", err)
+	}
+
+	return nil
+}
+
+func validateImageFormat(format string) error {
+	if !slices.Contains(SupportedFormats, format) {
+		return fmt.Errorf("unsupported image format: %s (supported: %v)", format, SupportedFormats)
+	}
+	return nil
+}
+
+// Common image processing functions
+func createBytesReader(data []byte) *bytes.Reader {
+	return bytes.NewReader(data)
+}
+
+func needsResize(width, height, targetWidth, targetHeight int) bool {
+	return width > targetWidth || height > targetHeight
+}
+
+func getImageDimensions(img image.Image) (int, int) {
+	bounds := img.Bounds()
+	return bounds.Dx(), bounds.Dy()
+}
+
+// Helper functions for error handling
+func wrapError(err error, msg string) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("%s: %w", msg, err)
+}
+
+// Common JPEG encoding logic
+func encodeToJPEG(img image.Image, config ImageConfig, originalSize int) ([]byte, error) {
+	var optimizedData []byte
+
+	// Try Jpegli first if enabled
+	if config.UseJpegli {
+		if data, err := encodeWithJpegli(img, config.Quality); err == nil {
+			if len(data) > 0 && (originalSize == 0 || len(data) < originalSize) {
+				optimizedData = data
+			}
+		}
+	}
+
+	// Fallback to standard JPEG if Jpegli failed or wasn't used
+	if optimizedData == nil {
+		data, err := encodeWithStandardJPEG(img, config.Quality)
+		if err != nil {
+			return nil, err
+		}
+		if originalSize == 0 || len(data) < originalSize {
+			optimizedData = data
+		}
+	}
+
+	return optimizedData, nil
+}
+
+func encodeWithJpegli(img image.Image, quality int) ([]byte, error) {
+	var buf bytes.Buffer
+	options := &jpegli.EncodingOptions{Quality: quality}
+	if err := jpegli.Encode(&buf, img, options); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+func encodeWithStandardJPEG(img image.Image, quality int) ([]byte, error) {
+	var buf bytes.Buffer
+	options := &jpeg.Options{Quality: quality}
+	if err := jpeg.Encode(&buf, img, options); err != nil {
+		return nil, fmt.Errorf("failed to encode JPEG: %w", err)
+	}
+	return buf.Bytes(), nil
+}
+
+func getImageInfo(data []byte) (format string, width, height int, err error) {
+	config, format, err := image.DecodeConfig(bytes.NewReader(data))
+	if err != nil {
+		return "", 0, 0, fmt.Errorf("failed to decode image config: %w", err)
+	}
+	return format, config.Width, config.Height, nil
+}
+
+func (opt *ImageOptimizer) OptimizeImage(data []byte) ([]byte, string, error) {
+	_, format, err := image.DecodeConfig(bytes.NewReader(data))
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to decode image config: %w", err)
+	}
+
+	switch format {
+	case "jpeg", "jpg":
+		return opt.optimizeJPEGPure(data)
+	case "png":
+		return opt.convertPNGToJPEG(data)
+	default:
+		return data, format, nil
+	}
+}
+
+func (opt *ImageOptimizer) optimizeJPEGPure(data []byte) ([]byte, string, error) {
+	img, err := jpeg.Decode(createBytesReader(data))
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to decode JPEG: %w", err)
+	}
+
+	return opt.processImage(img, data, "jpeg")
+}
+
+func (opt *ImageOptimizer) convertPNGToJPEG(data []byte) ([]byte, string, error) {
+	img, err := png.Decode(createBytesReader(data))
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to decode PNG: %w", err)
+	}
+
+	return opt.processImage(img, data, "jpeg")
+}
+
+// Common image processing logic
+func (opt *ImageOptimizer) processImage(img image.Image, originalData []byte, outputFormat string) ([]byte, string, error) {
+	// Resize if larger than target size
+	width, height := getImageDimensions(img)
+	if needsResize(width, height, opt.Config.TargetWidth, opt.Config.TargetHeight) {
+		img = opt.resizeImage(img, opt.Config.TargetWidth, opt.Config.TargetHeight)
+	}
+
+	// Encode to JPEG
+	optimizedData, err := encodeToJPEG(img, opt.Config, len(originalData))
+	if err != nil {
+		return nil, "", err
+	}
+
+	// Return optimized data if better, otherwise original
+	if optimizedData != nil && len(optimizedData) > 0 {
+		return optimizedData, outputFormat, nil
+	}
+	
+	return originalData, outputFormat, nil
+}
+
+func (opt *ImageOptimizer) resizeImage(img image.Image, maxWidth, maxHeight int) image.Image {
+	width, height := getImageDimensions(img)
+
+	scaleX := float64(maxWidth) / float64(width)
+	scaleY := float64(maxHeight) / float64(height)
+	scale := scaleX
+	if scaleY < scaleX {
+		scale = scaleY
+	}
+
+	if scale >= 1 {
+		return img
+	}
+
+	newWidth := int(float64(width) * scale)
+	newHeight := int(float64(height) * scale)
+
+	dst := image.NewRGBA(image.Rect(0, 0, newWidth, newHeight))
+
+	for y := 0; y < newHeight; y++ {
+		for x := 0; x < newWidth; x++ {
+			srcX := int(float64(x) / scale)
+			srcY := int(float64(y) / scale)
+			dst.Set(x, y, img.At(srcX, srcY))
+		}
+	}
+
+	return dst
+}
+
+func getEnvOrFlag(envKey, flagValue string) string {
+	if value := os.Getenv(envKey); value != "" {
+		return value
+	}
+	return flagValue
+}
+
+func showAvailableTools() {
+	fmt.Println("Image Optimization Tools Status:")
+	fmt.Println("================================")
+	
+	fmt.Println("Built-in Pure Go Libraries:")
+	fmt.Printf("%-15s Available - Google's latest JPEG encoder (WebAssembly)\n", "Jpegli:")
+	fmt.Printf("%-15s Available - Fallback Go JPEG encoder\n", "Go JPEG:")
+	fmt.Printf("%-15s Available - PNG decoder (converted to JPEG)\n", "Go PNG:")
+	
+	fmt.Println("\nOptimization Strategy:")
+	fmt.Println("- Max dimensions: 640x640 pixels")
+	fmt.Println("- Quality: 90")
+	fmt.Println("- Encoder: Jpegli with fallback to standard Go JPEG")
+	fmt.Println("- Format: All inputs converted to JPEG")
+	fmt.Println("- Supported: JPG, JPEG, PNG input formats")
+	
+	fmt.Println("\nUsage:")
+	fmt.Println("- ./aeron-imgbatch -artist=\"Artist\" -url=\"image.jpg\"")
+	fmt.Println("- ./aeron-imgbatch -artist=\"Artist\" -url=\"image.png\"")
+	fmt.Println("- ./aeron-imgbatch -artist=\"Artist\" -file=\"/path/to/image.jpeg\"")
+	
+	fmt.Println("\nAll tools are compiled into this binary - no external dependencies needed.")
+}
