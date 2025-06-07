@@ -48,6 +48,9 @@ Download het juiste bestand voor jouw platform, maak het uitvoerbaar (`chmod +x`
 # Artiesten zonder afbeelding tonen
 ./aeron-imgman -list
 
+# ALLE afbeeldingen uit database verwijderen (vereist bevestiging)
+./aeron-imgman -nuke
+
 # Status optimalisatietools tonen
 ./aeron-imgman -tools
 
@@ -56,7 +59,40 @@ Download het juiste bestand voor jouw platform, maak het uitvoerbaar (`chmod +x`
 
 # Dry-run (voorbeeld zonder wijzigingen)
 ./aeron-imgman -artist="OneRepublic" -url="image.jpg" -dry-run
+./aeron-imgman -nuke -dry-run
 ```
+
+### Afbeeldingen verwijderen
+
+De `-nuke` functie verwijdert **alle** artiestafbeeldingen uit de database in één keer. Deze functie is bedoeld voor situaties waarin je de complete afbeeldingencollectie wilt opschonen.
+
+#### Veiligheidsmaatregelen
+
+* **Voorvertoning**: Toont eerst hoeveel en welke artiesten geraakt worden
+* **Bevestiging vereist**: Je moet expliciet "VERWIJDER ALLES" typen om door te gaan
+* **Dry-run ondersteuning**: Test de functie veilig met `-dry-run`
+
+#### Voorbeeld van nuke-modus
+
+```bash
+# Veilig testen zonder wijzigingen
+./aeron-imgman -nuke -dry-run
+
+# Uitvoer:
+# WAARSCHUWING: Deze actie zal ALLE afbeeldingen verwijderen van 647 artiesten:
+#
+#   ABBA (ID: c1d6b3db-a26b-43f6-97e2-e9519db0c520)
+#   Adele (ID: 3ecd5284-9f11-40ba-b854-fc2e081f21dd)
+#   ...en 645 meer artiesten
+#
+# Totaal: 647 artiesten zullen hun afbeelding verliezen.
+# DRY RUN: Zou alle afbeeldingen verwijderen maar doet dit niet daadwerkelijk
+
+# Daadwerkelijk uitvoeren (vereist bevestiging)
+./aeron-imgman -nuke
+```
+
+> **⚠️ WAARSCHUWING**: De nuke-functie is onomkeerbaar. Maak altijd eerst een backup van je database!
 
 ### Configuratie
 

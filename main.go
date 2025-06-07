@@ -145,6 +145,7 @@ func main() {
 		imageURL    = flag.String("url", "", "URL van de afbeelding om te downloaden")
 		imagePath   = flag.String("file", "", "Lokaal pad naar afbeelding")
 		listMode    = flag.Bool("list", false, "Toon a;;e artiesten zonder afbeeldingen")
+		nukeMode    = flag.Bool("nuke", false, "Verwijder ALLE afbeeldingen uit de database (vereist bevestiging)")
 		dryRun      = flag.Bool("dry-run", false, "Toon wat gedaan zou worden zonder daadwerkelijk bij te werken")
 		showTools   = flag.Bool("tools", false, "Toon beschikbare optimalisatie tools")
 		showVersion = flag.Bool("version", false, "Toon versie-informatie")
@@ -162,7 +163,7 @@ func main() {
 		return
 	}
 
-	if *artistName == "" && !*listMode && !*showTools {
+	if *artistName == "" && !*listMode && !*showTools && !*nukeMode {
 		fmt.Println("Gebruik:")
 		fmt.Println("  Artiest afbeelding bijwerken vanuit URL:")
 		fmt.Println("    ./aeron-imgman -artist=\"OneRepublic\" -url=\"https://example.com/image.jpg\"")
@@ -170,6 +171,8 @@ func main() {
 		fmt.Println("    ./aeron-imgman -artist=\"OneRepublic\" -file=\"/pad/naar/image.jpg\"")
 		fmt.Println("  Artiesten zonder afbeeldingen tonen:")
 		fmt.Println("    ./aeron-imgman -list")
+		fmt.Println("  ALLE afbeeldingen uit database verwijderen:")
+		fmt.Println("    ./aeron-imgman -nuke")
 		fmt.Println("  Beschikbare optimalisatie tools tonen:")
 		fmt.Println("    ./aeron-imgman -tools")
 		fmt.Println("  Versie informatie tonen:")
@@ -218,6 +221,13 @@ func main() {
 	if *listMode {
 		if err := listArtistsWithoutImages(db, config.Database.Schema); err != nil {
 			log.Fatal("Kon artiesten niet tonen:", err)
+		}
+		return
+	}
+
+	if *nukeMode {
+		if err := nukeAllImages(db, config.Database.Schema, *dryRun); err != nil {
+			log.Fatal("Kon afbeeldingen niet verwijderen:", err)
 		}
 		return
 	}
@@ -357,15 +367,27 @@ func updateArtistImageInDB(db *sql.DB, schema, artistID string, imageData []byte
 	return nil
 }
 
-func listArtistsWithoutImages(db *sql.DB, schema string) error {
+func listArtists(db *sql.DB, schema string, hasImage bool, limit int) ([]Artist, error) {
+	var condition string
+	if hasImage {
+		condition = "WHERE picture IS NOT NULL"
+	} else {
+		condition = "WHERE picture IS NULL"
+	}
+
+	var limitClause string
+	if limit > 0 {
+		limitClause = fmt.Sprintf("LIMIT %d", limit)
+	}
+
 	query := fmt.Sprintf(`SELECT artistid, artist FROM %s.artist 
-	                      WHERE picture IS NULL 
+	                      %s 
 	                      ORDER BY artist 
-	                      LIMIT 50`, schema)
+	                      %s`, schema, condition, limitClause)
 
 	rows, err := db.Query(query)
 	if err != nil {
-		return fmt.Errorf("kon artiesten niet opvragen: %w", err)
+		return nil, fmt.Errorf("kon artiesten niet opvragen: %w", err)
 	}
 	defer rows.Close()
 
@@ -374,13 +396,82 @@ func listArtistsWithoutImages(db *sql.DB, schema string) error {
 	for rows.Next() {
 		var artist Artist
 		if err := rows.Scan(&artist.ID, &artist.Name); err != nil {
-			return fmt.Errorf("kon artiest niet scannen: %w", err)
+			return nil, fmt.Errorf("kon artiest niet scannen: %w", err)
 		}
+		artist.HasImage = hasImage
 		artists = append(artists, artist)
 	}
 
 	if err := rows.Err(); err != nil {
-		return fmt.Errorf("fout bij doorlopen van rijen: %w", err)
+		return nil, fmt.Errorf("fout bij doorlopen van rijen: %w", err)
+	}
+
+	return artists, nil
+}
+
+func nukeAllImages(db *sql.DB, schema string, dryRun bool) error {
+	// Eerst tellen en tonen welke artiesten geraakt worden
+	artists, err := listArtists(db, schema, true, 0) // true = met afbeeldingen, 0 = geen limit
+	if err != nil {
+		return fmt.Errorf("kon artiesten met afbeeldingen niet ophalen: %w", err)
+	}
+
+	if len(artists) == 0 {
+		fmt.Println("Geen artiesten met afbeeldingen gevonden.")
+		return nil
+	}
+
+	fmt.Printf("WAARSCHUWING: Deze actie zal ALLE afbeeldingen verwijderen van %d artiesten:\n\n", len(artists))
+
+	// Toon eerste 20 artiesten, dan samenvatting als er meer zijn
+	displayLimit := 20
+	for i, artist := range artists {
+		if i < displayLimit {
+			fmt.Printf("  %s (ID: %s)\n", artist.Name, artist.ID)
+		} else if i == displayLimit {
+			fmt.Printf("  ... en %d meer artiesten\n", len(artists)-displayLimit)
+			break
+		}
+	}
+
+	fmt.Printf("\nTotaal: %d artiesten zullen hun afbeelding verliezen.\n", len(artists))
+
+	if dryRun {
+		fmt.Println("\nDROGE RUN: Zou alle afbeeldingen verwijderen maar doet dit niet daadwerkelijk")
+		return nil
+	}
+
+	// Bevestiging vragen
+	fmt.Print("\nBen je ZEKER dat je ALLE afbeeldingen wilt verwijderen? Type 'VERWIJDER ALLES' om te bevestigen: ")
+	var confirmation string
+	fmt.Scanln(&confirmation)
+
+	if confirmation != "VERWIJDER ALLES" {
+		fmt.Println("Operatie geannuleerd.")
+		return nil
+	}
+
+	// Alle afbeeldingen verwijderen
+	query := fmt.Sprintf(`UPDATE %s.artist SET picture = NULL WHERE picture IS NOT NULL`, schema)
+	result, err := db.Exec(query)
+	if err != nil {
+		return fmt.Errorf("kon afbeeldingen niet verwijderen: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		fmt.Printf("Afbeeldingen succesvol verwijderd (aantal onbekend)\n")
+	} else {
+		fmt.Printf("Succesvol %d afbeeldingen verwijderd uit de database\n", rowsAffected)
+	}
+
+	return nil
+}
+
+func listArtistsWithoutImages(db *sql.DB, schema string) error {
+	artists, err := listArtists(db, schema, false, 50) // false = zonder afbeeldingen, 50 = limit
+	if err != nil {
+		return fmt.Errorf("kon artiesten zonder afbeeldingen niet ophalen: %w", err)
 	}
 
 	fmt.Printf("Artiesten zonder afbeeldingen (%d gevonden):\n", len(artists))
