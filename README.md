@@ -1,16 +1,19 @@
-# Aeron Afbeelding Batch Processor
+# Aeron Afbeelding Batchprocessor
 
-Een command-line tool voor het optimaliseren en verwerken van artiest afbeeldingen voor de Aeron database van Streekomroep ZuidWest.
+Een commandline-tool voor het optimaliseren en verwerken van artiestafbeeldingen voor de Aeron-database van Streekomroep ZuidWest.
 
-## Functies
+> \[!WARNING]
+> Aeron is een product van Broadcast Partners. Deze tool is niet officieel en is niet ontwikkeld in opdracht van of in samenwerking met Broadcast Partners. Gebruik ervan is volledig op eigen risico. Maak altijd eerst een backup van de database voordat je deze tool gebruikt.
 
-- Pure Go implementatie zonder externe afhankelijkheden
-- Afbeelding optimalisatie met Google's Jpegli encoder
-- Ondersteunt JPG, JPEG, PNG invoerformaten
-- Verkleint afbeeldingen groter dan 640x640px, weigert kleinere afbeeldingen
-- Directe PostgreSQL database toegang
-- Hoofdlettergevoelige artiest naam matching
-- Dry run modus voor het bekijken van wijzigingen
+## Kenmerken
+
+* Volledig geschreven in Go, zonder externe afhankelijkheden
+* Optimaliseert afbeeldingen met Google's Jpegli-encoder
+* Ondersteunt invoerformaten: JPG, JPEG, PNG
+* Verkleint afbeeldingen groter dan 640x640 px; weigert kleinere afbeeldingen
+* Rechtstreekse toegang tot PostgreSQL-database
+* Hoofdlettergevoelige artiestnaamvergelijking
+* Dry-run-modus om wijzigingen vooraf te bekijken
 
 ## Installatie
 
@@ -23,37 +26,39 @@ go build -o aeron-imgbatch .
 
 ## Gebruik
 
-### Basis Commando's
+### Basiscommando's
 
 ```bash
-# Artiest afbeelding bijwerken vanuit URL
+# Artiestafbeelding bijwerken via URL
 ./aeron-imgbatch -artist="OneRepublic" -url="https://example.com/image.jpg"
 
-# Artiest afbeelding bijwerken vanuit lokaal bestand
+# Artiestafbeelding bijwerken via lokaal bestand
 ./aeron-imgbatch -artist="OneRepublic" -file="/pad/naar/image.jpg"
 
-# Artiesten zonder afbeeldingen tonen
+# Artiesten zonder afbeelding tonen
 ./aeron-imgbatch -list
 
-# Optimalisatie tools status tonen
+# Status optimalisatietools tonen
 ./aeron-imgbatch -tools
 
-# Dry run (voorvertoning zonder wijzigingen)
+# Dry-run (voorbeeld zonder wijzigingen)
 ./aeron-imgbatch -artist="OneRepublic" -url="image.jpg" -dry-run
 ```
 
 ### Configuratie
 
-#### Config bestand gebruiken
-```bash
-# Gebruikt config.yaml uit huidige directory standaard
-./aeron-imgbatch -artist="Artiest Naam" -url="image.jpg"
+#### Configuratiebestand gebruiken
 
-# Of specificeer aangepaste config
-./aeron-imgbatch -config="/pad/naar/config.yaml" -artist="Artiest" -url="image.jpg"
+```bash
+# Gebruikt standaard config.yaml in huidige directory
+./aeron-imgbatch -artist="Naam Artiest" -url="image.jpg"
+
+# Of aangepaste configuratie gebruiken
+./aeron-imgbatch -config="/pad/naar/config.yaml" -artist="Naam Artiest" -url="image.jpg"
 ```
 
-#### Command line opties
+#### Commandline-opties
+
 ```bash
 ./aeron-imgbatch \
   -db-host=localhost \
@@ -62,11 +67,12 @@ go build -o aeron-imgbatch .
   -db-user=aeron_user \
   -db-password=wachtwoord \
   -db-schema=aeron \
-  -artist="Artiest Naam" \
+  -artist="Naam Artiest" \
   -url="image.jpg"
 ```
 
 #### Omgevingsvariabelen
+
 ```bash
 export DB_HOST=localhost
 export DB_PORT=5432
@@ -75,12 +81,12 @@ export DB_USER=aeron_user
 export DB_PASSWORD=wachtwoord
 export DB_SCHEMA=aeron
 
-./aeron-imgbatch -artist="Artiest Naam" -url="image.jpg"
+./aeron-imgbatch -artist="Naam Artiest" -url="image.jpg"
 ```
 
-## Configuratie Bestand
+## Configuratiebestand
 
-Maak een `config.yaml` bestand:
+Maak een bestand `config.yaml` aan:
 
 ```yaml
 database:
@@ -101,24 +107,24 @@ image:
   reject_smaller: true
 ```
 
-## Afbeelding Verwerking
+## Afbeeldingverwerking
 
-- Doelgrootte: 640x640 pixels
-- Kwaliteit: 90 (configureerbaar)
-- Encoder: Jpegli met terugval naar standaard Go JPEG
-- Formaat: Alle invoer geconverteerd naar JPEG uitvoer
-- Vergroting/verkleining: Grotere afbeeldingen worden verkleind naar doelgrootte
-- Validatie: Kleinere afbeeldingen geweigerd (configureerbaar)
+* Doelafmeting: 640x640 pixels
+* Kwaliteit: 90 (instelbaar)
+* Encoder: Jpegli, met terugval naar standaard Go JPEG
+* Uitvoerformaat: altijd JPEG, ongeacht invoerformaat
+* Schaling: afbeeldingen groter dan doelafmetingen worden verkleind
+* Validatie: kleinere afbeeldingen worden geweigerd (instelbaar)
 
 ## Vereisten
 
-- Go 1.24+
-- PostgreSQL database met artiest tabel (Aeron database)
-- Netwerk toegang voor het downloaden van afbeeldingen (bij gebruik van URLs)
+* Go versie 1.24 of hoger
+* PostgreSQL-database met artiesttabel (Aeron-database)
+* Netwerktoegang voor downloaden van afbeeldingen bij gebruik van URLs
 
-## Database Schema
+## Databaseschema
 
-De tool verwacht een PostgreSQL tabel zoals gebruikt in Aeron:
+De tool vereist de volgende PostgreSQL-tabel zoals gebruikt door Aeron:
 
 ```sql
 CREATE TABLE {schema}.artist (
@@ -128,17 +134,17 @@ CREATE TABLE {schema}.artist (
 );
 ```
 
-## Fout Afhandeling
+## Foutafhandeling
 
-- Artiest niet gevonden: Exacte hoofdlettergevoelige naam matching vereist
-- Ongeldige afbeeldingen: Automatische validatie en foutrapportage
-- Database fouten: Duidelijke foutmeldingen met verbindingsdetails
-- Bestandsgrootte limieten: 20MB maximum invoer bestandsgrootte
+* Niet-gevonden artiest: hoofdlettergevoelige vergelijking vereist
+* Ongeldige afbeeldingen: automatische validatie met duidelijke foutmeldingen
+* Databasefouten: duidelijke meldingen inclusief verbindingsdetails
+* Bestandsgrootte: maximaal 20 MB per invoerbestand
 
-## Over dit Project
+## Over dit project
 
-Dit project is ontwikkeld door Streekomroep ZuidWest om te werken met de laatste versie van het Aeron broadcast systeem. Het helpt bij het beheren en optimaliseren van artiest afbeeldingen in de Aeron database.
+Dit project is ontwikkeld door Streekomroep ZuidWest voor gebruik met de nieuwste versie van het Aeron-broadcastsysteem. Het ondersteunt het beheer en optimaliseren van artiestafbeeldingen in de Aeron-database.
 
 ## Licentie
 
-MIT Licentie - Zie LICENSE bestand voor details.
+MIT-licentie – zie LICENSE-bestand voor details.
