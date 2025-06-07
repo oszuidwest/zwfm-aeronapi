@@ -141,14 +141,14 @@ func loadConfig(configPath string) (*Config, error) {
 
 func main() {
 	var (
-		artistName = flag.String("artist", "", "Artiest naam om bij te werken (vereist)")
-		imageURL   = flag.String("url", "", "URL van de afbeelding om te downloaden en optimaliseren")
-		imagePath  = flag.String("file", "", "Lokaal pad naar afbeelding bestand")
-		listMode   = flag.Bool("list", false, "Toon artiesten zonder afbeeldingen")
-		dryRun     = flag.Bool("dry-run", false, "Toon wat gedaan zou worden zonder daadwerkelijk bij te werken")
-		showTools  = flag.Bool("tools", false, "Toon beschikbare optimalisatie tools")
+		artistName  = flag.String("artist", "", "Artiest naam om bij te werken (vereist)")
+		imageURL    = flag.String("url", "", "URL van de afbeelding om te downloaden en optimaliseren")
+		imagePath   = flag.String("file", "", "Lokaal pad naar afbeelding bestand")
+		listMode    = flag.Bool("list", false, "Toon artiesten zonder afbeeldingen")
+		dryRun      = flag.Bool("dry-run", false, "Toon wat gedaan zou worden zonder daadwerkelijk bij te werken")
+		showTools   = flag.Bool("tools", false, "Toon beschikbare optimalisatie tools")
 		showVersion = flag.Bool("version", false, "Toon versie informatie")
-		configFile = flag.String("config", "", "Pad naar config bestand (standaard: config.yaml)")
+		configFile  = flag.String("config", "", "Pad naar config bestand (standaard: config.yaml)")
 	)
 	flag.Parse()
 
@@ -199,10 +199,10 @@ func main() {
 		return
 	}
 
-	fmt.Printf("Verbinden met database: %s:%s/%s (schema: %s)\n", 
+	fmt.Printf("Verbinden met database: %s:%s/%s (schema: %s)\n",
 		config.Database.Host, config.Database.Port, config.Database.Name, config.Database.Schema)
 	fmt.Printf("Afbeelding instellingen: %dx%d pixels, kwaliteit %d, weiger_kleinere: %t, verklein_grotere: waar\n",
-		config.Image.TargetWidth, config.Image.TargetHeight, config.Image.Quality, 
+		config.Image.TargetWidth, config.Image.TargetHeight, config.Image.Quality,
 		config.Image.RejectSmaller)
 
 	db, err := sql.Open("postgres", config.DatabaseURL())
@@ -267,7 +267,7 @@ func processArtistImage(db *sql.DB, config *Config, artistName, imageURL, imageP
 		return fmt.Errorf("kon afbeelding informatie niet verkrijgen: %w", err)
 	}
 
-	fmt.Printf("Originele afbeelding: %s, %dx%d, %d bytes\n", 
+	fmt.Printf("Originele afbeelding: %s, %dx%d, %d bytes\n",
 		originalFormat, originalWidth, originalHeight, len(imageData))
 
 	// Validate image format
@@ -280,13 +280,13 @@ func processArtistImage(db *sql.DB, config *Config, artistName, imageURL, imageP
 	targetHeight := config.Image.TargetHeight
 
 	if config.Image.RejectSmaller && (originalWidth < targetWidth || originalHeight < targetHeight) {
-		return fmt.Errorf("afbeelding te klein: %dx%d (vereist: minimaal %dx%d)", 
+		return fmt.Errorf("afbeelding te klein: %dx%d (vereist: minimaal %dx%d)",
 			originalWidth, originalHeight, targetWidth, targetHeight)
 	}
 
 	// Verklein altijd grotere afbeeldingen naar doelgrootte (geen weigering)
 	if originalWidth > targetWidth || originalHeight > targetHeight {
-		fmt.Printf("Afbeelding wordt verkleind van %dx%d naar max %dx%d\n", 
+		fmt.Printf("Afbeelding wordt verkleind van %dx%d naar max %dx%d\n",
 			originalWidth, originalHeight, targetWidth, targetHeight)
 	} else if originalWidth == targetWidth && originalHeight == targetHeight {
 		fmt.Printf("Afbeelding heeft exacte doelafmetingen: %dx%d\n", targetWidth, targetHeight)
@@ -307,12 +307,12 @@ func processArtistImage(db *sql.DB, config *Config, artistName, imageURL, imageP
 	if err != nil {
 		optimizedWidth, optimizedHeight = originalWidth, originalHeight
 	}
-	
+
 	fmt.Printf("Geoptimaliseerde afbeelding: %s, %dx%d, %d bytes\n", newFormat, optimizedWidth, optimizedHeight, optimizedSize)
 	fmt.Printf("Grootte reductie: %d bytes (%.1f%%)\n", savings, savingsPercent)
-	
+
 	if optimizedWidth != originalWidth || optimizedHeight != originalHeight {
-		fmt.Printf("Verkleind van %dx%d naar %dx%d (max 640x640 voor albumhoezen)\n", 
+		fmt.Printf("Verkleind van %dx%d naar %dx%d (max 640x640 voor albumhoezen)\n",
 			originalWidth, originalHeight, optimizedWidth, optimizedHeight)
 	}
 
@@ -333,18 +333,18 @@ func processArtistImage(db *sql.DB, config *Config, artistName, imageURL, imageP
 func findArtistByExactName(db *sql.DB, schema, artistName string) (string, bool, error) {
 	query := fmt.Sprintf(`SELECT artistid, CASE WHEN picture IS NOT NULL THEN true ELSE false END as has_image 
 	                      FROM %s.artist WHERE artist = $1`, schema)
-	
+
 	var artistID string
 	var hasImage bool
 	err := db.QueryRow(query, artistName).Scan(&artistID, &hasImage)
-	
+
 	if err == sql.ErrNoRows {
 		return "", false, fmt.Errorf("geen artiest gevonden met exacte naam '%s'", artistName)
 	}
 	if err != nil {
 		return "", false, fmt.Errorf("database fout: %w", err)
 	}
-	
+
 	return artistID, hasImage, nil
 }
 
@@ -362,7 +362,7 @@ func listArtistsWithoutImages(db *sql.DB, schema string) error {
 	                      WHERE picture IS NULL 
 	                      ORDER BY artist 
 	                      LIMIT 50`, schema)
-	
+
 	rows, err := db.Query(query)
 	if err != nil {
 		return fmt.Errorf("kon artiesten niet opvragen: %w", err)
@@ -586,7 +586,7 @@ func (opt *ImageOptimizer) processImage(img image.Image, originalData []byte, ou
 	if optimizedData != nil && len(optimizedData) > 0 {
 		return optimizedData, outputFormat, nil
 	}
-	
+
 	return originalData, outputFormat, nil
 }
 
@@ -630,23 +630,23 @@ func getEnvOrFlag(envKey, flagValue string) string {
 func showAvailableTools() {
 	fmt.Println("Afbeelding Optimalisatie Tools Status:")
 	fmt.Println("================================")
-	
+
 	fmt.Println("Ingebouwde Pure Go Bibliotheken:")
 	fmt.Printf("%-15s Beschikbaar - Google's nieuwste JPEG encoder (WebAssembly)\n", "Jpegli:")
 	fmt.Printf("%-15s Beschikbaar - Terugval Go JPEG encoder\n", "Go JPEG:")
 	fmt.Printf("%-15s Beschikbaar - PNG decoder (geconverteerd naar JPEG)\n", "Go PNG:")
-	
+
 	fmt.Println("\nOptimalisatie Strategie:")
 	fmt.Println("- Max afmetingen: 640x640 pixels")
 	fmt.Println("- Kwaliteit: 90")
 	fmt.Println("- Encoder: Jpegli met terugval naar standaard Go JPEG")
 	fmt.Println("- Formaat: Alle invoer geconverteerd naar JPEG")
 	fmt.Println("- Ondersteund: JPG, JPEG, PNG invoer formaten")
-	
+
 	fmt.Println("\nGebruik:")
 	fmt.Println("- ./aeron-imgbatch -artist=\"Artist\" -url=\"image.jpg\"")
 	fmt.Println("- ./aeron-imgbatch -artist=\"Artist\" -url=\"image.png\"")
 	fmt.Println("- ./aeron-imgbatch -artist=\"Artist\" -file=\"/path/to/image.jpeg\"")
-	
+
 	fmt.Println("\nAlle tools zijn gecompileerd in dit programma - geen externe afhankelijkheden nodig.")
 }
