@@ -1,6 +1,5 @@
-# Voorbeeld configuratie voor aeron-imgman
+# Voorbeeldconfiguratie voor aeron-imgman
 
-# Database Configuratie
 database:
   host: localhost
   port: 5432
@@ -10,23 +9,19 @@ database:
   schema: aeron
   sslmode: disable
 
-# Afbeelding Verwerkings Configuratie
 image:
-  # Doel afbeelding afmetingen
+  # Dit is hoe groot de afbeeldingen in de DB komen
   target_width: 640
   target_height: 640
   
-  # JPEG kwaliteit (1-100)
+  # JPEG-kwaliteit (1-100)
   quality: 90
   
-  # Gebruik Jpegli encoder voor betere compressie
+  # Gebruik Google's moderne Jpegli encoder voor betere compressie
   use_jpegli: true
   
-  # Maximale bestandsgrootte in MB
+  # Maximale bestandsgrootte van bronbestand
   max_file_size_mb: 20
   
-  # Verwerkings gedrag
-  reject_smaller: true    # Weiger afbeeldingen kleiner dan doelgrootte
-  
-  # Opmerking: Grotere afbeeldingen worden altijd verkleind naar doelafmetingen
-  # Ondersteunde formaten: JPG, JPEG, PNG (altijd toegestaan)
+  # Verwerkingsgedrag
+  reject_smaller: true

@@ -91,7 +91,7 @@ func NewImageOptimizer(config ImageConfig) *ImageOptimizer {
 }
 
 func loadConfig(configPath string) (*Config, error) {
-	// Standaard configuratie
+	// Standaardconfiguratie
 	config := &Config{
 		Database: DatabaseConfig{
 			Host:     DefaultHost,
@@ -118,7 +118,7 @@ func loadConfig(configPath string) (*Config, error) {
 		if _, err := os.Stat("config.yaml"); err == nil {
 			configPath = "config.yaml"
 		} else {
-			// Geen config bestand gevonden, gebruik standaardwaarden
+			// Geen config.yaml gevonden, gebruik standaardwaarden
 			return config, nil
 		}
 	}
@@ -142,12 +142,12 @@ func loadConfig(configPath string) (*Config, error) {
 func main() {
 	var (
 		artistName  = flag.String("artist", "", "Artiest naam om bij te werken (vereist)")
-		imageURL    = flag.String("url", "", "URL van de afbeelding om te downloaden en optimaliseren")
-		imagePath   = flag.String("file", "", "Lokaal pad naar afbeelding bestand")
-		listMode    = flag.Bool("list", false, "Toon artiesten zonder afbeeldingen")
+		imageURL    = flag.String("url", "", "URL van de afbeelding om te downloaden")
+		imagePath   = flag.String("file", "", "Lokaal pad naar afbeelding")
+		listMode    = flag.Bool("list", false, "Toon a;;e artiesten zonder afbeeldingen")
 		dryRun      = flag.Bool("dry-run", false, "Toon wat gedaan zou worden zonder daadwerkelijk bij te werken")
 		showTools   = flag.Bool("tools", false, "Toon beschikbare optimalisatie tools")
-		showVersion = flag.Bool("version", false, "Toon versie informatie")
+		showVersion = flag.Bool("version", false, "Toon versie-informatie")
 		configFile  = flag.String("config", "", "Pad naar config bestand (standaard: config.yaml)")
 	)
 	flag.Parse()
@@ -284,7 +284,7 @@ func processArtistImage(db *sql.DB, config *Config, artistName, imageURL, imageP
 			originalWidth, originalHeight, targetWidth, targetHeight)
 	}
 
-	// Verklein altijd grotere afbeeldingen naar doelgrootte (geen weigering)
+	// Verklein grotere afbeeldingen naar doelgrootte
 	if originalWidth > targetWidth || originalHeight > targetHeight {
 		fmt.Printf("Afbeelding wordt verkleind van %dx%d naar max %dx%d\n",
 			originalWidth, originalHeight, targetWidth, targetHeight)
@@ -485,7 +485,7 @@ func wrapError(err error, msg string) error {
 func encodeToJPEG(img image.Image, config ImageConfig, originalSize int) ([]byte, error) {
 	var optimizedData []byte
 
-	// Probeer Jpegli eerst als ingeschakeld
+	// Probeer Jpegli eerst
 	if config.UseJpegli {
 		if data, err := encodeWithJpegli(img, config.Quality); err == nil {
 			if len(data) > 0 && (originalSize == 0 || len(data) < originalSize) {
@@ -494,7 +494,7 @@ func encodeToJPEG(img image.Image, config ImageConfig, originalSize int) ([]byte
 		}
 	}
 
-	// Terugval naar standaard JPEG als Jpegli faalde of niet gebruikt werd
+	// Val terug naar standaard JPEG als Jpegli faalde of niet ingeschakeld is
 	if optimizedData == nil {
 		data, err := encodeWithStandardJPEG(img, config.Quality)
 		if err != nil {
@@ -568,7 +568,7 @@ func (opt *ImageOptimizer) convertPNGToJPEG(data []byte) ([]byte, string, error)
 	return opt.processImage(img, data, "jpeg")
 }
 
-// Algemene afbeelding verwerkings logica
+// Algemene afbeeldingverwerking logica
 func (opt *ImageOptimizer) processImage(img image.Image, originalData []byte, outputFormat string) ([]byte, string, error) {
 	// Verklein als groter dan doelgrootte
 	width, height := getImageDimensions(img)
@@ -576,13 +576,13 @@ func (opt *ImageOptimizer) processImage(img image.Image, originalData []byte, ou
 		img = opt.resizeImage(img, opt.Config.TargetWidth, opt.Config.TargetHeight)
 	}
 
-	// Encodeer naar JPEG
+	// Encode JPEG
 	optimizedData, err := encodeToJPEG(img, opt.Config, len(originalData))
 	if err != nil {
 		return nil, "", err
 	}
 
-	// Geef geoptimaliseerde data terug als beter, anders origineel
+	// Geef geoptimaliseerde data terug als deze beter is, anders origineel
 	if optimizedData != nil && len(optimizedData) > 0 {
 		return optimizedData, outputFormat, nil
 	}
