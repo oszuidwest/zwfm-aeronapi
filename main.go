@@ -164,30 +164,40 @@ func main() {
 	}
 
 	if *artistName == "" && !*listMode && !*showTools && !*nukeMode {
-		fmt.Println("Gebruik:")
-		fmt.Println("  Artiest afbeelding bijwerken vanuit URL:")
+		fmt.Println("\033[1mAeron Image Manager\033[0m - Afbeeldingenbeheer voor Aeron databases")
+		fmt.Println("═══════════════════════════════════════════════════════════")
+		fmt.Println()
+		fmt.Println("\033[1mGebruik:\033[0m")
+		fmt.Println("  \033[32mArtiest afbeelding bijwerken vanuit URL:\033[0m")
 		fmt.Println("    ./aeron-imgman -artist=\"OneRepublic\" -url=\"https://example.com/image.jpg\"")
-		fmt.Println("  Artiest afbeelding bijwerken vanuit lokaal bestand:")
+		fmt.Println("  \033[32mArtiest afbeelding bijwerken vanuit lokaal bestand:\033[0m")
 		fmt.Println("    ./aeron-imgman -artist=\"OneRepublic\" -file=\"/pad/naar/image.jpg\"")
-		fmt.Println("  Artiesten zonder afbeeldingen tonen:")
+		fmt.Println()
+		fmt.Println("  \033[36mArtiesten zonder afbeeldingen tonen:\033[0m")
 		fmt.Println("    ./aeron-imgman -list")
-		fmt.Println("  ALLE afbeeldingen uit database verwijderen:")
+		fmt.Println("  \033[31mALLE afbeeldingen uit database verwijderen:\033[0m")
 		fmt.Println("    ./aeron-imgman -nuke")
-		fmt.Println("  Beschikbare optimalisatie tools tonen:")
-		fmt.Println("    ./aeron-imgman -tools")
-		fmt.Println("  Versie informatie tonen:")
+		fmt.Println()
+		fmt.Println("  \033[33mVersie informatie tonen:\033[0m")
 		fmt.Println("    ./aeron-imgman -version")
-		fmt.Println("")
-		fmt.Println("Configuratie:")
-		fmt.Println("  -config=/pad/naar/config.yaml   Gebruik aangepast config bestand")
-		fmt.Println("  Standaard: zoekt naar config.yaml in huidige directory")
-		fmt.Println("")
-		fmt.Println("  Afbeelding Vereisten (configureerbaar in config.yaml):")
-		fmt.Println("  - Doelgrootte: 640x640 pixels")
-		fmt.Println("  - Kleinere afbeeldingen worden geweigerd")
-		fmt.Println("  - Grotere afbeeldingen worden verkleind naar doelgrootte")
-		fmt.Println("  - Ondersteunde formaten: JPG, JPEG, PNG (altijd toegestaan)")
-		flag.Usage()
+		fmt.Println()
+		fmt.Println("\033[1mOpties:\033[0m")
+		fmt.Println("  \033[1m-artist\033[0m string     Artiest naam om bij te werken (vereist)")
+		fmt.Println("  \033[1m-url\033[0m string        URL van de afbeelding om te downloaden")
+		fmt.Println("  \033[1m-file\033[0m string       Lokaal pad naar afbeelding")
+		fmt.Println("  \033[1m-config\033[0m string     Pad naar config bestand (standaard: config.yaml)")
+		fmt.Println("  \033[1m-dry-run\033[0m           Toon wat gedaan zou worden zonder bij te werken")
+		fmt.Println("  \033[1m-list\033[0m              Toon artiesten zonder afbeeldingen")
+		fmt.Println("  \033[1m-nuke\033[0m              Verwijder ALLE afbeeldingen (vereist bevestiging)")
+		fmt.Println("  \033[1m-version\033[0m           Toon versie-informatie")
+		fmt.Println()
+		fmt.Println("\033[1mConfiguratie:\033[0m")
+		fmt.Println("  Standaard: \033[33mconfig.yaml\033[0m in huidige directory")
+		fmt.Println("  Afbeelding vereisten (configureerbaar in config.yaml):")
+		fmt.Println("  • Doelgrootte: \033[36m640x640 pixels\033[0m")
+		fmt.Println("  • Kleinere afbeeldingen worden \033[31mgeweigerd\033[0m")
+		fmt.Println("  • Grotere afbeeldingen worden \033[32mverkleind\033[0m naar doelgrootte")
+		fmt.Println("  • Ondersteunde formaten: \033[33mJPG, JPEG, PNG\033[0m")
 		os.Exit(1)
 	}
 
@@ -202,11 +212,11 @@ func main() {
 		return
 	}
 
-	fmt.Printf("Database: %s:%s/%s (schema: %s)\n",
+	fmt.Printf("\033[36mDatabase:\033[0m %s:%s/%s (schema: %s)\n",
 		config.Database.Host, config.Database.Port, config.Database.Name, config.Database.Schema)
-	fmt.Printf("Instellingen: %dx%d pixels, kwaliteit %d, kleinere afbeeldingen: %s\n",
+	fmt.Printf("\033[36mInstellingen:\033[0m %dx%d pixels, kwaliteit %d, kleinere afbeeldingen: %s\n",
 		config.Image.TargetWidth, config.Image.TargetHeight, config.Image.Quality,
-		map[bool]string{true: "weigeren", false: "toestaan"}[config.Image.RejectSmaller])
+		map[bool]string{true: "\033[31mweigeren\033[0m", false: "\033[32mtoestaan\033[0m"}[config.Image.RejectSmaller])
 	fmt.Println("─────────────────────────────────────────────────")
 
 	db, err := sql.Open("postgres", config.DatabaseURL())
@@ -252,21 +262,21 @@ func processArtistImage(db *sql.DB, config *Config, artistName, imageURL, imageP
 		return fmt.Errorf("kon artiest niet vinden: %w", err)
 	}
 
-	status := "nieuwe afbeelding"
+	status := "\033[32mnieuwe afbeelding\033[0m"
 	if hasExistingImage {
-		status = "vervangen bestaande"
+		status = "\033[33mvervangen bestaande\033[0m"
 	}
-	fmt.Printf("Artiest: %s (%s)\n", artistName, status)
+	fmt.Printf("\033[1mArtiest:\033[0m %s (%s)\n", artistName, status)
 
 	var imageData []byte
 	if imageURL != "" {
-		fmt.Printf("Bron: %s\n", imageURL)
+		fmt.Printf("\033[36mBron:\033[0m %s\n", imageURL)
 		imageData, err = downloadImage(imageURL)
 		if err != nil {
 			return fmt.Errorf("kon afbeelding niet downloaden: %w", err)
 		}
 	} else {
-		fmt.Printf("Bron: %s\n", imagePath)
+		fmt.Printf("\033[36mBron:\033[0m %s\n", imagePath)
 		imageData, err = readImageFile(imagePath)
 		if err != nil {
 			return fmt.Errorf("kon afbeelding bestand niet lezen: %w", err)
@@ -278,7 +288,7 @@ func processArtistImage(db *sql.DB, config *Config, artistName, imageURL, imageP
 		return fmt.Errorf("kon afbeelding informatie niet verkrijgen: %w", err)
 	}
 
-	fmt.Printf("Origineel: %s %dx%d (%d KB)\n",
+	fmt.Printf("\033[36mOrigineel:\033[0m %s \033[33m%dx%d\033[0m (\033[35m%d KB\033[0m)\n",
 		originalFormat, originalWidth, originalHeight, len(imageData)/1024)
 
 	// Validate image format
@@ -297,12 +307,12 @@ func processArtistImage(db *sql.DB, config *Config, artistName, imageURL, imageP
 
 	// Verklein grotere afbeeldingen naar doelgrootte
 	if originalWidth > targetWidth || originalHeight > targetHeight {
-		fmt.Printf("Actie: verkleinen van %dx%d naar max %dx%d\n",
+		fmt.Printf("\033[36mActie:\033[0m \033[31mverkleinen\033[0m van \033[33m%dx%d\033[0m naar max \033[33m%dx%d\033[0m\n",
 			originalWidth, originalHeight, targetWidth, targetHeight)
 	} else if originalWidth == targetWidth && originalHeight == targetHeight {
-		fmt.Printf("Actie: optimaliseren (exacte doelafmetingen)\n")
+		fmt.Printf("\033[36mActie:\033[0m \033[32moptimaliseren\033[0m (exacte doelafmetingen)\n")
 	} else {
-		fmt.Printf("Actie: optimaliseren (binnen doelafmetingen)\n")
+		fmt.Printf("\033[36mActie:\033[0m \033[32moptimaliseren\033[0m (binnen doelafmetingen)\n")
 	}
 
 	optimizer := NewImageOptimizer(config.Image)
@@ -321,21 +331,21 @@ func processArtistImage(db *sql.DB, config *Config, artistName, imageURL, imageP
 		optimizedWidth, optimizedHeight = originalWidth, originalHeight
 	}
 
-	fmt.Printf("Resultaat: %s %dx%d (%d KB, %.1f%% kleiner)\n", 
+	fmt.Printf("\033[36mResultaat:\033[0m %s \033[33m%dx%d\033[0m (\033[35m%d KB\033[0m, \033[32m%.1f%% kleiner\033[0m)\n",
 		newFormat, optimizedWidth, optimizedHeight, optimizedSize/1024, savingsPercent)
 
 	if dryRun {
 		fmt.Println()
-		fmt.Println("DRY RUN: Zou artiest afbeelding bijwerken maar doet dit niet daadwerkelijk")
+		fmt.Println("\033[33mDRY RUN:\033[0m Zou artiest afbeelding bijwerken maar doet dit niet daadwerkelijk")
 		return nil
 	}
 
-	fmt.Println("Database bijwerken...")
+	fmt.Println("\033[36mDatabase bijwerken...\033[0m")
 	if err := updateArtistImageInDB(db, config.Database.Schema, artistID, optimizedData); err != nil {
 		return fmt.Errorf("kon database niet bijwerken: %w", err)
 	}
 
-	fmt.Printf("Succes: Afbeelding voor %s bijgewerkt\n", artistName)
+	fmt.Printf("\033[32mSucces:\033[0m Afbeelding voor \033[1m%s\033[0m bijgewerkt\n", artistName)
 	return nil
 }
 
@@ -420,7 +430,7 @@ func nukeAllImages(db *sql.DB, schema string, dryRun bool) error {
 		return nil
 	}
 
-	fmt.Printf("WAARSCHUWING: Alle afbeeldingen verwijderen van %d artiesten\n", len(artists))
+	fmt.Printf("\033[1;31mWAARSCHUWING:\033[0m Alle afbeeldingen verwijderen van \033[1m%d\033[0m artiesten\n", len(artists))
 	fmt.Println("═══════════════════════════════════════════════════════")
 
 	// Toon eerste 20 artiesten, dan samenvatting als er meer zijn
@@ -435,17 +445,17 @@ func nukeAllImages(db *sql.DB, schema string, dryRun bool) error {
 	}
 
 	fmt.Println("═══════════════════════════════════════════════════════")
-	fmt.Printf("Totaal: %d artiesten verliezen hun afbeelding\n", len(artists))
+	fmt.Printf("\033[1mTotaal:\033[0m \033[31m%d\033[0m artiesten verliezen hun afbeelding\n", len(artists))
 
 	if dryRun {
 		fmt.Println()
-		fmt.Println("DRY RUN: Zou alle afbeeldingen verwijderen maar doet dit niet daadwerkelijk")
+		fmt.Println("\033[33mDRY RUN:\033[0m Zou alle afbeeldingen verwijderen maar doet dit niet daadwerkelijk")
 		return nil
 	}
 
 	fmt.Println()
 	// Bevestiging vragen
-	fmt.Print("Ben je ZEKER dat je ALLE afbeeldingen wilt verwijderen? Type 'VERWIJDER ALLES' om te bevestigen: ")
+	fmt.Print("\033[1mBen je ZEKER dat je ALLE afbeeldingen wilt verwijderen?\033[0m Type '\033[31mVERWIJDER ALLES\033[0m' om te bevestigen: ")
 	var confirmation string
 	fmt.Scanln(&confirmation)
 
@@ -477,10 +487,10 @@ func listArtistsWithoutImages(db *sql.DB, schema string) error {
 		return fmt.Errorf("kon artiesten zonder afbeeldingen niet ophalen: %w", err)
 	}
 
-	fmt.Printf("Artiesten zonder afbeeldingen (%d gevonden, max 50 getoond):\n", len(artists))
+	fmt.Printf("\033[36mArtiesten zonder afbeeldingen\033[0m (\033[1m%d\033[0m gevonden, max 50 getoond):\n", len(artists))
 	fmt.Println("─────────────────────────────────────────────────")
 	for _, artist := range artists {
-		fmt.Printf("  • %s\n", artist.Name)
+		fmt.Printf("  \033[33m•\033[0m %s\n", artist.Name)
 	}
 	fmt.Println("─────────────────────────────────────────────────")
 
