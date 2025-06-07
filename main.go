@@ -153,11 +153,11 @@ func main() {
 	flag.Parse()
 
 	if *showVersion {
-		fmt.Printf("Aeron Afbeelding Batch Processor\n")
+		fmt.Printf("Aeron Image Manager\n")
 		fmt.Printf("Versie: %s\n", Version)
 		fmt.Printf("Commit: %s\n", Commit)
 		fmt.Printf("Build tijd: %s\n", BuildTime)
-		fmt.Printf("Een tool voor Aeron database beheer\n")
+		fmt.Printf("Een tool voor het beheer van afbeeldingen in Aeron databases\n")
 		fmt.Printf("Copyright 2025 Streekomroep ZuidWest\n")
 		return
 	}
@@ -165,15 +165,15 @@ func main() {
 	if *artistName == "" && !*listMode && !*showTools {
 		fmt.Println("Gebruik:")
 		fmt.Println("  Artiest afbeelding bijwerken vanuit URL:")
-		fmt.Println("    ./aeron-imgbatch -artist=\"OneRepublic\" -url=\"https://example.com/image.jpg\"")
+		fmt.Println("    ./aeron-imgman -artist=\"OneRepublic\" -url=\"https://example.com/image.jpg\"")
 		fmt.Println("  Artiest afbeelding bijwerken vanuit lokaal bestand:")
-		fmt.Println("    ./aeron-imgbatch -artist=\"OneRepublic\" -file=\"/pad/naar/image.jpg\"")
+		fmt.Println("    ./aeron-imgman -artist=\"OneRepublic\" -file=\"/pad/naar/image.jpg\"")
 		fmt.Println("  Artiesten zonder afbeeldingen tonen:")
-		fmt.Println("    ./aeron-imgbatch -list")
+		fmt.Println("    ./aeron-imgman -list")
 		fmt.Println("  Beschikbare optimalisatie tools tonen:")
-		fmt.Println("    ./aeron-imgbatch -tools")
+		fmt.Println("    ./aeron-imgman -tools")
 		fmt.Println("  Versie informatie tonen:")
-		fmt.Println("    ./aeron-imgbatch -version")
+		fmt.Println("    ./aeron-imgman -version")
 		fmt.Println("")
 		fmt.Println("Configuratie:")
 		fmt.Println("  -config=/pad/naar/config.yaml   Gebruik aangepast config bestand")
@@ -644,9 +644,9 @@ func showAvailableTools() {
 	fmt.Println("- Ondersteund: JPG, JPEG, PNG invoer formaten")
 
 	fmt.Println("\nGebruik:")
-	fmt.Println("- ./aeron-imgbatch -artist=\"Artist\" -url=\"image.jpg\"")
-	fmt.Println("- ./aeron-imgbatch -artist=\"Artist\" -url=\"image.png\"")
-	fmt.Println("- ./aeron-imgbatch -artist=\"Artist\" -file=\"/path/to/image.jpeg\"")
+	fmt.Println("- ./aeron-imgman -artist=\"Artist\" -url=\"image.jpg\"")
+	fmt.Println("- ./aeron-imgman -artist=\"Artist\" -url=\"image.png\"")
+	fmt.Println("- ./aeron-imgman -artist=\"Artist\" -file=\"/path/to/image.jpeg\"")
 
 	fmt.Println("\nAlle tools zijn gecompileerd in dit programma - geen externe afhankelijkheden nodig.")
 }

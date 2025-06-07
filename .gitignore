@@ -1,4 +1,6 @@
 # Binaries
+aeron-imgman
+aeron-imgman.exe
 aeron-imgbatch
 aeron-imgbatch.exe
 
@@ -37,6 +39,7 @@ local-config.yaml
 *.log
 
 # Build artifacts and releases
+aeron-imgman-*
 aeron-imgbatch-*
 release-assets/
 artifacts/

@@ -40,6 +40,6 @@ jobs:
 
       - name: Test version functionality
         run: |
-          go build -ldflags="-X main.Version=test -X main.Commit=test -X main.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)" -o aeron-imgbatch .
-          ./aeron-imgbatch -version
-          ./aeron-imgbatch -tools
+          go build -ldflags="-X main.Version=test -X main.Commit=test -X main.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)" -o aeron-imgman .
+          ./aeron-imgman -version
+          ./aeron-imgman -tools

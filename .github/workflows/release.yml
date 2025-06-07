@@ -13,7 +13,7 @@ on:
 
 env:
   GO_VERSION: '1.24'
-  APP_NAME: 'aeron-imgbatch'
+  APP_NAME: 'aeron-imgman'
 
 jobs:
   test:
@@ -127,7 +127,7 @@ jobs:
           BUILD_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
           
           cat > ${{ env.APP_NAME }}-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goarm }}-info.txt << EOF
-          Aeron Afbeelding Batch Processor
+          Aeron Image Manager
           ================================
           
           Versie: ${VERSION}
@@ -136,8 +136,7 @@ jobs:
           Commit: ${COMMIT}
           Build Tijd: ${BUILD_TIME}
           
-          Een command-line tool voor het optimaliseren en verwerken van 
-          artiest afbeeldingen voor Aeron databases.
+          Een command-line tool voor het beheer van afbeeldingen in Aeron databases.
           
           Voor meer informatie, zie: README.md
           EOF

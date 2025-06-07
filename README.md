@@ -1,6 +1,6 @@
-# Aeron Afbeelding Batchprocessor
+# Aeron Image Manager
 
-Een commandline-tool voor het optimaliseren en verwerken van artiestafbeeldingen voor Aeron-databases.
+Een command-line tool voor het beheer van afbeeldingen in Aeron databases.
 
 > \[!WARNING]
 > Aeron is een product van Broadcast Partners. Deze tool is niet officieel en is niet ontwikkeld in opdracht van of in samenwerking met Broadcast Partners. Gebruik ervan is volledig op eigen risico. Maak altijd eerst een backup van de database voordat je deze tool gebruikt.
@@ -18,15 +18,15 @@ Een commandline-tool voor het optimaliseren en verwerken van artiestafbeeldingen
 ## Installatie
 
 ```bash
-git clone https://github.com/oszuidwest/aeron-imgbatch.git
-cd aeron-imgbatch
+git clone https://github.com/oszuidwest/aeron-imgman.git
+cd aeron-imgman
 go mod tidy
-go build -o aeron-imgbatch .
+go build -o aeron-imgman .
 ```
 
 ### Pre-built Releases
 
-Je kunt ook pre-compiled binaries downloaden van de [Releases pagina](https://github.com/oszuidwest/aeron-imgbatch/releases):
+Je kunt ook pre-compiled binaries downloaden van de [Releases pagina](https://github.com/oszuidwest/aeron-imgman/releases):
 
 - **Linux**: amd64, arm64, armv7
 - **Windows**: amd64, arm64  
@@ -40,22 +40,22 @@ Download het juiste bestand voor jouw platform, maak het uitvoerbaar (`chmod +x`
 
 ```bash
 # Artiestafbeelding bijwerken via URL
-./aeron-imgbatch -artist="OneRepublic" -url="https://example.com/image.jpg"
+./aeron-imgman -artist="OneRepublic" -url="https://example.com/image.jpg"
 
 # Artiestafbeelding bijwerken via lokaal bestand
-./aeron-imgbatch -artist="OneRepublic" -file="/pad/naar/image.jpg"
+./aeron-imgman -artist="OneRepublic" -file="/pad/naar/image.jpg"
 
 # Artiesten zonder afbeelding tonen
-./aeron-imgbatch -list
+./aeron-imgman -list
 
 # Status optimalisatietools tonen
-./aeron-imgbatch -tools
+./aeron-imgman -tools
 
 # Versie-informatie tonen
-./aeron-imgbatch -version
+./aeron-imgman -version
 
 # Dry-run (voorbeeld zonder wijzigingen)
-./aeron-imgbatch -artist="OneRepublic" -url="image.jpg" -dry-run
+./aeron-imgman -artist="OneRepublic" -url="image.jpg" -dry-run
 ```
 
 ### Configuratie
@@ -64,16 +64,16 @@ Download het juiste bestand voor jouw platform, maak het uitvoerbaar (`chmod +x`
 
 ```bash
 # Gebruikt standaard config.yaml in huidige directory
-./aeron-imgbatch -artist="Naam Artiest" -url="image.jpg"
+./aeron-imgman -artist="Naam Artiest" -url="image.jpg"
 
 # Of aangepaste configuratie gebruiken
-./aeron-imgbatch -config="/pad/naar/config.yaml" -artist="Naam Artiest" -url="image.jpg"
+./aeron-imgman -config="/pad/naar/config.yaml" -artist="Naam Artiest" -url="image.jpg"
 ```
 
 #### Commandline-opties
 
 ```bash
-./aeron-imgbatch \
+./aeron-imgman \
   -db-host=localhost \
   -db-port=5432 \
   -db-name=aeron_db \
@@ -94,7 +94,7 @@ export DB_USER=aeron_user
 export DB_PASSWORD=wachtwoord
 export DB_SCHEMA=aeron
 
-./aeron-imgbatch -artist="Naam Artiest" -url="image.jpg"
+./aeron-imgman -artist="Naam Artiest" -url="image.jpg"
 ```
 
 ## Configuratiebestand
