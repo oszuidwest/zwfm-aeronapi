@@ -19,6 +19,13 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// Build information (set via ldflags)
+var (
+	Version   = "dev"
+	Commit    = "unknown"
+	BuildTime = "unknown"
+)
+
 // Constanten
 const (
 	MaxFileSize     = 20 * 1024 * 1024 // 20MB
@@ -140,9 +147,20 @@ func main() {
 		listMode   = flag.Bool("list", false, "Toon artiesten zonder afbeeldingen")
 		dryRun     = flag.Bool("dry-run", false, "Toon wat gedaan zou worden zonder daadwerkelijk bij te werken")
 		showTools  = flag.Bool("tools", false, "Toon beschikbare optimalisatie tools")
+		showVersion = flag.Bool("version", false, "Toon versie informatie")
 		configFile = flag.String("config", "", "Pad naar config bestand (standaard: config.yaml)")
 	)
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Printf("Aeron Afbeelding Batch Processor\n")
+		fmt.Printf("Versie: %s\n", Version)
+		fmt.Printf("Commit: %s\n", Commit)
+		fmt.Printf("Build tijd: %s\n", BuildTime)
+		fmt.Printf("Een tool voor Aeron database beheer\n")
+		fmt.Printf("Copyright 2025 Streekomroep ZuidWest\n")
+		return
+	}
 
 	if *artistName == "" && !*listMode && !*showTools {
 		fmt.Println("Gebruik:")
@@ -154,6 +172,8 @@ func main() {
 		fmt.Println("    ./aeron-imgbatch -list")
 		fmt.Println("  Beschikbare optimalisatie tools tonen:")
 		fmt.Println("    ./aeron-imgbatch -tools")
+		fmt.Println("  Versie informatie tonen:")
+		fmt.Println("    ./aeron-imgbatch -version")
 		fmt.Println("")
 		fmt.Println("Configuratie:")
 		fmt.Println("  -config=/pad/naar/config.yaml   Gebruik aangepast config bestand")

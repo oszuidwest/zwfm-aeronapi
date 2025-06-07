@@ -1,4 +1,4 @@
-module aeron-imgbatch
+module github.com/oszuidwest/aeron-imgbatch
 
 go 1.24
 

@@ -1,6 +1,6 @@
 # Aeron Afbeelding Batchprocessor
 
-Een commandline-tool voor het optimaliseren en verwerken van artiestafbeeldingen voor de Aeron-database van Streekomroep ZuidWest.
+Een commandline-tool voor het optimaliseren en verwerken van artiestafbeeldingen voor Aeron-databases.
 
 > \[!WARNING]
 > Aeron is een product van Broadcast Partners. Deze tool is niet officieel en is niet ontwikkeld in opdracht van of in samenwerking met Broadcast Partners. Gebruik ervan is volledig op eigen risico. Maak altijd eerst een backup van de database voordat je deze tool gebruikt.
@@ -18,11 +18,21 @@ Een commandline-tool voor het optimaliseren en verwerken van artiestafbeeldingen
 ## Installatie
 
 ```bash
-git clone https://github.com/streekomroep-zuidwest/aeron-imgbatch.git
+git clone https://github.com/oszuidwest/aeron-imgbatch.git
 cd aeron-imgbatch
 go mod tidy
 go build -o aeron-imgbatch .
 ```
+
+### Pre-built Releases
+
+Je kunt ook pre-compiled binaries downloaden van de [Releases pagina](https://github.com/oszuidwest/aeron-imgbatch/releases):
+
+- **Linux**: amd64, arm64, armv7
+- **Windows**: amd64, arm64  
+- **macOS**: Intel (amd64), Apple Silicon (arm64)
+
+Download het juiste bestand voor jouw platform, maak het uitvoerbaar (`chmod +x`) en gebruik het direct.
 
 ## Gebruik
 
@@ -40,6 +50,9 @@ go build -o aeron-imgbatch .
 
 # Status optimalisatietools tonen
 ./aeron-imgbatch -tools
+
+# Versie-informatie tonen
+./aeron-imgbatch -version
 
 # Dry-run (voorbeeld zonder wijzigingen)
 ./aeron-imgbatch -artist="OneRepublic" -url="image.jpg" -dry-run
@@ -143,7 +156,7 @@ CREATE TABLE {schema}.artist (
 
 ## Over dit project
 
-Dit project is ontwikkeld door Streekomroep ZuidWest voor gebruik met de nieuwste versie van het Aeron-broadcastsysteem. Het ondersteunt het beheer en optimaliseren van artiestafbeeldingen in de Aeron-database.
+Dit project ondersteunt het beheer en optimaliseren van artiestafbeeldingen in Aeron-databases. Het is compatibel met de nieuwste versie van de AerOn Studio radio-automatisering.
 
 ## Licentie
 

@@ -35,3 +35,8 @@ local-config.yaml
 
 # Logs
 *.log
+
+# Build artifacts and releases
+aeron-imgbatch-*
+release-assets/
+artifacts/
