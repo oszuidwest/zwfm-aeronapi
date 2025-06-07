@@ -120,34 +120,12 @@ jobs:
             -o ${{ env.APP_NAME }}-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goarm }}${{ matrix.suffix }} \
             .
 
-      - name: Generate build info
-        run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          COMMIT=$(git rev-parse --short HEAD)
-          BUILD_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-          
-          cat > ${{ env.APP_NAME }}-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goarm }}-info.txt << EOF
-          Aeron Image Manager
-          ================================
-          
-          Versie: ${VERSION}
-          Platform: ${{ matrix.goos }}/${{ matrix.goarch }}${{ matrix.goarm }}
-          Go Versie: ${{ env.GO_VERSION }}
-          Commit: ${COMMIT}
-          Build Tijd: ${BUILD_TIME}
-          
-          Een command-line tool voor het beheer van afbeeldingen in Aeron databases.
-          
-          Voor meer informatie, zie: README.md
-          EOF
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.APP_NAME }}-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goarm }}
-          path: |
-            ${{ env.APP_NAME }}-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goarm }}${{ matrix.suffix }}
-            ${{ env.APP_NAME }}-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goarm }}-info.txt
+          path: ${{ env.APP_NAME }}-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goarm }}${{ matrix.suffix }}
 
   release:
     needs: build
@@ -188,7 +166,7 @@ jobs:
           cat > RELEASE_NOTES.md << EOF
           ## Downloads
           
-          Download het juiste bestand voor uw platform en maak het uitvoerbaar met \`chmod +x\`.
+          Download het juiste bestand voor je platform en maak het uitvoerbaar met \`chmod +x\`.
           
           **Linux**: amd64, arm64, armv7  
           **Windows**: amd64, arm64  
