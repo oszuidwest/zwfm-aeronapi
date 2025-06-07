@@ -1,6 +1,6 @@
-# Example configuration for aeron-imgbatch
+# Voorbeeld configuratie voor aeron-imgbatch
 
-# Database Configuration
+# Database Configuratie
 database:
   host: localhost
   port: 5432
@@ -10,23 +10,23 @@ database:
   schema: aeron
   sslmode: disable
 
-# Image Processing Configuration
+# Afbeelding Verwerkings Configuratie
 image:
-  # Target image dimensions
+  # Doel afbeelding afmetingen
   target_width: 640
   target_height: 640
   
-  # JPEG quality (1-100)
+  # JPEG kwaliteit (1-100)
   quality: 90
   
-  # Use Jpegli encoder for better compression
+  # Gebruik Jpegli encoder voor betere compressie
   use_jpegli: true
   
-  # Maximum file size in MB
+  # Maximale bestandsgrootte in MB
   max_file_size_mb: 20
   
-  # Processing behavior
-  reject_smaller: true    # Reject images smaller than target size
+  # Verwerkings gedrag
+  reject_smaller: true    # Weiger afbeeldingen kleiner dan doelgrootte
   
-  # Note: Larger images are always resized to target dimensions
-  # Supported formats: JPG, JPEG, PNG (always allowed)
+  # Opmerking: Grotere afbeeldingen worden altijd verkleind naar doelafmetingen
+  # Ondersteunde formaten: JPG, JPEG, PNG (altijd toegestaan)

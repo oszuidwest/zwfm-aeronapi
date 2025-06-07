@@ -19,7 +19,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Constants
+// Constanten
 const (
 	MaxFileSize     = 20 * 1024 * 1024 // 20MB
 	DefaultWidth    = 640
@@ -34,10 +34,10 @@ const (
 	DefaultSSLMode  = "disable"
 )
 
-// Supported formats
+// Ondersteunde formaten
 var SupportedFormats = []string{"jpeg", "jpg", "png"}
 
-// Artist represents an artist record
+// Artist vertegenwoordigt een artiest record
 type Artist struct {
 	ID       string
 	Name     string
@@ -84,7 +84,7 @@ func NewImageOptimizer(config ImageConfig) *ImageOptimizer {
 }
 
 func loadConfig(configPath string) (*Config, error) {
-	// Default configuration
+	// Standaard configuratie
 	config := &Config{
 		Database: DatabaseConfig{
 			Host:     DefaultHost,
@@ -105,13 +105,13 @@ func loadConfig(configPath string) (*Config, error) {
 		},
 	}
 
-	// Try to load config file
+	// Probeer config bestand te laden
 	if configPath == "" {
-		// Look for config.yaml in current directory
+		// Zoek naar config.yaml in huidige directory
 		if _, err := os.Stat("config.yaml"); err == nil {
 			configPath = "config.yaml"
 		} else {
-			// No config file found, use defaults
+			// Geen config bestand gevonden, gebruik standaardwaarden
 			return config, nil
 		}
 	}
@@ -119,14 +119,14 @@ func loadConfig(configPath string) (*Config, error) {
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			fmt.Printf("Config file %s not found, using defaults\n", configPath)
+			fmt.Printf("Config bestand %s niet gevonden, gebruik standaardwaarden\n", configPath)
 			return config, nil
 		}
-		return nil, fmt.Errorf("failed to read config file: %w", err)
+		return nil, fmt.Errorf("kon config bestand niet lezen: %w", err)
 	}
 
 	if err := yaml.Unmarshal(data, config); err != nil {
-		return nil, fmt.Errorf("failed to parse config file: %w", err)
+		return nil, fmt.Errorf("kon config bestand niet parsen: %w", err)
 	}
 
 	return config, nil
@@ -345,7 +345,7 @@ func listArtistsWithoutImages(db *sql.DB, schema string) error {
 	
 	rows, err := db.Query(query)
 	if err != nil {
-		return fmt.Errorf("failed to query artists: %w", err)
+		return fmt.Errorf("kon artiesten niet opvragen: %w", err)
 	}
 	defer rows.Close()
 
@@ -354,16 +354,16 @@ func listArtistsWithoutImages(db *sql.DB, schema string) error {
 	for rows.Next() {
 		var artist Artist
 		if err := rows.Scan(&artist.ID, &artist.Name); err != nil {
-			return fmt.Errorf("failed to scan artist: %w", err)
+			return fmt.Errorf("kon artiest niet scannen: %w", err)
 		}
 		artists = append(artists, artist)
 	}
 
 	if err := rows.Err(); err != nil {
-		return fmt.Errorf("error iterating rows: %w", err)
+		return fmt.Errorf("fout bij doorlopen van rijen: %w", err)
 	}
 
-	fmt.Printf("Artists without images (%d found):\n", len(artists))
+	fmt.Printf("Artiesten zonder afbeeldingen (%d gevonden):\n", len(artists))
 	for _, artist := range artists {
 		fmt.Printf("  %s (ID: %s)\n", artist.Name, artist.ID)
 	}
@@ -379,7 +379,7 @@ func downloadImage(url string) ([]byte, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("failed to download image: HTTP %d", resp.StatusCode)
+		return nil, fmt.Errorf("kon afbeelding niet downloaden: HTTP %d", resp.StatusCode)
 	}
 
 	return readImageFromReader(resp.Body)
@@ -398,7 +398,7 @@ func readImageFile(path string) ([]byte, error) {
 func readImageFromReader(r io.Reader) ([]byte, error) {
 	data, err := io.ReadAll(r)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read image data: %w", err)
+		return nil, fmt.Errorf("kon afbeelding data niet lezen: %w", err)
 	}
 
 	if err := validateImageSize(data); err != nil {
@@ -421,12 +421,12 @@ func validateImageSize(data []byte) error {
 
 func validateImageData(data []byte) error {
 	if len(data) == 0 {
-		return fmt.Errorf("empty image data")
+		return fmt.Errorf("lege afbeelding data")
 	}
 
 	_, _, err := image.DecodeConfig(bytes.NewReader(data))
 	if err != nil {
-		return fmt.Errorf("invalid image data: %w", err)
+		return fmt.Errorf("ongeldige afbeelding data: %w", err)
 	}
 
 	return nil
@@ -434,12 +434,12 @@ func validateImageData(data []byte) error {
 
 func validateImageFormat(format string) error {
 	if !slices.Contains(SupportedFormats, format) {
-		return fmt.Errorf("unsupported image format: %s (supported: %v)", format, SupportedFormats)
+		return fmt.Errorf("niet ondersteund afbeelding formaat: %s (ondersteund: %v)", format, SupportedFormats)
 	}
 	return nil
 }
 
-// Common image processing functions
+// Algemene afbeelding verwerkings functies
 func createBytesReader(data []byte) *bytes.Reader {
 	return bytes.NewReader(data)
 }
@@ -453,7 +453,7 @@ func getImageDimensions(img image.Image) (int, int) {
 	return bounds.Dx(), bounds.Dy()
 }
 
-// Helper functions for error handling
+// Hulp functies voor fout afhandeling
 func wrapError(err error, msg string) error {
 	if err == nil {
 		return nil
@@ -461,11 +461,11 @@ func wrapError(err error, msg string) error {
 	return fmt.Errorf("%s: %w", msg, err)
 }
 
-// Common JPEG encoding logic
+// Algemene JPEG encoding logica
 func encodeToJPEG(img image.Image, config ImageConfig, originalSize int) ([]byte, error) {
 	var optimizedData []byte
 
-	// Try Jpegli first if enabled
+	// Probeer Jpegli eerst als ingeschakeld
 	if config.UseJpegli {
 		if data, err := encodeWithJpegli(img, config.Quality); err == nil {
 			if len(data) > 0 && (originalSize == 0 || len(data) < originalSize) {
@@ -474,7 +474,7 @@ func encodeToJPEG(img image.Image, config ImageConfig, originalSize int) ([]byte
 		}
 	}
 
-	// Fallback to standard JPEG if Jpegli failed or wasn't used
+	// Terugval naar standaard JPEG als Jpegli faalde of niet gebruikt werd
 	if optimizedData == nil {
 		data, err := encodeWithStandardJPEG(img, config.Quality)
 		if err != nil {
@@ -501,7 +501,7 @@ func encodeWithStandardJPEG(img image.Image, quality int) ([]byte, error) {
 	var buf bytes.Buffer
 	options := &jpeg.Options{Quality: quality}
 	if err := jpeg.Encode(&buf, img, options); err != nil {
-		return nil, fmt.Errorf("failed to encode JPEG: %w", err)
+		return nil, fmt.Errorf("kon JPEG niet encoderen: %w", err)
 	}
 	return buf.Bytes(), nil
 }
@@ -509,7 +509,7 @@ func encodeWithStandardJPEG(img image.Image, quality int) ([]byte, error) {
 func getImageInfo(data []byte) (format string, width, height int, err error) {
 	config, format, err := image.DecodeConfig(bytes.NewReader(data))
 	if err != nil {
-		return "", 0, 0, fmt.Errorf("failed to decode image config: %w", err)
+		return "", 0, 0, fmt.Errorf("kon afbeelding configuratie niet decoderen: %w", err)
 	}
 	return format, config.Width, config.Height, nil
 }
@@ -517,7 +517,7 @@ func getImageInfo(data []byte) (format string, width, height int, err error) {
 func (opt *ImageOptimizer) OptimizeImage(data []byte) ([]byte, string, error) {
 	_, format, err := image.DecodeConfig(bytes.NewReader(data))
 	if err != nil {
-		return nil, "", fmt.Errorf("failed to decode image config: %w", err)
+		return nil, "", fmt.Errorf("kon afbeelding configuratie niet decoderen: %w", err)
 	}
 
 	switch format {
@@ -533,7 +533,7 @@ func (opt *ImageOptimizer) OptimizeImage(data []byte) ([]byte, string, error) {
 func (opt *ImageOptimizer) optimizeJPEGPure(data []byte) ([]byte, string, error) {
 	img, err := jpeg.Decode(createBytesReader(data))
 	if err != nil {
-		return nil, "", fmt.Errorf("failed to decode JPEG: %w", err)
+		return nil, "", fmt.Errorf("kon JPEG niet decoderen: %w", err)
 	}
 
 	return opt.processImage(img, data, "jpeg")
@@ -542,27 +542,27 @@ func (opt *ImageOptimizer) optimizeJPEGPure(data []byte) ([]byte, string, error)
 func (opt *ImageOptimizer) convertPNGToJPEG(data []byte) ([]byte, string, error) {
 	img, err := png.Decode(createBytesReader(data))
 	if err != nil {
-		return nil, "", fmt.Errorf("failed to decode PNG: %w", err)
+		return nil, "", fmt.Errorf("kon PNG niet decoderen: %w", err)
 	}
 
 	return opt.processImage(img, data, "jpeg")
 }
 
-// Common image processing logic
+// Algemene afbeelding verwerkings logica
 func (opt *ImageOptimizer) processImage(img image.Image, originalData []byte, outputFormat string) ([]byte, string, error) {
-	// Resize if larger than target size
+	// Verklein als groter dan doelgrootte
 	width, height := getImageDimensions(img)
 	if needsResize(width, height, opt.Config.TargetWidth, opt.Config.TargetHeight) {
 		img = opt.resizeImage(img, opt.Config.TargetWidth, opt.Config.TargetHeight)
 	}
 
-	// Encode to JPEG
+	// Encodeer naar JPEG
 	optimizedData, err := encodeToJPEG(img, opt.Config, len(originalData))
 	if err != nil {
 		return nil, "", err
 	}
 
-	// Return optimized data if better, otherwise original
+	// Geef geoptimaliseerde data terug als beter, anders origineel
 	if optimizedData != nil && len(optimizedData) > 0 {
 		return optimizedData, outputFormat, nil
 	}
@@ -608,25 +608,25 @@ func getEnvOrFlag(envKey, flagValue string) string {
 }
 
 func showAvailableTools() {
-	fmt.Println("Image Optimization Tools Status:")
+	fmt.Println("Afbeelding Optimalisatie Tools Status:")
 	fmt.Println("================================")
 	
-	fmt.Println("Built-in Pure Go Libraries:")
-	fmt.Printf("%-15s Available - Google's latest JPEG encoder (WebAssembly)\n", "Jpegli:")
-	fmt.Printf("%-15s Available - Fallback Go JPEG encoder\n", "Go JPEG:")
-	fmt.Printf("%-15s Available - PNG decoder (converted to JPEG)\n", "Go PNG:")
+	fmt.Println("Ingebouwde Pure Go Bibliotheken:")
+	fmt.Printf("%-15s Beschikbaar - Google's nieuwste JPEG encoder (WebAssembly)\n", "Jpegli:")
+	fmt.Printf("%-15s Beschikbaar - Terugval Go JPEG encoder\n", "Go JPEG:")
+	fmt.Printf("%-15s Beschikbaar - PNG decoder (geconverteerd naar JPEG)\n", "Go PNG:")
 	
-	fmt.Println("\nOptimization Strategy:")
-	fmt.Println("- Max dimensions: 640x640 pixels")
-	fmt.Println("- Quality: 90")
-	fmt.Println("- Encoder: Jpegli with fallback to standard Go JPEG")
-	fmt.Println("- Format: All inputs converted to JPEG")
-	fmt.Println("- Supported: JPG, JPEG, PNG input formats")
+	fmt.Println("\nOptimalisatie Strategie:")
+	fmt.Println("- Max afmetingen: 640x640 pixels")
+	fmt.Println("- Kwaliteit: 90")
+	fmt.Println("- Encoder: Jpegli met terugval naar standaard Go JPEG")
+	fmt.Println("- Formaat: Alle invoer geconverteerd naar JPEG")
+	fmt.Println("- Ondersteund: JPG, JPEG, PNG invoer formaten")
 	
-	fmt.Println("\nUsage:")
+	fmt.Println("\nGebruik:")
 	fmt.Println("- ./aeron-imgbatch -artist=\"Artist\" -url=\"image.jpg\"")
 	fmt.Println("- ./aeron-imgbatch -artist=\"Artist\" -url=\"image.png\"")
 	fmt.Println("- ./aeron-imgbatch -artist=\"Artist\" -file=\"/path/to/image.jpeg\"")
 	
-	fmt.Println("\nAll tools are compiled into this binary - no external dependencies needed.")
+	fmt.Println("\nAlle tools zijn gecompileerd in dit programma - geen externe afhankelijkheden nodig.")
 }
