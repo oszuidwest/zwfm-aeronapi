@@ -11,17 +11,14 @@ database:
 
 image:
   # Dit is hoe groot de afbeeldingen in de DB komen
-  target_width: 640
-  target_height: 640
+  target_width: 1280
+  target_height: 1280
   
   # JPEG-kwaliteit (1-100)
   quality: 90
   
-  # Gebruik Google's moderne Jpegli encoder voor betere compressie
-  use_jpegli: true
-  
   # Maximale bestandsgrootte van bronbestand
-  max_file_size_mb: 20
+  max_file_size_mb: 200
   
   # Verwerkingsgedrag
   reject_smaller: true

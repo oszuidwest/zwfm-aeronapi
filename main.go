@@ -1,22 +1,23 @@
 package main
 
 import (
-	"bytes"
 	"database/sql"
 	"flag"
 	"fmt"
-	"image"
-	"image/jpeg"
-	"image/png"
-	"io"
 	"log"
-	"net/http"
 	"os"
-	"slices"
 
-	"github.com/gen2brain/jpegli"
 	_ "github.com/lib/pq"
-	"gopkg.in/yaml.v3"
+)
+
+// ANSI colors for clean output
+const (
+	Reset  = "\033[0m"
+	Bold   = "\033[1m"
+	Green  = "\033[32m"
+	Yellow = "\033[33m"
+	Red    = "\033[31m"
+	Cyan   = "\033[36m"
 )
 
 // Build information (set via ldflags)
@@ -28,731 +29,309 @@ var (
 
 // Constanten
 const (
-	MaxFileSize     = 20 * 1024 * 1024 // 20MB
-	DefaultWidth    = 640
-	DefaultHeight   = 640
-	DefaultQuality  = 90
-	DefaultHost     = "localhost"
-	DefaultPort     = "5432"
-	DefaultDatabase = "aeron_db"
-	DefaultUser     = "aeron_user"
-	DefaultPassword = "aeron_password"
-	DefaultSchema   = "aeron"
-	DefaultSSLMode  = "disable"
+	MaxFileSize = 20 * 1024 * 1024 // 20MB (for download validation)
 )
 
-// Ondersteunde formaten
-var SupportedFormats = []string{"jpeg", "jpg", "png"}
-
-// Artist vertegenwoordigt een artiest record
-type Artist struct {
-	ID       string
-	Name     string
-	HasImage bool
-}
-
-type DatabaseConfig struct {
-	Host     string `yaml:"host"`
-	Port     string `yaml:"port"`
-	Name     string `yaml:"name"`
-	User     string `yaml:"user"`
-	Password string `yaml:"password"`
-	Schema   string `yaml:"schema"`
-	SSLMode  string `yaml:"sslmode"`
-}
-
-type ImageConfig struct {
-	TargetWidth   int  `yaml:"target_width"`
-	TargetHeight  int  `yaml:"target_height"`
-	Quality       int  `yaml:"quality"`
-	UseJpegli     bool `yaml:"use_jpegli"`
-	MaxFileSizeMB int  `yaml:"max_file_size_mb"`
-	RejectSmaller bool `yaml:"reject_smaller"`
-}
-
-type Config struct {
-	Database DatabaseConfig `yaml:"database"`
-	Image    ImageConfig    `yaml:"image"`
-}
-
-func (c *Config) DatabaseURL() string {
-	return fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=%s",
-		c.Database.User, c.Database.Password, c.Database.Host, c.Database.Port, c.Database.Name, c.Database.SSLMode)
-}
-
-type ImageOptimizer struct {
-	Config ImageConfig
-}
-
-func NewImageOptimizer(config ImageConfig) *ImageOptimizer {
-	return &ImageOptimizer{
-		Config: config,
-	}
-}
-
-func loadConfig(configPath string) (*Config, error) {
-	// Standaardconfiguratie
-	config := &Config{
-		Database: DatabaseConfig{
-			Host:     DefaultHost,
-			Port:     DefaultPort,
-			Name:     DefaultDatabase,
-			User:     DefaultUser,
-			Password: DefaultPassword,
-			Schema:   DefaultSchema,
-			SSLMode:  DefaultSSLMode,
-		},
-		Image: ImageConfig{
-			TargetWidth:   DefaultWidth,
-			TargetHeight:  DefaultHeight,
-			Quality:       DefaultQuality,
-			UseJpegli:     true,
-			MaxFileSizeMB: MaxFileSize / (1024 * 1024),
-			RejectSmaller: true,
-		},
-	}
-
-	// Probeer config bestand te laden
-	if configPath == "" {
-		// Zoek naar config.yaml in huidige directory
-		if _, err := os.Stat("config.yaml"); err == nil {
-			configPath = "config.yaml"
-		} else {
-			// Geen config.yaml gevonden, gebruik standaardwaarden
-			return config, nil
-		}
-	}
-
-	data, err := os.ReadFile(configPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			fmt.Printf("Config bestand %s niet gevonden, gebruik standaardwaarden\n", configPath)
-			return config, nil
-		}
-		return nil, fmt.Errorf("kon config bestand niet lezen: %w", err)
-	}
-
-	if err := yaml.Unmarshal(data, config); err != nil {
-		return nil, fmt.Errorf("kon config bestand niet parsen: %w", err)
-	}
-
-	return config, nil
-}
-
 func main() {
+	// Remove timestamp from log output
+	log.SetFlags(0)
+
 	var (
 		artistName  = flag.String("artist", "", "Artiest naam om bij te werken (vereist)")
 		imageURL    = flag.String("url", "", "URL van de afbeelding om te downloaden")
 		imagePath   = flag.String("file", "", "Lokaal pad naar afbeelding")
+		searchName  = flag.String("search", "", "Zoek artiesten met gedeeltelijke naam match")
 		listMode    = flag.Bool("list", false, "Toon a;;e artiesten zonder afbeeldingen")
 		nukeMode    = flag.Bool("nuke", false, "Verwijder ALLE afbeeldingen uit de database (vereist bevestiging)")
 		dryRun      = flag.Bool("dry-run", false, "Toon wat gedaan zou worden zonder daadwerkelijk bij te werken")
-		showTools   = flag.Bool("tools", false, "Toon beschikbare optimalisatie tools")
-		showVersion = flag.Bool("version", false, "Toon versie-informatie")
+		versionFlag = flag.Bool("version", false, "Toon versie-informatie")
 		configFile  = flag.String("config", "", "Pad naar config bestand (standaard: config.yaml)")
 	)
 	flag.Parse()
 
-	if *showVersion {
-		fmt.Printf("Aeron Image Manager\n")
-		fmt.Printf("Versie: %s\n", Version)
-		fmt.Printf("Commit: %s\n", Commit)
-		fmt.Printf("Build tijd: %s\n", BuildTime)
-		fmt.Printf("Een tool voor het beheer van afbeeldingen in Aeron databases\n")
-		fmt.Printf("Copyright 2025 Streekomroep ZuidWest\n")
+	if *versionFlag {
+		showVersion()
 		return
 	}
 
-	if *artistName == "" && !*listMode && !*showTools && !*nukeMode {
-		fmt.Println("\033[1mAeron Image Manager\033[0m - Afbeeldingenbeheer voor Aeron databases")
-		fmt.Println("═══════════════════════════════════════════════════════════")
-		fmt.Println()
-		fmt.Println("\033[1mGebruik:\033[0m")
-		fmt.Println("  \033[32mArtiest afbeelding bijwerken vanuit URL:\033[0m")
-		fmt.Println("    ./aeron-imgman -artist=\"OneRepublic\" -url=\"https://example.com/image.jpg\"")
-		fmt.Println("  \033[32mArtiest afbeelding bijwerken vanuit lokaal bestand:\033[0m")
-		fmt.Println("    ./aeron-imgman -artist=\"OneRepublic\" -file=\"/pad/naar/image.jpg\"")
-		fmt.Println()
-		fmt.Println("  \033[36mArtiesten zonder afbeeldingen tonen:\033[0m")
-		fmt.Println("    ./aeron-imgman -list")
-		fmt.Println("  \033[31mALLE afbeeldingen uit database verwijderen:\033[0m")
-		fmt.Println("    ./aeron-imgman -nuke")
-		fmt.Println()
-		fmt.Println("  \033[33mVersie informatie tonen:\033[0m")
-		fmt.Println("    ./aeron-imgman -version")
-		fmt.Println()
-		fmt.Println("\033[1mOpties:\033[0m")
-		fmt.Println("  \033[1m-artist\033[0m string     Artiest naam om bij te werken (vereist)")
-		fmt.Println("  \033[1m-url\033[0m string        URL van de afbeelding om te downloaden")
-		fmt.Println("  \033[1m-file\033[0m string       Lokaal pad naar afbeelding")
-		fmt.Println("  \033[1m-config\033[0m string     Pad naar config bestand (standaard: config.yaml)")
-		fmt.Println("  \033[1m-dry-run\033[0m           Toon wat gedaan zou worden zonder bij te werken")
-		fmt.Println("  \033[1m-list\033[0m              Toon artiesten zonder afbeeldingen")
-		fmt.Println("  \033[1m-nuke\033[0m              Verwijder ALLE afbeeldingen (vereist bevestiging)")
-		fmt.Println("  \033[1m-version\033[0m           Toon versie-informatie")
-		fmt.Println()
-		fmt.Println("\033[1mConfiguratie:\033[0m")
-		fmt.Println("  Standaard: \033[33mconfig.yaml\033[0m in huidige directory")
-		fmt.Println("  Afbeelding vereisten (configureerbaar in config.yaml):")
-		fmt.Println("  • Doelgrootte: \033[36m640x640 pixels\033[0m")
-		fmt.Println("  • Kleinere afbeeldingen worden \033[31mgeweigerd\033[0m")
-		fmt.Println("  • Grotere afbeeldingen worden \033[32mverkleind\033[0m naar doelgrootte")
-		fmt.Println("  • Ondersteunde formaten: \033[33mJPG, JPEG, PNG\033[0m")
-		os.Exit(1)
+	if *artistName == "" && !*listMode && !*nukeMode && *searchName == "" {
+		showUsage()
 	}
 
 	// Configuratie laden
 	config, err := loadConfig(*configFile)
 	if err != nil {
-		log.Fatal("Kon configuratie niet laden:", err)
+		log.Fatal(err)
 	}
 
-	if *showTools {
-		showAvailableTools()
-		return
-	}
+	// Only show database info and connect for operations that need the database
+	if *listMode || *searchName != "" || *nukeMode || *artistName != "" {
+		fmt.Printf("%sDatabase:%s %s:%s/%s (schema: %s)\n", Cyan, Reset, config.Database.Host, config.Database.Port, config.Database.Name, config.Database.Schema)
 
-	fmt.Printf("\033[36mDatabase:\033[0m %s:%s/%s (schema: %s)\n",
-		config.Database.Host, config.Database.Port, config.Database.Name, config.Database.Schema)
-	fmt.Printf("\033[36mInstellingen:\033[0m %dx%d pixels, kwaliteit %d, kleinere afbeeldingen: %s\n",
-		config.Image.TargetWidth, config.Image.TargetHeight, config.Image.Quality,
-		map[bool]string{true: "\033[31mweigeren\033[0m", false: "\033[32mtoestaan\033[0m"}[config.Image.RejectSmaller])
-	fmt.Println("─────────────────────────────────────────────────")
-
-	db, err := sql.Open("postgres", config.DatabaseURL())
-	if err != nil {
-		log.Fatal("Kon niet verbinden met database:", err)
-	}
-	defer db.Close()
-
-	if err := db.Ping(); err != nil {
-		log.Fatal("Kon database niet bereiken:", err)
-	}
-
-	if *listMode {
-		if err := listArtistsWithoutImages(db, config.Database.Schema); err != nil {
-			log.Fatal("Kon artiesten niet tonen:", err)
-		}
-		return
-	}
-
-	if *nukeMode {
-		if err := nukeAllImages(db, config.Database.Schema, *dryRun); err != nil {
-			log.Fatal("Kon afbeeldingen niet verwijderen:", err)
-		}
-		return
-	}
-
-	if *imageURL == "" && *imagePath == "" {
-		log.Fatal("Zowel -url of -file moet gespecificeerd worden")
-	}
-
-	if *imageURL != "" && *imagePath != "" {
-		log.Fatal("Kan niet zowel -url als -file specificeren")
-	}
-
-	if err := processArtistImage(db, config, *artistName, *imageURL, *imagePath, *dryRun); err != nil {
-		log.Fatal("Kon artiest afbeelding niet verwerken:", err)
-	}
-}
-
-func processArtistImage(db *sql.DB, config *Config, artistName, imageURL, imagePath string, dryRun bool) error {
-	artistID, hasExistingImage, err := findArtistByExactName(db, config.Database.Schema, artistName)
-	if err != nil {
-		return fmt.Errorf("kon artiest niet vinden: %w", err)
-	}
-
-	status := "\033[32mnieuwe afbeelding\033[0m"
-	if hasExistingImage {
-		status = "\033[33mvervangen bestaande\033[0m"
-	}
-	fmt.Printf("\033[1mArtiest:\033[0m %s (%s)\n", artistName, status)
-
-	var imageData []byte
-	if imageURL != "" {
-		fmt.Printf("\033[36mBron:\033[0m %s\n", imageURL)
-		imageData, err = downloadImage(imageURL)
+		db, err := sql.Open("postgres", config.DatabaseURL())
 		if err != nil {
-			return fmt.Errorf("kon afbeelding niet downloaden: %w", err)
+			log.Fatal(err)
 		}
-	} else {
-		fmt.Printf("\033[36mBron:\033[0m %s\n", imagePath)
-		imageData, err = readImageFile(imagePath)
-		if err != nil {
-			return fmt.Errorf("kon afbeelding bestand niet lezen: %w", err)
+		defer db.Close()
+
+		if err := db.Ping(); err != nil {
+			log.Fatal(err)
 		}
-	}
 
-	originalFormat, originalWidth, originalHeight, err := getImageInfo(imageData)
-	if err != nil {
-		return fmt.Errorf("kon afbeelding informatie niet verkrijgen: %w", err)
-	}
-
-	fmt.Printf("\033[36mOrigineel:\033[0m %s \033[33m%dx%d\033[0m (\033[35m%d KB\033[0m)\n",
-		originalFormat, originalWidth, originalHeight, len(imageData)/1024)
-
-	// Validate image format
-	if err := validateImageFormat(originalFormat); err != nil {
-		return err
-	}
-
-	// Controleer afbeelding afmetingen volgens configuratie
-	targetWidth := config.Image.TargetWidth
-	targetHeight := config.Image.TargetHeight
-
-	if config.Image.RejectSmaller && (originalWidth < targetWidth || originalHeight < targetHeight) {
-		return fmt.Errorf("afbeelding te klein: %dx%d (vereist: minimaal %dx%d)",
-			originalWidth, originalHeight, targetWidth, targetHeight)
-	}
-
-	// Verklein grotere afbeeldingen naar doelgrootte
-	if originalWidth > targetWidth || originalHeight > targetHeight {
-		fmt.Printf("\033[36mActie:\033[0m \033[31mverkleinen\033[0m van \033[33m%dx%d\033[0m naar max \033[33m%dx%d\033[0m\n",
-			originalWidth, originalHeight, targetWidth, targetHeight)
-	} else if originalWidth == targetWidth && originalHeight == targetHeight {
-		fmt.Printf("\033[36mActie:\033[0m \033[32moptimaliseren\033[0m (exacte doelafmetingen)\n")
-	} else {
-		fmt.Printf("\033[36mActie:\033[0m \033[32moptimaliseren\033[0m (binnen doelafmetingen)\n")
-	}
-
-	optimizer := NewImageOptimizer(config.Image)
-	optimizedData, newFormat, err := optimizer.OptimizeImage(imageData)
-	if err != nil {
-		return fmt.Errorf("kon afbeelding niet optimaliseren: %w", err)
-	}
-
-	originalSize := len(imageData)
-	optimizedSize := len(optimizedData)
-	savings := originalSize - optimizedSize
-	savingsPercent := float64(savings) / float64(originalSize) * 100
-
-	_, optimizedWidth, optimizedHeight, err := getImageInfo(optimizedData)
-	if err != nil {
-		optimizedWidth, optimizedHeight = originalWidth, originalHeight
-	}
-
-	fmt.Printf("\033[36mResultaat:\033[0m %s \033[33m%dx%d\033[0m (\033[35m%d KB\033[0m, \033[32m%.1f%% kleiner\033[0m)\n",
-		newFormat, optimizedWidth, optimizedHeight, optimizedSize/1024, savingsPercent)
-
-	if dryRun {
-		fmt.Println()
-		fmt.Println("\033[33mDRY RUN:\033[0m Zou artiest afbeelding bijwerken maar doet dit niet daadwerkelijk")
-		return nil
-	}
-
-	fmt.Println("\033[36mDatabase bijwerken...\033[0m")
-	if err := updateArtistImageInDB(db, config.Database.Schema, artistID, optimizedData); err != nil {
-		return fmt.Errorf("kon database niet bijwerken: %w", err)
-	}
-
-	fmt.Printf("\033[32mSucces:\033[0m Afbeelding voor \033[1m%s\033[0m bijgewerkt\n", artistName)
-	return nil
-}
-
-func findArtistByExactName(db *sql.DB, schema, artistName string) (string, bool, error) {
-	query := fmt.Sprintf(`SELECT artistid, CASE WHEN picture IS NOT NULL THEN true ELSE false END as has_image 
-	                      FROM %s.artist WHERE artist = $1`, schema)
-
-	var artistID string
-	var hasImage bool
-	err := db.QueryRow(query, artistName).Scan(&artistID, &hasImage)
-
-	if err == sql.ErrNoRows {
-		return "", false, fmt.Errorf("geen artiest gevonden met exacte naam '%s'", artistName)
-	}
-	if err != nil {
-		return "", false, fmt.Errorf("database fout: %w", err)
-	}
-
-	return artistID, hasImage, nil
-}
-
-func updateArtistImageInDB(db *sql.DB, schema, artistID string, imageData []byte) error {
-	query := fmt.Sprintf(`UPDATE %s.artist SET picture = $1 WHERE artistid = $2`, schema)
-	_, err := db.Exec(query, imageData, artistID)
-	if err != nil {
-		return fmt.Errorf("kon artiest afbeelding niet bijwerken: %w", err)
-	}
-	return nil
-}
-
-func listArtists(db *sql.DB, schema string, hasImage bool, limit int) ([]Artist, error) {
-	var condition string
-	if hasImage {
-		condition = "WHERE picture IS NOT NULL"
-	} else {
-		condition = "WHERE picture IS NULL"
-	}
-
-	var limitClause string
-	if limit > 0 {
-		limitClause = fmt.Sprintf("LIMIT %d", limit)
-	}
-
-	query := fmt.Sprintf(`SELECT artistid, artist FROM %s.artist 
-	                      %s 
-	                      ORDER BY artist 
-	                      %s`, schema, condition, limitClause)
-
-	rows, err := db.Query(query)
-	if err != nil {
-		return nil, fmt.Errorf("kon artiesten niet opvragen: %w", err)
-	}
-	defer rows.Close()
-
-	var artists []Artist
-
-	for rows.Next() {
-		var artist Artist
-		if err := rows.Scan(&artist.ID, &artist.Name); err != nil {
-			return nil, fmt.Errorf("kon artiest niet scannen: %w", err)
-		}
-		artist.HasImage = hasImage
-		artists = append(artists, artist)
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("fout bij doorlopen van rijen: %w", err)
-	}
-
-	return artists, nil
-}
-
-func nukeAllImages(db *sql.DB, schema string, dryRun bool) error {
-	// Eerst tellen en tonen welke artiesten geraakt worden
-	artists, err := listArtists(db, schema, true, 0) // true = met afbeeldingen, 0 = geen limit
-	if err != nil {
-		return fmt.Errorf("kon artiesten met afbeeldingen niet ophalen: %w", err)
-	}
-
-	if len(artists) == 0 {
-		fmt.Println("Geen artiesten met afbeeldingen gevonden.")
-		return nil
-	}
-
-	fmt.Printf("\033[1;31mWAARSCHUWING:\033[0m Alle afbeeldingen verwijderen van \033[1m%d\033[0m artiesten\n", len(artists))
-	fmt.Println("═══════════════════════════════════════════════════════")
-
-	// Toon eerste 20 artiesten, dan samenvatting als er meer zijn
-	displayLimit := 20
-	for i, artist := range artists {
-		if i < displayLimit {
-			fmt.Printf("  • %s\n", artist.Name)
-		} else if i == displayLimit {
-			fmt.Printf("  ... en %d meer artiesten\n", len(artists)-displayLimit)
-			break
-		}
-	}
-
-	fmt.Println("═══════════════════════════════════════════════════════")
-	fmt.Printf("\033[1mTotaal:\033[0m \033[31m%d\033[0m artiesten verliezen hun afbeelding\n", len(artists))
-
-	if dryRun {
-		fmt.Println()
-		fmt.Println("\033[33mDRY RUN:\033[0m Zou alle afbeeldingen verwijderen maar doet dit niet daadwerkelijk")
-		return nil
-	}
-
-	fmt.Println()
-	// Bevestiging vragen
-	fmt.Print("\033[1mBen je ZEKER dat je ALLE afbeeldingen wilt verwijderen?\033[0m Type '\033[31mVERWIJDER ALLES\033[0m' om te bevestigen: ")
-	var confirmation string
-	fmt.Scanln(&confirmation)
-
-	if confirmation != "VERWIJDER ALLES" {
-		fmt.Println("Operatie geannuleerd.")
-		return nil
-	}
-
-	// Alle afbeeldingen verwijderen
-	query := fmt.Sprintf(`UPDATE %s.artist SET picture = NULL WHERE picture IS NOT NULL`, schema)
-	result, err := db.Exec(query)
-	if err != nil {
-		return fmt.Errorf("kon afbeeldingen niet verwijderen: %w", err)
-	}
-
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		fmt.Printf("Afbeeldingen succesvol verwijderd (aantal onbekend)\n")
-	} else {
-		fmt.Printf("Succesvol %d afbeeldingen verwijderd uit de database\n", rowsAffected)
-	}
-
-	return nil
-}
-
-func listArtistsWithoutImages(db *sql.DB, schema string) error {
-	artists, err := listArtists(db, schema, false, 50) // false = zonder afbeeldingen, 50 = limit
-	if err != nil {
-		return fmt.Errorf("kon artiesten zonder afbeeldingen niet ophalen: %w", err)
-	}
-
-	fmt.Printf("\033[36mArtiesten zonder afbeeldingen\033[0m (\033[1m%d\033[0m gevonden, max 50 getoond):\n", len(artists))
-	fmt.Println("─────────────────────────────────────────────────")
-	for _, artist := range artists {
-		fmt.Printf("  \033[33m•\033[0m %s\n", artist.Name)
-	}
-	fmt.Println("─────────────────────────────────────────────────")
-
-	return nil
-}
-
-func downloadImage(url string) ([]byte, error) {
-	resp, err := http.Get(url)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("kon afbeelding niet downloaden: HTTP %d", resp.StatusCode)
-	}
-
-	return readImageFromReader(resp.Body)
-}
-
-func readImageFile(path string) ([]byte, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-
-	return readImageFromReader(file)
-}
-
-func readImageFromReader(r io.Reader) ([]byte, error) {
-	data, err := io.ReadAll(r)
-	if err != nil {
-		return nil, fmt.Errorf("kon afbeelding data niet lezen: %w", err)
-	}
-
-	if err := validateImageSize(data); err != nil {
-		return nil, err
-	}
-
-	if err := validateImageData(data); err != nil {
-		return nil, err
-	}
-
-	return data, nil
-}
-
-func validateImageSize(data []byte) error {
-	if len(data) > MaxFileSize {
-		return fmt.Errorf("image size (%d bytes) exceeds maximum allowed size (%d bytes)", len(data), MaxFileSize)
-	}
-	return nil
-}
-
-func validateImageData(data []byte) error {
-	if len(data) == 0 {
-		return fmt.Errorf("lege afbeelding data")
-	}
-
-	_, _, err := image.DecodeConfig(bytes.NewReader(data))
-	if err != nil {
-		return fmt.Errorf("ongeldige afbeelding data: %w", err)
-	}
-
-	return nil
-}
-
-func validateImageFormat(format string) error {
-	if !slices.Contains(SupportedFormats, format) {
-		return fmt.Errorf("niet ondersteund afbeelding formaat: %s (ondersteund: %v)", format, SupportedFormats)
-	}
-	return nil
-}
-
-// Algemene afbeelding verwerkings functies
-func createBytesReader(data []byte) *bytes.Reader {
-	return bytes.NewReader(data)
-}
-
-func needsResize(width, height, targetWidth, targetHeight int) bool {
-	return width > targetWidth || height > targetHeight
-}
-
-func getImageDimensions(img image.Image) (int, int) {
-	bounds := img.Bounds()
-	return bounds.Dx(), bounds.Dy()
-}
-
-// Hulp functies voor fout afhandeling
-func wrapError(err error, msg string) error {
-	if err == nil {
-		return nil
-	}
-	return fmt.Errorf("%s: %w", msg, err)
-}
-
-// Algemene JPEG encoding logica
-func encodeToJPEG(img image.Image, config ImageConfig, originalSize int) ([]byte, error) {
-	var optimizedData []byte
-
-	// Probeer Jpegli eerst
-	if config.UseJpegli {
-		if data, err := encodeWithJpegli(img, config.Quality); err == nil {
-			if len(data) > 0 && (originalSize == 0 || len(data) < originalSize) {
-				optimizedData = data
+		if *listMode {
+			if err := listArtistsWithoutImages(db, config.Database.Schema); err != nil {
+				log.Fatal(err)
 			}
+			return
+		}
+
+		if *searchName != "" {
+			if err := searchArtists(db, config.Database.Schema, *searchName); err != nil {
+				log.Fatal(err)
+			}
+			return
+		}
+
+		if *nukeMode {
+			if err := nukeAllImages(db, config.Database.Schema, *dryRun); err != nil {
+				log.Fatal(err)
+			}
+			return
+		}
+
+		// Continue to image processing for artist operations
+		if err := validateImageInput(*imageURL, *imagePath); err != nil {
+			log.Fatal(err)
+		}
+
+		if err := processArtistImage(db, config, *artistName, *imageURL, *imagePath, *dryRun); err != nil {
+			log.Fatal(err)
 		}
 	}
+}
 
-	// Val terug naar standaard JPEG als Jpegli faalde of niet ingeschakeld is
-	if optimizedData == nil {
-		data, err := encodeWithStandardJPEG(img, config.Quality)
+type ImageProcessingResult struct {
+	Data      []byte
+	Format    string
+	Encoder   string
+	Original  ImageInfo
+	Optimized ImageInfo
+	Savings   float64
+}
+
+type ImageInfo struct {
+	Format string
+	Width  int
+	Height int
+	Size   int
+}
+
+func findAndValidateArtist(db *sql.DB, schema, artistName string) (*Artist, error) {
+	artistID, hasExistingImage, err := findArtistByExactName(db, schema, artistName)
+	if err != nil {
+		return nil, err
+	}
+
+	return &Artist{
+		ID:       artistID,
+		Name:     artistName,
+		HasImage: hasExistingImage,
+	}, nil
+}
+
+func loadImageFromSource(imageURL, imagePath string, maxFileSizeMB int) ([]byte, error) {
+	var imageData []byte
+	var err error
+
+	if imageURL != "" {
+		imageData, err = downloadImage(imageURL, maxFileSizeMB)
 		if err != nil {
 			return nil, err
 		}
-		if originalSize == 0 || len(data) < originalSize {
-			optimizedData = data
+	} else {
+		imageData, err = readImageFile(imagePath, maxFileSizeMB)
+		if err != nil {
+			return nil, err
 		}
 	}
 
-	return optimizedData, nil
+	return imageData, nil
 }
 
-func encodeWithJpegli(img image.Image, quality int) ([]byte, error) {
-	var buf bytes.Buffer
-	options := &jpegli.EncodingOptions{Quality: quality}
-	if err := jpegli.Encode(&buf, img, options); err != nil {
+func processAndOptimizeImage(imageData []byte, config ImageConfig) (*ImageProcessingResult, error) {
+	originalInfo, err := extractImageInfo(imageData)
+	if err != nil {
 		return nil, err
 	}
-	return buf.Bytes(), nil
-}
 
-func encodeWithStandardJPEG(img image.Image, quality int) ([]byte, error) {
-	var buf bytes.Buffer
-	options := &jpeg.Options{Quality: quality}
-	if err := jpeg.Encode(&buf, img, options); err != nil {
-		return nil, fmt.Errorf("kon JPEG niet encoderen: %w", err)
+	// Original image info processed internally
+
+	if err := validateImageFormat(originalInfo.Format); err != nil {
+		return nil, err
 	}
-	return buf.Bytes(), nil
+
+	if err := validateImageDimensions(originalInfo, config); err != nil {
+		return nil, err
+	}
+
+	if shouldSkipOptimization(originalInfo, config) {
+		return createSkippedResult(imageData, originalInfo), nil
+	}
+
+	return optimizeImageData(imageData, originalInfo, config)
 }
 
-func getImageInfo(data []byte) (format string, width, height int, err error) {
-	config, format, err := image.DecodeConfig(bytes.NewReader(data))
+func extractImageInfo(imageData []byte) (*ImageInfo, error) {
+	format, width, height, err := getImageInfo(imageData)
 	if err != nil {
-		return "", 0, 0, fmt.Errorf("kon afbeelding configuratie niet decoderen: %w", err)
+		return nil, fmt.Errorf("kon afbeelding informatie niet verkrijgen: %w", err)
 	}
-	return format, config.Width, config.Height, nil
+
+	return &ImageInfo{
+		Format: format,
+		Width:  width,
+		Height: height,
+		Size:   len(imageData),
+	}, nil
 }
 
-func (opt *ImageOptimizer) OptimizeImage(data []byte) ([]byte, string, error) {
-	_, format, err := image.DecodeConfig(bytes.NewReader(data))
+func validateImageDimensions(info *ImageInfo, config ImageConfig) error {
+	if config.RejectSmaller && (info.Width < config.TargetWidth || info.Height < config.TargetHeight) {
+		return fmt.Errorf("afbeelding te klein: %dx%d (vereist: minimaal %dx%d)",
+			info.Width, info.Height, config.TargetWidth, config.TargetHeight)
+	}
+	return nil
+}
+
+func shouldSkipOptimization(info *ImageInfo, config ImageConfig) bool {
+	return info.Width == config.TargetWidth && info.Height == config.TargetHeight
+}
+
+func createSkippedResult(imageData []byte, originalInfo *ImageInfo) *ImageProcessingResult {
+	// Image already perfect size - no processing needed
+	result := &ImageProcessingResult{
+		Data:      imageData,
+		Format:    originalInfo.Format,
+		Encoder:   "origineel (geen optimalisatie)",
+		Original:  *originalInfo,
+		Optimized: *originalInfo,
+		Savings:   0,
+	}
+	// Skipped optimization - already perfect size
+	return result
+}
+
+func optimizeImageData(imageData []byte, originalInfo *ImageInfo, config ImageConfig) (*ImageProcessingResult, error) {
+	// Processing image for optimization
+
+	optimizer := NewImageOptimizer(config)
+	optimizedData, optFormat, optEncoder, err := optimizer.OptimizeImage(imageData)
 	if err != nil {
-		return nil, "", fmt.Errorf("kon afbeelding configuratie niet decoderen: %w", err)
+		return nil, fmt.Errorf("kon afbeelding niet optimaliseren: %w", err)
 	}
 
-	switch format {
-	case "jpeg", "jpg":
-		return opt.optimizeJPEGPure(data)
-	case "png":
-		return opt.convertPNGToJPEG(data)
-	default:
-		return data, format, nil
-	}
-}
-
-func (opt *ImageOptimizer) optimizeJPEGPure(data []byte) ([]byte, string, error) {
-	img, err := jpeg.Decode(createBytesReader(data))
+	optimizedInfo, err := extractImageInfo(optimizedData)
 	if err != nil {
-		return nil, "", fmt.Errorf("kon JPEG niet decoderen: %w", err)
-	}
-
-	return opt.processImage(img, data, "jpeg")
-}
-
-func (opt *ImageOptimizer) convertPNGToJPEG(data []byte) ([]byte, string, error) {
-	img, err := png.Decode(createBytesReader(data))
-	if err != nil {
-		return nil, "", fmt.Errorf("kon PNG niet decoderen: %w", err)
-	}
-
-	return opt.processImage(img, data, "jpeg")
-}
-
-// Algemene afbeeldingverwerking logica
-func (opt *ImageOptimizer) processImage(img image.Image, originalData []byte, outputFormat string) ([]byte, string, error) {
-	// Verklein als groter dan doelgrootte
-	width, height := getImageDimensions(img)
-	if needsResize(width, height, opt.Config.TargetWidth, opt.Config.TargetHeight) {
-		img = opt.resizeImage(img, opt.Config.TargetWidth, opt.Config.TargetHeight)
-	}
-
-	// Encode JPEG
-	optimizedData, err := encodeToJPEG(img, opt.Config, len(originalData))
-	if err != nil {
-		return nil, "", err
-	}
-
-	// Geef geoptimaliseerde data terug als deze beter is, anders origineel
-	if optimizedData != nil && len(optimizedData) > 0 {
-		return optimizedData, outputFormat, nil
-	}
-
-	return originalData, outputFormat, nil
-}
-
-func (opt *ImageOptimizer) resizeImage(img image.Image, maxWidth, maxHeight int) image.Image {
-	width, height := getImageDimensions(img)
-
-	scaleX := float64(maxWidth) / float64(width)
-	scaleY := float64(maxHeight) / float64(height)
-	scale := scaleX
-	if scaleY < scaleX {
-		scale = scaleY
-	}
-
-	if scale >= 1 {
-		return img
-	}
-
-	newWidth := int(float64(width) * scale)
-	newHeight := int(float64(height) * scale)
-
-	dst := image.NewRGBA(image.Rect(0, 0, newWidth, newHeight))
-
-	for y := 0; y < newHeight; y++ {
-		for x := 0; x < newWidth; x++ {
-			srcX := int(float64(x) / scale)
-			srcY := int(float64(y) / scale)
-			dst.Set(x, y, img.At(srcX, srcY))
+		optimizedInfo = &ImageInfo{
+			Format: optFormat,
+			Width:  originalInfo.Width,
+			Height: originalInfo.Height,
+			Size:   len(optimizedData),
 		}
 	}
 
-	return dst
-}
+	savings := calculateSavings(originalInfo.Size, optimizedInfo.Size)
 
-func getEnvOrFlag(envKey, flagValue string) string {
-	if value := os.Getenv(envKey); value != "" {
-		return value
+	result := &ImageProcessingResult{
+		Data:      optimizedData,
+		Format:    optFormat,
+		Encoder:   optEncoder,
+		Original:  *originalInfo,
+		Optimized: *optimizedInfo,
+		Savings:   savings,
 	}
-	return flagValue
+
+	// Image optimized successfully
+	return result, nil
 }
 
-func showAvailableTools() {
-	fmt.Println("Afbeelding Optimalisatie Tools Status:")
-	fmt.Println("================================")
+func calculateSavings(originalSize, optimizedSize int) float64 {
+	savings := originalSize - optimizedSize
+	return float64(savings) / float64(originalSize) * 100
+}
 
-	fmt.Println("Ingebouwde Pure Go Bibliotheken:")
-	fmt.Printf("%-15s Beschikbaar - Google's nieuwste JPEG encoder (WebAssembly)\n", "Jpegli:")
-	fmt.Printf("%-15s Beschikbaar - Terugval Go JPEG encoder\n", "Go JPEG:")
-	fmt.Printf("%-15s Beschikbaar - PNG decoder (geconverteerd naar JPEG)\n", "Go PNG:")
+func saveImageToDatabase(db *sql.DB, schema, artistID string, imageData []byte) error {
+	// Updating database with new image
+	if err := updateArtistImageInDB(db, schema, artistID, imageData); err != nil {
+		return fmt.Errorf("kon database niet bijwerken: %w", err)
+	}
+	return nil
+}
 
-	fmt.Println("\nOptimalisatie Strategie:")
-	fmt.Println("- Max afmetingen: 640x640 pixels")
-	fmt.Println("- Kwaliteit: 90")
-	fmt.Println("- Encoder: Jpegli met terugval naar standaard Go JPEG")
-	fmt.Println("- Formaat: Alle invoer geconverteerd naar JPEG")
-	fmt.Println("- Ondersteund: JPG, JPEG, PNG invoer formaten")
+func processArtistImage(db *sql.DB, config *Config, artistName, imageURL, imagePath string, dryRun bool) error {
+	artist, err := findAndValidateArtist(db, config.Database.Schema, artistName)
+	if err != nil {
+		return err
+	}
 
-	fmt.Println("\nGebruik:")
-	fmt.Println("- ./aeron-imgman -artist=\"Artist\" -url=\"image.jpg\"")
-	fmt.Println("- ./aeron-imgman -artist=\"Artist\" -url=\"image.png\"")
-	fmt.Println("- ./aeron-imgman -artist=\"Artist\" -file=\"/path/to/image.jpeg\"")
+	// Artist found in database
 
-	fmt.Println("\nAlle tools zijn gecompileerd in dit programma - geen externe afhankelijkheden nodig.")
+	imageData, err := loadImageFromSource(imageURL, imagePath, config.Image.MaxFileSizeMB)
+	if err != nil {
+		return err
+	}
+
+	processingResult, err := processAndOptimizeImage(imageData, config.Image)
+	if err != nil {
+		return err
+	}
+
+	if dryRun {
+		fmt.Printf("%sDRY RUN:%s Would update image for %s\n", Yellow, Reset, artistName)
+		return nil
+	}
+
+	if err := saveImageToDatabase(db, config.Database.Schema, artist.ID, processingResult.Data); err != nil {
+		return err
+	}
+
+	fmt.Printf("%s%s:%s %dKB → %dKB (%s) %s✓%s\n", Bold, artistName, Reset, processingResult.Original.Size/1024, processingResult.Optimized.Size/1024, processingResult.Encoder, Green, Reset)
+	return nil
+}
+
+// Moved from image_utils.go
+func validateImageInput(imageURL, imagePath string) error {
+	if imageURL == "" && imagePath == "" {
+		return fmt.Errorf("zowel -url of -file moet gespecificeerd worden")
+	}
+	if imageURL != "" && imagePath != "" {
+		return fmt.Errorf("kan niet zowel -url als -file specificeren")
+	}
+	return nil
+}
+
+// Moved from output.go
+func showUsage() {
+	fmt.Printf("%sAeron Image Manager%s - Afbeeldingenbeheer voor Aeron databases\n\n", Bold, Reset)
+	fmt.Println("Gebruik:")
+	fmt.Printf("  %s./aeron-imgman -artist=\"Artist\" -url=\"image.jpg\"%s\n", Green, Reset)
+	fmt.Printf("  %s./aeron-imgman -artist=\"Artist\" -file=\"/path/image.jpg\"%s\n", Green, Reset)
+	fmt.Printf("  %s./aeron-imgman -list%s\n", Yellow, Reset)
+	fmt.Printf("  %s./aeron-imgman -search=\"Name\"%s\n", Yellow, Reset)
+	fmt.Println("\nOpties:")
+	fmt.Printf("  %s-artist%s string    Artiest naam (vereist)\n", Bold, Reset)
+	fmt.Printf("  %s-url%s string       URL van afbeelding\n", Bold, Reset)
+	fmt.Printf("  %s-file%s string      Lokaal bestand\n", Bold, Reset)
+	fmt.Printf("  %s-list%s             Toon artiesten zonder afbeelding\n", Bold, Reset)
+	fmt.Printf("  %s-search%s string    Zoek artiesten\n", Bold, Reset)
+	fmt.Printf("  %s-nuke%s             Verwijder ALLE afbeeldingen\n", Bold, Reset)
+	fmt.Printf("  %s-dry-run%s          Simuleer actie\n", Bold, Reset)
+	fmt.Printf("  %s-version%s          Toon versie\n", Bold, Reset)
+	fmt.Println("\nVereist: config.yaml bestand met database en image instellingen")
+	os.Exit(1)
+}
+
+func showVersion() {
+	fmt.Printf("%sAeron Image Manager%s v%s (%s)\n", Bold, Reset, Version, Commit)
+	fmt.Println("Copyright 2025 Streekomroep ZuidWest")
 }
