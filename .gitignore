@@ -44,3 +44,4 @@ aeron-imgbatch-*
 release-assets/
 artifacts/
 CLAUDE.md
+/docker

@@ -2,17 +2,17 @@
 
 database:
   host: localhost
-  port: 5432
-  name: aeron_db
-  user: aeron_user
-  password: aeron_password
+  port: 5413
+  name: aeron_prod_db
+  user: aeron_dba
+  password: aeron_dba
   schema: aeron
   sslmode: disable
 
 image:
   # Dit is hoe groot de afbeeldingen in de DB komen
-  target_width: 1280
-  target_height: 1280
+  target_width: 640
+  target_height: 640
   
   # JPEG-kwaliteit (1-100)
   quality: 90

@@ -121,7 +121,7 @@ func (opt *ImageOptimizer) OptimizeImage(data []byte) ([]byte, string, string, e
 }
 
 func (opt *ImageOptimizer) optimizeJPEGPure(data []byte) ([]byte, string, string, error) {
-	img, err := jpeg.Decode(createBytesReader(data))
+	img, err := jpeg.Decode(bytes.NewReader(data))
 	if err != nil {
 		return nil, "", "", fmt.Errorf("kon JPEG niet decoderen: %w", err)
 	}
@@ -130,7 +130,7 @@ func (opt *ImageOptimizer) optimizeJPEGPure(data []byte) ([]byte, string, string
 }
 
 func (opt *ImageOptimizer) convertPNGToJPEG(data []byte) ([]byte, string, string, error) {
-	img, err := png.Decode(createBytesReader(data))
+	img, err := png.Decode(bytes.NewReader(data))
 	if err != nil {
 		return nil, "", "", fmt.Errorf("kon PNG niet decoderen: %w", err)
 	}
@@ -140,8 +140,9 @@ func (opt *ImageOptimizer) convertPNGToJPEG(data []byte) ([]byte, string, string
 
 func (opt *ImageOptimizer) processImage(img image.Image, originalData []byte, outputFormat string) ([]byte, string, string, error) {
 	// Verklein als groter dan doelgrootte
-	width, height := getImageDimensions(img)
-	if needsResize(width, height, opt.Config.TargetWidth, opt.Config.TargetHeight) {
+	bounds := img.Bounds()
+	width, height := bounds.Dx(), bounds.Dy()
+	if width > opt.Config.TargetWidth || height > opt.Config.TargetHeight {
 		img = opt.resizeImage(img, opt.Config.TargetWidth, opt.Config.TargetHeight)
 	}
 
@@ -160,7 +161,8 @@ func (opt *ImageOptimizer) processImage(img image.Image, originalData []byte, ou
 }
 
 func (opt *ImageOptimizer) resizeImage(img image.Image, maxWidth, maxHeight int) image.Image {
-	width, height := getImageDimensions(img)
+	bounds := img.Bounds()
+	width, height := bounds.Dx(), bounds.Dy()
 
 	scaleX := float64(maxWidth) / float64(width)
 	scaleY := float64(maxHeight) / float64(height)
@@ -187,20 +189,6 @@ func (opt *ImageOptimizer) resizeImage(img image.Image, maxWidth, maxHeight int)
 	}
 
 	return dst
-}
-
-// Algemene afbeelding verwerkings functies
-func createBytesReader(data []byte) *bytes.Reader {
-	return bytes.NewReader(data)
-}
-
-func needsResize(width, height, targetWidth, targetHeight int) bool {
-	return width > targetWidth || height > targetHeight
-}
-
-func getImageDimensions(img image.Image) (int, int) {
-	bounds := img.Bounds()
-	return bounds.Dx(), bounds.Dy()
 }
 
 // Algemene JPEG encoding logica - retourneert data en encoder vergelijking

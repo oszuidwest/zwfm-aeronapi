@@ -1,8 +1,11 @@
 package main
 
 import (
+	"bufio"
 	"database/sql"
 	"fmt"
+	"os"
+	"strings"
 
 	_ "github.com/lib/pq"
 )
@@ -55,22 +58,41 @@ func listArtists(db *sql.DB, schema string, hasImage bool, limit int) ([]Artist,
 	return artists, nil
 }
 
-func findArtistByExactName(db *sql.DB, schema, artistName string) (string, bool, error) {
-	query := fmt.Sprintf(`SELECT artistid, CASE WHEN picture IS NOT NULL THEN true ELSE false END as has_image 
-	                      FROM %s.artist WHERE artist = $1`, schema)
-
-	var artistID string
+func lookupArtist(db *sql.DB, schema, artistName, artistID string) (*Artist, error) {
+	var query string
+	var searchValue string
+	var scanID, scanName string
 	var hasImage bool
-	err := db.QueryRow(query, artistName).Scan(&artistID, &hasImage)
+
+	if artistID != "" {
+		// Lookup by ID
+		query = fmt.Sprintf(`SELECT artistid, artist, CASE WHEN picture IS NOT NULL THEN true ELSE false END as has_image 
+		                     FROM %s.artist WHERE artistid = $1`, schema)
+		searchValue = artistID
+	} else {
+		// Lookup by name
+		query = fmt.Sprintf(`SELECT artistid, artist, CASE WHEN picture IS NOT NULL THEN true ELSE false END as has_image 
+		                     FROM %s.artist WHERE artist = $1`, schema)
+		searchValue = artistName
+	}
+
+	err := db.QueryRow(query, searchValue).Scan(&scanID, &scanName, &hasImage)
 
 	if err == sql.ErrNoRows {
-		return "", false, fmt.Errorf("artiest '%s' niet gevonden", artistName)
+		if artistID != "" {
+			return nil, fmt.Errorf("artiest met ID '%s' niet gevonden", artistID)
+		}
+		return nil, fmt.Errorf("artiest '%s' niet gevonden", artistName)
 	}
 	if err != nil {
-		return "", false, fmt.Errorf("database fout: %w", err)
+		return nil, fmt.Errorf("database fout: %w", err)
 	}
 
-	return artistID, hasImage, nil
+	return &Artist{
+		ID:       scanID,
+		Name:     scanName,
+		HasImage: hasImage,
+	}, nil
 }
 
 func updateArtistImageInDB(db *sql.DB, schema, artistID string, imageData []byte) error {
@@ -94,34 +116,28 @@ func nukeAllImages(db *sql.DB, schema string, dryRun bool) error {
 		return nil
 	}
 
-	fmt.Printf("\033[1;31mWAARSCHUWING:\033[0m Alle afbeeldingen verwijderen van \033[1m%d\033[0m artiesten\n", len(artists))
-	fmt.Println("═══════════════════════════════════════════════════════")
+	fmt.Printf("%s%sWAARSCHUWING:%s %d afbeeldingen verwijderen\n\n", Bold, Red, Reset, len(artists))
 
-	// Toon eerste 20 artiesten, dan samenvatting als er meer zijn
+	// Toon eerste 20 artiesten
 	displayLimit := 20
 	for i, artist := range artists {
 		if i < displayLimit {
 			fmt.Printf("  • %s\n", artist.Name)
 		} else if i == displayLimit {
-			fmt.Printf("  ... en %d meer artiesten\n", len(artists)-displayLimit)
+			fmt.Printf("  ... en %d meer\n", len(artists)-displayLimit)
 			break
 		}
 	}
 
-	fmt.Println("═══════════════════════════════════════════════════════")
-	fmt.Printf("\033[1mTotaal:\033[0m \033[31m%d\033[0m artiesten verliezen hun afbeelding\n", len(artists))
-
 	if dryRun {
-		fmt.Println()
-		fmt.Println("\033[33mDRY RUN:\033[0m Zou alle afbeeldingen verwijderen maar doet dit niet daadwerkelijk")
+		fmt.Printf("\n%sDRY RUN:%s Zou verwijderen maar doet dit niet\n", Yellow, Reset)
 		return nil
 	}
 
-	fmt.Println()
-	// Bevestiging vragen
-	fmt.Print("\033[1mBen je ZEKER dat je ALLE afbeeldingen wilt verwijderen?\033[0m Type '\033[31mVERWIJDER ALLES\033[0m' om te bevestigen: ")
-	var confirmation string
-	fmt.Scanln(&confirmation)
+	fmt.Printf("\nBevestig met '%sVERWIJDER ALLES%s': ", Red, Reset)
+	reader := bufio.NewReader(os.Stdin)
+	confirmation, _ := reader.ReadString('\n')
+	confirmation = strings.TrimSpace(confirmation)
 
 	if confirmation != "VERWIJDER ALLES" {
 		fmt.Println("Operatie geannuleerd.")
@@ -137,9 +153,9 @@ func nukeAllImages(db *sql.DB, schema string, dryRun bool) error {
 
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {
-		fmt.Printf("Afbeeldingen succesvol verwijderd (aantal onbekend)\n")
+		fmt.Printf("%s✓%s Afbeeldingen verwijderd\n", Green, Reset)
 	} else {
-		fmt.Printf("Succesvol %d afbeeldingen verwijderd uit de database\n", rowsAffected)
+		fmt.Printf("%s✓%s %d afbeeldingen verwijderd\n", Green, Reset, rowsAffected)
 	}
 
 	return nil
@@ -172,6 +188,32 @@ func findArtistsWithPartialName(db *sql.DB, schema, partialName string) ([]Artis
 	return artists, nil
 }
 
+func displayArtistList(title string, artists []Artist, showImageStatus bool, maxNote string) {
+	if len(artists) == 0 {
+		fmt.Printf("%sGeen artiesten gevonden%s\n", Yellow, Reset)
+		return
+	}
+
+	// Title with count
+	fmt.Printf("%s%s:%s %d", Cyan, title, Reset, len(artists))
+	if maxNote != "" {
+		fmt.Printf(" (%s)", maxNote)
+	}
+	fmt.Println()
+
+	for _, artist := range artists {
+		if showImageStatus {
+			if artist.HasImage {
+				fmt.Printf("  %s✓%s %s\n", Green, Reset, artist.Name)
+			} else {
+				fmt.Printf("  %s✗%s %s\n", Red, Reset, artist.Name)
+			}
+		} else {
+			fmt.Printf("  • %s\n", artist.Name)
+		}
+	}
+}
+
 func searchArtists(db *sql.DB, schema, searchTerm string) error {
 	artists, err := findArtistsWithPartialName(db, schema, searchTerm)
 	if err != nil {
@@ -179,21 +221,11 @@ func searchArtists(db *sql.DB, schema, searchTerm string) error {
 	}
 
 	if len(artists) == 0 {
-		fmt.Printf("\033[33mGeen artiesten gevonden met '%s' in hun naam\033[0m\n", searchTerm)
+		fmt.Printf("%sGeen artiesten gevonden met '%s' in hun naam%s\n", Yellow, searchTerm, Reset)
 		return nil
 	}
 
-	fmt.Printf("\033[36mArtiesten met '%s' in hun naam\033[0m (\033[1m%d\033[0m gevonden):\n", searchTerm, len(artists))
-	fmt.Println("─────────────────────────────────────────────────")
-	for _, artist := range artists {
-		imageStatus := "\033[31m✗ geen afbeelding\033[0m"
-		if artist.HasImage {
-			imageStatus = "\033[32m✓ heeft afbeelding\033[0m"
-		}
-		fmt.Printf("  \033[33m•\033[0m %s (%s)\n", artist.Name, imageStatus)
-	}
-	fmt.Println("─────────────────────────────────────────────────")
-
+	displayArtistList(fmt.Sprintf("Artiesten met '%s' in hun naam", searchTerm), artists, true, "")
 	return nil
 }
 
@@ -203,12 +235,6 @@ func listArtistsWithoutImages(db *sql.DB, schema string) error {
 		return err
 	}
 
-	fmt.Printf("\033[36mArtiesten zonder afbeeldingen\033[0m (\033[1m%d\033[0m gevonden, max 50 getoond):\n", len(artists))
-	fmt.Println("─────────────────────────────────────────────────")
-	for _, artist := range artists {
-		fmt.Printf("  \033[33m•\033[0m %s\n", artist.Name)
-	}
-	fmt.Println("─────────────────────────────────────────────────")
-
+	displayArtistList("Artiesten zonder afbeeldingen", artists, false, "max 50 getoond")
 	return nil
 }

@@ -37,7 +37,8 @@ func main() {
 	log.SetFlags(0)
 
 	var (
-		artistName  = flag.String("artist", "", "Artiest naam om bij te werken (vereist)")
+		artistName  = flag.String("artist", "", "Artiest naam om bij te werken")
+		artistID    = flag.String("artistid", "", "Artiest ID om bij te werken")
 		imageURL    = flag.String("url", "", "URL van de afbeelding om te downloaden")
 		imagePath   = flag.String("file", "", "Lokaal pad naar afbeelding")
 		searchName  = flag.String("search", "", "Zoek artiesten met gedeeltelijke naam match")
@@ -54,7 +55,7 @@ func main() {
 		return
 	}
 
-	if *artistName == "" && !*listMode && !*nukeMode && *searchName == "" {
+	if *artistName == "" && *artistID == "" && !*listMode && !*nukeMode && *searchName == "" {
 		showUsage()
 	}
 
@@ -65,8 +66,8 @@ func main() {
 	}
 
 	// Only show database info and connect for operations that need the database
-	if *listMode || *searchName != "" || *nukeMode || *artistName != "" {
-		fmt.Printf("%sDatabase:%s %s:%s/%s (schema: %s)\n", Cyan, Reset, config.Database.Host, config.Database.Port, config.Database.Name, config.Database.Schema)
+	if *listMode || *searchName != "" || *nukeMode || *artistName != "" || *artistID != "" {
+		fmt.Printf("Database: %s:%s/%s\n", config.Database.Host, config.Database.Port, config.Database.Name)
 
 		db, err := sql.Open("postgres", config.DatabaseURL())
 		if err != nil {
@@ -104,7 +105,15 @@ func main() {
 			log.Fatal(err)
 		}
 
-		if err := processArtistImage(db, config, *artistName, *imageURL, *imagePath, *dryRun); err != nil {
+		// Validate that either artist name or ID is provided, but not both
+		if *artistName != "" && *artistID != "" {
+			log.Fatal("Kan niet zowel -artist als -artistid specificeren")
+		}
+		if *artistName == "" && *artistID == "" {
+			log.Fatal("Moet óf -artist óf -artistid specificeren")
+		}
+
+		if err := processArtistImage(db, config, *artistName, *artistID, *imageURL, *imagePath, *dryRun); err != nil {
 			log.Fatal(err)
 		}
 	}
@@ -124,19 +133,6 @@ type ImageInfo struct {
 	Width  int
 	Height int
 	Size   int
-}
-
-func findAndValidateArtist(db *sql.DB, schema, artistName string) (*Artist, error) {
-	artistID, hasExistingImage, err := findArtistByExactName(db, schema, artistName)
-	if err != nil {
-		return nil, err
-	}
-
-	return &Artist{
-		ID:       artistID,
-		Name:     artistName,
-		HasImage: hasExistingImage,
-	}, nil
 }
 
 func loadImageFromSource(imageURL, imagePath string, maxFileSizeMB int) ([]byte, error) {
@@ -268,8 +264,9 @@ func saveImageToDatabase(db *sql.DB, schema, artistID string, imageData []byte) 
 	return nil
 }
 
-func processArtistImage(db *sql.DB, config *Config, artistName, imageURL, imagePath string, dryRun bool) error {
-	artist, err := findAndValidateArtist(db, config.Database.Schema, artistName)
+func processArtistImage(db *sql.DB, config *Config, artistName, artistID, imageURL, imagePath string, dryRun bool) error {
+	// Lookup artist by name or ID
+	artist, err := lookupArtist(db, config.Database.Schema, artistName, artistID)
 	if err != nil {
 		return err
 	}
@@ -287,7 +284,7 @@ func processArtistImage(db *sql.DB, config *Config, artistName, imageURL, imageP
 	}
 
 	if dryRun {
-		fmt.Printf("%sDRY RUN:%s Would update image for %s\n", Yellow, Reset, artistName)
+		fmt.Printf("%sDRY RUN:%s Would update image for %s\n", Yellow, Reset, artist.Name)
 		return nil
 	}
 
@@ -295,7 +292,7 @@ func processArtistImage(db *sql.DB, config *Config, artistName, imageURL, imageP
 		return err
 	}
 
-	fmt.Printf("%s%s:%s %dKB → %dKB (%s) %s✓%s\n", Bold, artistName, Reset, processingResult.Original.Size/1024, processingResult.Optimized.Size/1024, processingResult.Encoder, Green, Reset)
+	fmt.Printf("%s✓%s %s: %dKB → %dKB (%s)\n", Green, Reset, artist.Name, processingResult.Original.Size/1024, processingResult.Optimized.Size/1024, processingResult.Encoder)
 	return nil
 }
 
@@ -312,22 +309,23 @@ func validateImageInput(imageURL, imagePath string) error {
 
 // Moved from output.go
 func showUsage() {
-	fmt.Printf("%sAeron Image Manager%s - Afbeeldingenbeheer voor Aeron databases\n\n", Bold, Reset)
+	fmt.Printf("%sAeron Image Manager%s\n\n", Bold, Reset)
 	fmt.Println("Gebruik:")
-	fmt.Printf("  %s./aeron-imgman -artist=\"Artist\" -url=\"image.jpg\"%s\n", Green, Reset)
-	fmt.Printf("  %s./aeron-imgman -artist=\"Artist\" -file=\"/path/image.jpg\"%s\n", Green, Reset)
-	fmt.Printf("  %s./aeron-imgman -list%s\n", Yellow, Reset)
-	fmt.Printf("  %s./aeron-imgman -search=\"Name\"%s\n", Yellow, Reset)
+	fmt.Println("  ./aeron-imgman -artist=\"Name\" -url=\"image.jpg\"")
+	fmt.Println("  ./aeron-imgman -artistid=\"UUID\" -file=\"/path/image.jpg\"")
+	fmt.Println("  ./aeron-imgman -list")
+	fmt.Println("  ./aeron-imgman -search=\"Name\"")
 	fmt.Println("\nOpties:")
-	fmt.Printf("  %s-artist%s string    Artiest naam (vereist)\n", Bold, Reset)
-	fmt.Printf("  %s-url%s string       URL van afbeelding\n", Bold, Reset)
-	fmt.Printf("  %s-file%s string      Lokaal bestand\n", Bold, Reset)
-	fmt.Printf("  %s-list%s             Toon artiesten zonder afbeelding\n", Bold, Reset)
-	fmt.Printf("  %s-search%s string    Zoek artiesten\n", Bold, Reset)
-	fmt.Printf("  %s-nuke%s             Verwijder ALLE afbeeldingen\n", Bold, Reset)
-	fmt.Printf("  %s-dry-run%s          Simuleer actie\n", Bold, Reset)
-	fmt.Printf("  %s-version%s          Toon versie\n", Bold, Reset)
-	fmt.Println("\nVereist: config.yaml bestand met database en image instellingen")
+	fmt.Println("  -artist string     Artiest naam")
+	fmt.Println("  -artistid string   Artiest ID (UUID)")
+	fmt.Println("  -url string        URL van afbeelding")
+	fmt.Println("  -file string       Lokaal bestand")
+	fmt.Println("  -list              Toon artiesten zonder afbeelding")
+	fmt.Println("  -search string     Zoek artiesten")
+	fmt.Println("  -nuke              Verwijder ALLE afbeeldingen")
+	fmt.Println("  -dry-run           Simuleer actie")
+	fmt.Println("  -version           Toon versie")
+	fmt.Println("\nVereist: config.yaml")
 	os.Exit(1)
 }
 

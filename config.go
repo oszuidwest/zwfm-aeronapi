@@ -58,70 +58,43 @@ func loadConfig(configPath string) (*Config, error) {
 		return nil, fmt.Errorf("kon config bestand niet parsen: %w", err)
 	}
 
-	// Valideer database configuratie
-	if err := validateDatabaseConfig(&config.Database); err != nil {
-		return nil, fmt.Errorf("database configuratie onvolledig: %w", err)
-	}
-
-	// Valideer image configuratie
-	if err := validateImageConfig(&config.Image); err != nil {
-		return nil, fmt.Errorf("image configuratie onvolledig: %w", err)
+	// Valideer configuratie
+	if err := validateConfig(config); err != nil {
+		return nil, fmt.Errorf("configuratie onvolledig: %w", err)
 	}
 
 	return config, nil
 }
 
-func validateDatabaseConfig(db *DatabaseConfig) error {
-	missing := []string{}
-
-	if db.Host == "" {
-		missing = append(missing, "host")
-	}
-	if db.Port == "" {
-		missing = append(missing, "port")
-	}
-	if db.Name == "" {
-		missing = append(missing, "name")
-	}
-	if db.User == "" {
-		missing = append(missing, "user")
-	}
-	if db.Password == "" {
-		missing = append(missing, "password")
-	}
-	if db.Schema == "" {
-		missing = append(missing, "schema")
-	}
-	if db.SSLMode == "" {
-		missing = append(missing, "sslmode")
+func validateConfig(config *Config) error {
+	validators := []struct {
+		name  string
+		check func() bool
+	}{
+		// Database fields
+		{"database.host", func() bool { return config.Database.Host != "" }},
+		{"database.port", func() bool { return config.Database.Port != "" }},
+		{"database.name", func() bool { return config.Database.Name != "" }},
+		{"database.user", func() bool { return config.Database.User != "" }},
+		{"database.password", func() bool { return config.Database.Password != "" }},
+		{"database.schema", func() bool { return config.Database.Schema != "" }},
+		{"database.sslmode", func() bool { return config.Database.SSLMode != "" }},
+		// Image fields
+		{"image.target_width", func() bool { return config.Image.TargetWidth > 0 }},
+		{"image.target_height", func() bool { return config.Image.TargetHeight > 0 }},
+		{"image.quality (1-100)", func() bool { return config.Image.Quality > 0 && config.Image.Quality <= 100 }},
+		{"image.max_file_size_mb", func() bool { return config.Image.MaxFileSizeMB > 0 }},
 	}
 
-	if len(missing) > 0 {
-		return fmt.Errorf("de volgende database velden ontbreken in de configuratie: %v", missing)
-	}
-
-	return nil
-}
-
-func validateImageConfig(img *ImageConfig) error {
-	missing := []string{}
-
-	if img.TargetWidth <= 0 {
-		missing = append(missing, "target_width")
-	}
-	if img.TargetHeight <= 0 {
-		missing = append(missing, "target_height")
-	}
-	if img.Quality <= 0 || img.Quality > 100 {
-		missing = append(missing, "quality (must be 1-100)")
-	}
-	if img.MaxFileSizeMB <= 0 {
-		missing = append(missing, "max_file_size_mb")
+	var missing []string
+	for _, v := range validators {
+		if !v.check() {
+			missing = append(missing, v.name)
+		}
 	}
 
 	if len(missing) > 0 {
-		return fmt.Errorf("de volgende image velden ontbreken of zijn ongeldig in de configuratie: %v", missing)
+		return fmt.Errorf("de volgende velden ontbreken of zijn ongeldig in de configuratie: %v", missing)
 	}
-
 	return nil
 }
