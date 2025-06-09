@@ -342,7 +342,7 @@ func (s *APIServer) sendSuccess(w http.ResponseWriter, data interface{}) {
 		Success: true,
 		Data:    data,
 	}
-	json.NewEncoder(w).Encode(response)
+	_ = json.NewEncoder(w).Encode(response)
 }
 
 func (s *APIServer) sendError(w http.ResponseWriter, message string, code int) {
@@ -351,7 +351,7 @@ func (s *APIServer) sendError(w http.ResponseWriter, message string, code int) {
 		Success: false,
 		Error:   message,
 	}
-	json.NewEncoder(w).Encode(response)
+	_ = json.NewEncoder(w).Encode(response)
 }
 
 func (s *APIServer) isValidAPIKey(key string) bool {

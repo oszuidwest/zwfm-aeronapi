@@ -1,11 +1,8 @@
 package main
 
 import (
-	"bufio"
 	"database/sql"
 	"fmt"
-	"os"
-	"strings"
 
 	_ "github.com/lib/pq"
 )
@@ -45,7 +42,7 @@ func listArtists(db *sql.DB, schema string, hasImage bool, limit int) ([]Artist,
 	if err != nil {
 		return nil, fmt.Errorf("kon artiesten niet opvragen: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var artists []Artist
 
@@ -109,91 +106,6 @@ func updateArtistImageInDB(db *sql.DB, schema, artistID string, imageData []byte
 	return nil
 }
 
-func nukeAllImages(db *sql.DB, schema string, scope string, dryRun bool) error {
-	var totalCount int
-
-	if scope == "artist" {
-		artists, err := listArtists(db, schema, true, 0)
-		if err != nil {
-			return fmt.Errorf("kon artiesten met afbeeldingen niet ophalen: %w", err)
-		}
-		totalCount = len(artists)
-	} else if scope == "track" {
-		tracks, err := listTracks(db, schema, true, 0)
-		if err != nil {
-			return fmt.Errorf("kon tracks met afbeeldingen niet ophalen: %w", err)
-		}
-		totalCount = len(tracks)
-	} else {
-		return fmt.Errorf("ongeldige scope: %s", scope)
-	}
-
-	if totalCount == 0 {
-		fmt.Printf("Geen %s met afbeeldingen gevonden.\n", getScopeDescription(scope))
-		return nil
-	}
-
-	fmt.Printf("%s%sWAARSCHUWING:%s %d %s afbeeldingen verwijderen\n\n", Bold, Red, Reset, totalCount, getScopeDescription(scope))
-
-	if scope == "artist" {
-		artists, _ := listArtists(db, schema, true, 20)
-		for i, artist := range artists {
-			if i < 20 {
-				fmt.Printf("  • %s\n", artist.Name)
-			} else if i == 20 {
-				fmt.Printf("  ... en %d meer\n", totalCount-20)
-				break
-			}
-		}
-	} else if scope == "track" {
-		tracks, _ := listTracks(db, schema, true, 20)
-		for i, track := range tracks {
-			if i < 20 {
-				fmt.Printf("  • %s - %s\n", track.Artist, track.Title)
-			} else if i == 20 {
-				fmt.Printf("  ... en %d meer\n", totalCount-20)
-				break
-			}
-		}
-	}
-
-	if dryRun {
-		fmt.Printf("\n%sDRY RUN:%s Zou verwijderen maar doet dit niet\n", Yellow, Reset)
-		return nil
-	}
-
-	fmt.Printf("\nBevestig met '%sVERWIJDER ALLES%s': ", Red, Reset)
-	reader := bufio.NewReader(os.Stdin)
-	confirmation, _ := reader.ReadString('\n')
-	confirmation = strings.TrimSpace(confirmation)
-
-	if confirmation != "VERWIJDER ALLES" {
-		fmt.Println("Operatie geannuleerd.")
-		return nil
-	}
-
-	var query string
-	if scope == "artist" {
-		query = fmt.Sprintf(`UPDATE %s.artist SET picture = NULL WHERE picture IS NOT NULL`, schema)
-	} else {
-		query = fmt.Sprintf(`UPDATE %s.track SET picture = NULL WHERE picture IS NOT NULL`, schema)
-	}
-
-	result, err := db.Exec(query)
-	if err != nil {
-		return fmt.Errorf("kon %s afbeeldingen niet verwijderen: %w", getScopeDescription(scope), err)
-	}
-
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		fmt.Printf("%s✓%s Afbeeldingen verwijderd\n", Green, Reset)
-	} else {
-		fmt.Printf("%s✓%s %d %s afbeeldingen verwijderd\n", Green, Reset, rowsAffected, getScopeDescription(scope))
-	}
-
-	return nil
-}
-
 func getScopeDescription(scope string) string {
 	switch scope {
 	case "artist":
@@ -214,7 +126,7 @@ func findArtistsWithPartialName(db *sql.DB, schema, partialName string) ([]Artis
 	if err != nil {
 		return nil, fmt.Errorf("kon artiesten niet zoeken: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var artists []Artist
 	for rows.Next() {
@@ -290,31 +202,6 @@ func displayArtistList(title string, artists []Artist, showImageStatus bool, max
 	displayItemList(title, artists, showImageStatus, maxNote, false)
 }
 
-func searchArtists(db *sql.DB, schema, searchTerm string) error {
-	artists, err := findArtistsWithPartialName(db, schema, searchTerm)
-	if err != nil {
-		return err
-	}
-
-	if len(artists) == 0 {
-		fmt.Printf("%sGeen artiesten gevonden met '%s' in hun naam%s\n", Yellow, searchTerm, Reset)
-		return nil
-	}
-
-	displayArtistList(fmt.Sprintf("Artiesten met '%s' in hun naam", searchTerm), artists, true, "")
-	return nil
-}
-
-func listArtistsWithoutImages(db *sql.DB, schema string) error {
-	artists, err := listArtists(db, schema, false, 50)
-	if err != nil {
-		return err
-	}
-
-	displayArtistList("Artiesten zonder afbeeldingen", artists, false, "max 50 getoond")
-	return nil
-}
-
 func lookupTrack(db *sql.DB, schema, trackTitle, trackID string) (*Track, error) {
 	var query string
 	var searchValue string
@@ -382,7 +269,7 @@ func listTracks(db *sql.DB, schema string, hasImage bool, limit int) ([]Track, e
 	if err != nil {
 		return nil, fmt.Errorf("kon tracks niet opvragen: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var tracks []Track
 
@@ -402,16 +289,6 @@ func listTracks(db *sql.DB, schema string, hasImage bool, limit int) ([]Track, e
 	return tracks, nil
 }
 
-func listTracksWithoutImages(db *sql.DB, schema string) error {
-	tracks, err := listTracks(db, schema, false, 50)
-	if err != nil {
-		return err
-	}
-
-	displayTrackList("Tracks zonder afbeeldingen", tracks, false, "max 50 getoond")
-	return nil
-}
-
 func displayTrackList(title string, tracks []Track, showImageStatus bool, maxNote string) {
 	displayItemList(title, tracks, showImageStatus, maxNote, true)
 }
@@ -425,7 +302,7 @@ func findTracksWithPartialName(db *sql.DB, schema, partialName string) ([]Track,
 	if err != nil {
 		return nil, fmt.Errorf("kon tracks niet zoeken: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var tracks []Track
 	for rows.Next() {
@@ -441,19 +318,4 @@ func findTracksWithPartialName(db *sql.DB, schema, partialName string) ([]Track,
 	}
 
 	return tracks, nil
-}
-
-func searchTracks(db *sql.DB, schema, searchTerm string) error {
-	tracks, err := findTracksWithPartialName(db, schema, searchTerm)
-	if err != nil {
-		return err
-	}
-
-	if len(tracks) == 0 {
-		fmt.Printf("%sGeen tracks gevonden met '%s' in titel of artiest%s\n", Yellow, searchTerm, Reset)
-		return nil
-	}
-
-	displayTrackList(fmt.Sprintf("Tracks met '%s' in titel of artiest", searchTerm), tracks, true, "")
-	return nil
 }

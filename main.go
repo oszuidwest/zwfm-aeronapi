@@ -75,7 +75,7 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
-		defer db.Close()
+		defer func() { _ = db.Close() }()
 
 		if err := db.Ping(); err != nil {
 			log.Fatal(err)
@@ -219,7 +219,7 @@ func handleNukeCommand(service *ImageService, scope string, dryRun bool) error {
 
 	fmt.Printf("\nBevestig met '%sVERWIJDER ALLES%s': ", Red, Reset)
 	var confirmation string
-	fmt.Scanln(&confirmation)
+	_, _ = fmt.Scanln(&confirmation)
 
 	if confirmation != "VERWIJDER ALLES" {
 		fmt.Println("Operatie geannuleerd.")

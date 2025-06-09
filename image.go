@@ -47,7 +47,7 @@ func downloadImage(url string, maxSizeMB int) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("kon afbeelding niet downloaden: HTTP %d", resp.StatusCode)
@@ -61,7 +61,7 @@ func readImageFile(path string, maxSizeMB int) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	return readImageFromReader(file, maxSizeMB)
 }
@@ -167,7 +167,7 @@ func (opt *ImageOptimizer) processImage(img image.Image, originalData []byte, ou
 	}
 
 	// Return optimized data if it's better, otherwise return original
-	if optimizedData != nil && len(optimizedData) > 0 {
+	if len(optimizedData) > 0 {
 		return optimizedData, outputFormat, usedEncoder, nil
 	}
 
@@ -207,7 +207,7 @@ func (opt *ImageOptimizer) resizeImage(img image.Image, maxWidth, maxHeight int)
 
 func encodeToJPEG(img image.Image, config ImageConfig, originalSize int) ([]byte, string, error) {
 	var bestData []byte
-	var bestSize int = originalSize
+	var bestSize = originalSize
 	var winnerInfo string
 
 	standardData, err := encodeWithStandardJPEG(img, config.Quality)
@@ -237,7 +237,7 @@ func encodeToJPEG(img image.Image, config ImageConfig, originalSize int) ([]byte
 	}
 
 	// Use the best result (smallest file size) from both encoders
-	if bestData != nil && len(bestData) > 0 {
+	if len(bestData) > 0 {
 		return bestData, winnerInfo, nil
 	}
 
