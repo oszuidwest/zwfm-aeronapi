@@ -10,8 +10,7 @@ Een command-line tool voor het beheer van afbeeldingen in Aeron databases met sl
 * Voegt afbeeldingen toe aan artiesten- en trackrecords in PostgreSQL database
 * **Dubbele encoder optimalisatie**: Vergelijkt automatisch Jpegli vs standaard JPEG en kiest de kleinste bestandsgrootte
 * Ondersteunt JPG, JPEG en PNG invoerbestanden
-* Toont artiesten of tracks zonder afbeeldingen met totaaltellingen
-* Zoekt artiesten of tracks op gedeeltelijke naam
+* Toont statistieken van artiesten of tracks (totaal, met/zonder afbeeldingen, orphaned)
 * Verwijdert afbeeldingen per scope (nuke-functie)
 * Dry-run modus voor het testen van operaties
 * REST API server modus voor integratie met andere applicaties
@@ -48,29 +47,12 @@ Download het juiste bestand voor je platform, maak het uitvoerbaar (`chmod +x`) 
 # Trackafbeelding bijwerken via lokaal bestand
 ./aeron-imgman -scope=track -name="Counting Stars" -file="/pad/naar/image.jpg"
 
-# Statistieken tonen voor artiesten (totaal, met/zonder afbeeldingen)
-./aeron-imgman -scope=artist -list
+# Statistieken tonen voor artiesten (totaal, met/zonder afbeeldingen, orphaned)
+./aeron-imgman -scope=artist -stats
 
-# Artiesten zonder afbeelding tonen met voorbeelden
-./aeron-imgman -scope=artist -list -filter=without
+# Statistieken tonen voor tracks
+./aeron-imgman -scope=track -stats
 
-# Artiesten MET afbeelding tonen met voorbeelden
-./aeron-imgman -scope=artist -list -filter=with
-
-# Tracks statistieken tonen
-./aeron-imgman -scope=track -list
-
-# Tracks zonder afbeelding tonen met voorbeelden
-./aeron-imgman -scope=track -list -filter=without
-
-# Tracks MET afbeelding tonen met voorbeelden
-./aeron-imgman -scope=track -list -filter=with
-
-# Zoeken naar artiesten met gedeeltelijke naam
-./aeron-imgman -scope=artist -search="Chef"
-
-# Zoeken naar tracks met gedeeltelijke naam
-./aeron-imgman -scope=track -search="Stars"
 
 # Afbeeldingen verwijderen per scope
 ./aeron-imgman -scope=artist -nuke
@@ -96,11 +78,9 @@ Download het juiste bestand voor je platform, maak het uitvoerbaar (`chmod +x`) 
   -id string        UUID van artiest of track
   -url string       URL van de afbeelding om te downloaden
   -file string      Lokaal pad naar afbeelding
-  -search string    Zoek items met gedeeltelijke naam match
   -config string    Pad naar config bestand (standaard: config.yaml)
   -dry-run          Toon wat gedaan zou worden zonder bij te werken
-  -list             Toon statistieken en voorbeelden
-  -filter string    Filter voor list voorbeelden: 'with', 'without' of 'stats-only'
+  -stats             Toon statistieken
   -nuke             Verwijder afbeeldingen van opgegeven scope
   -server           Start REST API server
   -port string      Server poort (standaard: 8080)
@@ -218,8 +198,6 @@ Response: {
   }
 }
 
-# Search artists
-GET /api/artists/search?q=searchterm
 
 # Upload image
 POST /api/artists/upload
@@ -247,8 +225,6 @@ Response: {
   }
 }
 
-# Search tracks
-GET /api/tracks/search?q=searchterm
 
 # Upload image
 POST /api/tracks/upload

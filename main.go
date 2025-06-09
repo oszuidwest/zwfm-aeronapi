@@ -49,9 +49,7 @@ func main() {
 		id          = flag.String("id", "", "UUID van artiest of track")
 		imageURL    = flag.String("url", "", "URL van de afbeelding om te downloaden")
 		imagePath   = flag.String("file", "", "Lokaal pad naar afbeelding")
-		searchName  = flag.String("search", "", "Zoek met gedeeltelijke naam match")
-		listMode    = flag.Bool("list", false, "Toon alle items")
-		listFilter  = flag.String("filter", "without", "Filter voor list: 'with' of 'without' (standaard: without)")
+		statsMode   = flag.Bool("stats", false, "Toon statistieken")
 		nukeMode    = flag.Bool("nuke", false, "Verwijder ALLE afbeeldingen uit de database (vereist bevestiging)")
 		dryRun      = flag.Bool("dry-run", false, "Toon wat gedaan zou worden zonder daadwerkelijk bij te werken")
 		versionFlag = flag.Bool("version", false, "Toon versie-informatie")
@@ -66,7 +64,7 @@ func main() {
 		return
 	}
 
-	if *name == "" && *id == "" && !*listMode && !*nukeMode && *searchName == "" && !*serverMode {
+	if *name == "" && *id == "" && !*statsMode && !*nukeMode && !*serverMode {
 		showUsage()
 	}
 
@@ -115,13 +113,8 @@ func main() {
 	service := NewImageService(db, config)
 
 	switch {
-	case *listMode:
-		if err := handleList(service, *scope, *listFilter); err != nil {
-			log.Fatal(err)
-		}
-
-	case *searchName != "":
-		if err := handleSearch(service, *scope, *searchName); err != nil {
+	case *statsMode:
+		if err := handleStats(service, *scope); err != nil {
 			log.Fatal(err)
 		}
 
@@ -152,7 +145,7 @@ func main() {
 	}
 }
 
-func handleList(service *ImageService, scope string, filter string) error {
+func handleStats(service *ImageService, scope string) error {
 	// Get statistics
 	stats, err := service.GetStatistics(scope)
 	if err != nil {
@@ -161,40 +154,6 @@ func handleList(service *ImageService, scope string, filter string) error {
 
 	// Display statistics
 	displayStatistics(scope, stats)
-
-	// Optionally show some items without images as examples
-	if stats.WithoutImages > 0 && filter != "stats-only" {
-		fmt.Println()
-
-		// Show up to DefaultListLimit items without images
-		limit := DefaultListLimit
-		if stats.WithoutImages < limit {
-			limit = stats.WithoutImages
-		}
-
-		result, err := service.ListWithFilter(scope, false, limit)
-		if err != nil {
-			return err
-		}
-
-		if scope == ScopeArtist {
-			artists := result.Items.([]Artist)
-			fmt.Printf("Eerste %d artiesten zonder afbeelding:\n", len(artists))
-			for _, artist := range artists {
-				fmt.Printf("  • %s\n", artist.Name)
-			}
-		} else {
-			tracks := result.Items.([]Track)
-			fmt.Printf("Eerste %d tracks zonder afbeelding:\n", len(tracks))
-			for _, track := range tracks {
-				fmt.Printf("  • %s - %s\n", track.Artist, track.Title)
-			}
-		}
-
-		if stats.WithoutImages > limit {
-			fmt.Printf("  ... en nog %d meer\n", stats.WithoutImages-limit)
-		}
-	}
 
 	return nil
 }
@@ -215,30 +174,6 @@ func displayStatistics(scope string, stats *Statistics) {
 	} else {
 		fmt.Printf("  %s⚠%s  Orphaned (zonder artiest): %d\n", Yellow, Reset, stats.Orphaned)
 	}
-}
-
-func handleSearch(service *ImageService, scope, searchTerm string) error {
-	items, err := service.Search(scope, searchTerm)
-	if err != nil {
-		return err
-	}
-
-	if scope == ScopeArtist {
-		artists := items.([]Artist)
-		if len(artists) == 0 {
-			fmt.Printf("%sGeen artiesten gevonden met '%s' in hun naam%s\n", Yellow, searchTerm, Reset)
-			return nil
-		}
-		displayArtistList(fmt.Sprintf("Artiesten met '%s' in hun naam", searchTerm), artists, true, "")
-	} else {
-		tracks := items.([]Track)
-		if len(tracks) == 0 {
-			fmt.Printf("%sGeen tracks gevonden met '%s' in titel of artiest%s\n", Yellow, searchTerm, Reset)
-			return nil
-		}
-		displayTrackList(fmt.Sprintf("Tracks met '%s' in titel of artiest", searchTerm), tracks, true, "")
-	}
-	return nil
 }
 
 func handleNuke(service *ImageService, scope string, dryRun bool) error {
@@ -429,10 +364,8 @@ func showUsage() {
 	fmt.Println("  ./aeron-imgman -scope=artist -id=\"UUID\" -file=\"/path/image.jpg\"")
 	fmt.Println("  ./aeron-imgman -scope=track -name=\"Title\" -url=\"image.jpg\"")
 	fmt.Println("  ./aeron-imgman -scope=track -id=\"UUID\" -file=\"/path/image.jpg\"")
-	fmt.Println("  ./aeron-imgman -scope=artist -list [-filter=without|with]")
-	fmt.Println("  ./aeron-imgman -scope=track -list [-filter=without|with]")
-	fmt.Println("  ./aeron-imgman -scope=artist -search=\"Name\"")
-	fmt.Println("  ./aeron-imgman -scope=track -search=\"Title\"")
+	fmt.Println("  ./aeron-imgman -scope=artist -stats")
+	fmt.Println("  ./aeron-imgman -scope=track -stats")
 	fmt.Println("  ./aeron-imgman -server [-port=8080]")
 	fmt.Println("\nOpties:")
 	fmt.Println("  -scope string      Verplicht: 'artist' of 'track'")
@@ -440,9 +373,7 @@ func showUsage() {
 	fmt.Println("  -id string         UUID van artiest of track")
 	fmt.Println("  -url string        URL van afbeelding")
 	fmt.Println("  -file string       Lokaal bestand")
-	fmt.Println("  -list              Toon statistieken en voorbeelden")
-	fmt.Println("  -filter string     Filter voor list: 'with', 'without' of 'stats-only'")
-	fmt.Println("  -search string     Zoek items")
+	fmt.Println("  -stats             Toon statistieken")
 	fmt.Println("  -nuke              Verwijder alle afbeeldingen van scope")
 	fmt.Println("  -dry-run           Simuleer actie")
 	fmt.Println("  -server            Start REST API server")

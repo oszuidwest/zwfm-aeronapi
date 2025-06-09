@@ -87,12 +87,10 @@ func (s *APIServer) Start(port string) error {
 
 	mux.HandleFunc("/api/health", wrap(http.MethodGet, s.handleHealth, false))
 	mux.HandleFunc("/api/artists", wrap(http.MethodGet, s.handleArtists, true))
-	mux.HandleFunc("/api/artists/search", wrap(http.MethodGet, s.handleArtistSearch, true))
 	mux.HandleFunc("/api/artists/upload", wrap(http.MethodPost, s.handleArtistUpload, true))
 	mux.HandleFunc("/api/artists/nuke", wrap(http.MethodDelete, s.handleArtistNuke, true))
 
 	mux.HandleFunc("/api/tracks", wrap(http.MethodGet, s.handleTracks, true))
-	mux.HandleFunc("/api/tracks/search", wrap(http.MethodGet, s.handleTrackSearch, true))
 	mux.HandleFunc("/api/tracks/upload", wrap(http.MethodPost, s.handleTrackUpload, true))
 	mux.HandleFunc("/api/tracks/nuke", wrap(http.MethodDelete, s.handleTrackNuke, true))
 
@@ -122,33 +120,6 @@ func (s *APIServer) handleArtists(w http.ResponseWriter, r *http.Request) {
 		WithImages:    stats.WithImages,
 		WithoutImages: stats.WithoutImages,
 		Orphaned:      stats.Orphaned,
-	}
-
-	s.sendSuccess(w, response)
-}
-
-func (s *APIServer) handleArtistSearch(w http.ResponseWriter, r *http.Request) {
-
-	query := r.URL.Query().Get("q")
-	if query == "" {
-		s.sendError(w, "Missing search query", StatusBadRequest)
-		return
-	}
-
-	items, err := s.service.Search(ScopeArtist, query)
-	if err != nil {
-		s.sendError(w, err.Error(), StatusInternalServerError)
-		return
-	}
-
-	artists := items.([]Artist)
-	response := make([]ItemResponse, len(artists))
-	for i, artist := range artists {
-		response[i] = ItemResponse{
-			ID:       artist.ID,
-			Name:     artist.Name,
-			HasImage: artist.HasImage,
-		}
 	}
 
 	s.sendSuccess(w, response)
@@ -211,34 +182,6 @@ func (s *APIServer) handleTracks(w http.ResponseWriter, r *http.Request) {
 		WithImages:    stats.WithImages,
 		WithoutImages: stats.WithoutImages,
 		Orphaned:      stats.Orphaned,
-	}
-
-	s.sendSuccess(w, response)
-}
-
-func (s *APIServer) handleTrackSearch(w http.ResponseWriter, r *http.Request) {
-
-	query := r.URL.Query().Get("q")
-	if query == "" {
-		s.sendError(w, "Missing search query", StatusBadRequest)
-		return
-	}
-
-	items, err := s.service.Search(ScopeTrack, query)
-	if err != nil {
-		s.sendError(w, err.Error(), StatusInternalServerError)
-		return
-	}
-
-	tracks := items.([]Track)
-	response := make([]ItemResponse, len(tracks))
-	for i, track := range tracks {
-		response[i] = ItemResponse{
-			ID:       track.ID,
-			Title:    track.Title,
-			Artist:   track.Artist,
-			HasImage: track.HasImage,
-		}
 	}
 
 	s.sendSuccess(w, response)

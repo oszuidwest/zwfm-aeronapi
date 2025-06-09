@@ -177,17 +177,6 @@ func (s *ImageService) ListWithFilter(scope string, withImages bool, limit int) 
 	}, nil
 }
 
-func (s *ImageService) Search(scope, searchTerm string) (interface{}, error) {
-	if err := ValidateScope(scope); err != nil {
-		return nil, err
-	}
-
-	if scope == ScopeArtist {
-		return searchArtists(s.db, s.config.Database.Schema, searchTerm)
-	}
-	return searchTracks(s.db, s.config.Database.Schema, searchTerm)
-}
-
 type NukeResult struct {
 	Count   int
 	Deleted int64
