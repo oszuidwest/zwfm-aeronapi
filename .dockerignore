@@ -1,0 +1,30 @@
+# Git files
+.git
+.gitignore
+
+# GitHub files
+.github/
+
+# Go build cache
+/aeron-imgman
+*.exe
+
+# Test files
+*_test.go
+tests/
+
+# Documentation
+*.md
+LICENSE
+
+# Configuration files (will be mounted)
+config.yaml
+*.yaml
+
+# Temporary files
+*.tmp
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
