@@ -74,8 +74,6 @@ func main() {
 	}
 
 	if *serverMode {
-		fmt.Printf("Database: %s:%s/%s\n", config.Database.Host, config.Database.Port, config.Database.Name)
-
 		db, err := sql.Open("postgres", config.DatabaseURL())
 		if err != nil {
 			log.Fatal(err)
@@ -98,13 +96,11 @@ func main() {
 		log.Fatal("Ongeldige scope: moet 'artist' of 'track' zijn")
 	}
 
-	fmt.Printf("Database: %s:%s/%s\n", config.Database.Host, config.Database.Port, config.Database.Name)
-
 	db, err := sql.Open("postgres", config.DatabaseURL())
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	if err := db.Ping(); err != nil {
 		log.Fatal(err)

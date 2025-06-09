@@ -6,13 +6,11 @@ database:
   password: aeron123
   schema: aeron
   sslmode: disable
-
 image:
   target_width: 1280
   target_height: 1280
   quality: 90
   reject_smaller: true
-
 api:
   enabled: true
   keys:

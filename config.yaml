@@ -1,5 +1,4 @@
 # Voorbeeldconfiguratie voor aeron-imgman
-
 database:
   host: localhost
   port: 5413
@@ -8,18 +7,14 @@ database:
   password: aeron_dba
   schema: aeron
   sslmode: disable
-
 image:
   # Dit is hoe groot de afbeeldingen in de DB komen
   target_width: 640
   target_height: 640
-
   # JPEG-kwaliteit (1-100)
   quality: 90
-
   # Verwerkingsgedrag
   reject_smaller: true
-
 # API configuratie (optioneel)
 api:
   # Schakel API authenticatie in/uit

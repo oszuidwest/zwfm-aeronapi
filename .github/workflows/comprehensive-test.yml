@@ -1,36 +1,23 @@
 name: Comprehensive Test
-
 on:
   workflow_call:
   workflow_dispatch:
-
 env:
   GO_VERSION: '1.24'
   POSTGRES_USER: aeron
   POSTGRES_PASSWORD: aeron123
   POSTGRES_DB: aeron_db
-
 jobs:
   test:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
-
-      - name: Cache Go modules
-        uses: actions/cache@v3
-        with:
-          path: ~/go/pkg/mod
-          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-go-
-
+          cache: true
       - name: Install dependencies
         run: |
           go mod download
@@ -39,7 +26,6 @@ jobs:
           # Install required tools
           sudo apt-get update
           sudo apt-get install -y jq imagemagick postgresql-client
-
       - name: Run formatters and linters
         run: |
           # Check formatting
@@ -51,18 +37,15 @@ jobs:
 
           # Run go vet
           go vet ./...
-
       - name: Run golangci-lint
-        uses: golangci/golangci-lint-action@v3
+        uses: golangci/golangci-lint-action@v8
         with:
           version: latest
-          args: --out-format=colored-line-number --timeout=5m
-
+          args: --timeout=5m
       - name: Build application
         run: |
           go build -ldflags="-X main.Version=test -X main.Commit=${{ github.sha }} -X main.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)" -o aeron-imgman .
           ./aeron-imgman -version
-
       - name: Start test database with Docker Compose
         run: |
           cd tests
@@ -79,13 +62,11 @@ jobs:
           done
 
           # Database already has mock data loaded from the image
-
       - name: Create test images
         run: |
           convert -size 100x100 xc:red test_small.png
           convert -size 2000x2000 xc:blue test_large.png
           ls -la test_*.png
-
       - name: Create database reset function
         run: |
           # Create reusable function for database reset
@@ -98,7 +79,6 @@ jobs:
           echo "Database reset complete"
           EOF
           chmod +x reset_db.sh
-
       # Database Integrity Tests (verify test infrastructure)
       - name: Database Test - Verify initial data setup
         run: |
@@ -144,22 +124,18 @@ jobs:
           if [ $ERRORS -gt 0 ]; then
             exit 1
           fi
-
       - name: Database Test - Schema exists
         run: |
           docker exec aeron-test-db psql -U aeron -d aeron_db \
             -c "SELECT schema_name FROM information_schema.schemata WHERE schema_name = 'aeron';" | grep -q 'aeron'
-
       - name: Database Test - Artist table exists
         run: |
           docker exec aeron-test-db psql -U aeron -d aeron_db \
             -c "SELECT table_name FROM information_schema.tables WHERE table_schema = 'aeron' AND table_name = 'artist';" | grep -q 'artist'
-
       - name: Database Test - Track table exists
         run: |
           docker exec aeron-test-db psql -U aeron -d aeron_db \
             -c "SELECT table_name FROM information_schema.tables WHERE table_schema = 'aeron' AND table_name = 'track';" | grep -q 'track'
-
       - name: Create test configuration
         run: |
           # Create test config pointing to Docker container on port 5433
@@ -185,17 +161,14 @@ jobs:
               - "test-api-key-12345"
               - "another-test-key-67890"
           EOF
-
       # CLI Tests
       - name: Reset database before CLI tests
         run: ./reset_db.sh
-
       - name: CLI Test - Version
         run: |
           echo "Test: Controleer versie informatie"
           ./aeron-imgman -version
           echo "✓ Versie informatie correct weergegeven"
-
       - name: CLI Test - Usage (no args)
         run: |
           echo "Test: Controleer help bericht zonder argumenten"
@@ -203,7 +176,7 @@ jobs:
           OUTPUT=$(./aeron-imgman 2>&1)
           EXIT_CODE=$?
           set -e
-          
+
           # Controleer dat het programma exit code 1 geeft (usage)
           if [ $EXIT_CODE -eq 1 ]; then
             echo "✓ Programma geeft correcte exit code 1 bij geen argumenten"
@@ -211,7 +184,7 @@ jobs:
             echo "✗ Verwachtte exit code 1, kreeg $EXIT_CODE"
             exit 1
           fi
-          
+
           # Controleer help tekst (strip ANSI codes)
           CLEAN_OUTPUT=$(echo "$OUTPUT" | sed 's/\x1b\[[0-9;]*m//g')
           if echo "$CLEAN_OUTPUT" | grep -q 'Aeron Image Manager'; then
@@ -222,7 +195,7 @@ jobs:
             echo "$CLEAN_OUTPUT"
             exit 1
           fi
-          
+
           # Controleer dat usage voorbeelden worden getoond
           if echo "$CLEAN_OUTPUT" | grep -q './aeron-imgman -scope=artist'; then
             echo "✓ Usage voorbeelden worden correct getoond"
@@ -230,7 +203,6 @@ jobs:
             echo "✗ Verwachtte usage voorbeelden"
             exit 1
           fi
-
       - name: CLI Test - Artist statistics
         run: |
           echo "Test: Artiest statistieken"
@@ -243,24 +215,18 @@ jobs:
             echo "   Output was: $OUTPUT"
             exit 1
           fi
-
       - name: CLI Test - Track statistics
         run: |
           ./aeron-imgman -config=test_config.yaml -scope=track -stats
-
-
       - name: CLI Test - Artist image upload (dry-run)
         run: |
           ./aeron-imgman -config=test_config.yaml -scope=artist -name='OneRepublic' -file=test_small.png -dry-run
-
       - name: CLI Test - Artist image upload (file)
         run: |
           ./aeron-imgman -config=test_config.yaml -scope=artist -name='OneRepublic' -file=test_large.png
-
       - name: CLI Test - Track image upload (file)
         run: |
           ./aeron-imgman -config=test_config.yaml -scope=track -name='Counting Stars' -file=test_large.png
-
       - name: CLI Test - Invalid scope error
         run: |
           echo "Test: Ongeldige scope moet foutmelding geven"
@@ -272,7 +238,6 @@ jobs:
             echo "   $OUTPUT"
             exit 1
           fi
-
       - name: CLI Test - Reject small image
         run: |
           echo "Test: Te kleine afbeelding moet geweigerd worden"
@@ -284,21 +249,17 @@ jobs:
             echo "   Output: $OUTPUT"
             exit 1
           fi
-
       - name: CLI Test - No name or ID error
         run: |
           ! ./aeron-imgman -config=test_config.yaml -scope=artist -url='http://example.com/image.jpg' 2>&1
-
       # API Tests
       - name: Reset database before API tests
         run: ./reset_db.sh
-
       - name: Start API server
         run: |
           ./aeron-imgman -config=test_config.yaml -server -port=8888 &
           echo $! > api.pid
           sleep 3
-
       - name: API Test - Health check
         run: |
           echo "Test: API health endpoint"
@@ -310,7 +271,6 @@ jobs:
             echo "   $RESPONSE" | jq .
             exit 1
           fi
-
       - name: API Test - Artists statistics (default)
         run: |
           echo "Test: API artists endpoint geeft standaard statistieken"
@@ -330,8 +290,6 @@ jobs:
             echo "$RESPONSE" | jq .
             exit 1
           fi
-
-
       - name: API Test - List artists (no auth)
         run: |
           echo "Test: API moet authenticatie vereisen"
@@ -343,15 +301,12 @@ jobs:
             echo "   Response: $RESPONSE"
             exit 1
           fi
-
-
       - name: API Test - Artist image upload (URL)
         run: |
           curl -s -X POST -H 'X-API-Key: test-api-key-12345' http://localhost:8888/api/artists/upload \
             -H 'Content-Type: application/json' \
             -d '{"name":"Queen","url":"https://picsum.photos/1500"}' \
             -m 10 | jq -e '.success == true'
-
       - name: API Test - Track image upload (base64)
         run: |
           BASE64_IMAGE=$(base64 -w 0 < test_small.png)
@@ -359,25 +314,20 @@ jobs:
             -H 'Content-Type: application/json' \
             -d '{"name":"Bohemian Rhapsody","image":"data:image/png;base64,'$BASE64_IMAGE'"}' | \
             jq -e '.success == false and (.error | contains("afbeelding te klein"))'
-
       - name: API Test - Nuke without confirmation
         run: |
           curl -s -X DELETE -H 'X-API-Key: test-api-key-12345' http://localhost:8888/api/artists/nuke | jq -e '.success == false'
-
       - name: API Test - Method not allowed
         run: |
           curl -s -X PUT -H 'X-API-Key: test-api-key-12345' http://localhost:8888/api/artists | jq -e '.success == false'
-
       - name: Stop API server
         run: |
           kill $(cat api.pid) || true
           rm -f api.pid
           sleep 1
-
       # Image Optimization Tests
       - name: Reset database before optimization tests
         run: ./reset_db.sh
-
       - name: Image Optimization Test - Verify optimization
         run: |
           echo "Test: Afbeelding optimalisatie"
@@ -397,15 +347,12 @@ jobs:
             echo "✗ Afbeelding niet opgeslagen"
             exit 1
           fi
-
       - name: Image Optimization Test - Dual encoder comparison
         run: |
           ./aeron-imgman -config=test_config.yaml -scope=artist -name='Imagine Dragons' -file=test_large.png 2>&1 | grep -E '(jpegli|standaard)'
-
       # Concurrent Operations Test
       - name: Reset database before concurrent tests
         run: ./reset_db.sh
-
       - name: Concurrent Operations Test
         run: |
           echo "Test: Gelijktijdige uploads"
@@ -427,11 +374,9 @@ jobs:
             echo "✗ Een of meer gelijktijdige uploads zijn mislukt"
             exit 1
           fi
-
       # Edge Cases and Error Handling
       - name: Reset database before edge case tests
         run: ./reset_db.sh
-
       - name: Edge Case Test - Non-existent artist
         run: |
           echo "Test: Upload naar niet-bestaande artiest"
@@ -443,19 +388,15 @@ jobs:
             echo "   Output: $OUTPUT"
             exit 1
           fi
-
       - name: Edge Case Test - Non-existent track
         run: |
           ./aeron-imgman -config=test_config.yaml -scope=track -name='NONEXISTENT_TRACK_XYZ' -file=test_large.png 2>&1 | grep -q 'niet gevonden'
-
       - name: Edge Case Test - Invalid URL
         run: |
           ! ./aeron-imgman -config=test_config.yaml -scope=artist -name='Coldplay' -url='not-a-url' 2>&1
-
       - name: Edge Case Test - Both name and ID
         run: |
           ! ./aeron-imgman -config=test_config.yaml -scope=artist -name='Test' -id='123e4567-e89b-12d3-a456-426614174000' -url='http://example.com/image.jpg' 2>&1
-
       # API Authentication Tests
       - name: API Auth Test - Setup auth config
         run: |
@@ -481,17 +422,14 @@ jobs:
               - "test-api-key-12345"
               - "another-test-key-67890"
           EOF
-
       - name: API Auth Test - Start server with auth
         run: |
           ./aeron-imgman -config=test_auth_config.yaml -server -port=8890 &
           echo $! > api_auth.pid
           sleep 3
-
       - name: API Auth Test - Health endpoint (no auth required)
         run: |
           curl -s http://localhost:8890/api/health | jq -e '.success == true'
-
       - name: API Auth Test - Protected endpoint without API key
         run: |
           echo "Test: API endpoint zonder API key"
@@ -506,25 +444,20 @@ jobs:
             echo "   Response: $BODY"
             exit 1
           fi
-
       - name: API Auth Test - Protected endpoint with invalid API key
         run: |
           curl -s -H "X-API-Key: invalid-key" http://localhost:8890/api/artists | jq -e '.success == false'
-
       - name: API Auth Test - Protected endpoint with valid API key (header)
         run: |
           curl -s -H "X-API-Key: test-api-key-12345" http://localhost:8890/api/artists | jq -e '.success == true'
-
       - name: API Auth Test - Protected endpoint with valid API key (query param)
         run: |
           curl -s "http://localhost:8890/api/artists?key=another-test-key-67890" | jq -e '.success == true'
-
       - name: Stop API auth server
         run: |
           kill $(cat api_auth.pid) || true
           rm -f api_auth.pid
           sleep 1
-
       - name: API Auth Test - Setup no auth config
         run: |
           cat > test_no_auth_config.yaml << 'EOF'
@@ -547,26 +480,21 @@ jobs:
             enabled: false
             keys: []
           EOF
-
       - name: API Auth Test - Start server without auth
         run: |
           ./aeron-imgman -config=test_no_auth_config.yaml -server -port=8891 &
           echo $! > api_no_auth.pid
           sleep 3
-
       - name: API Auth Test - Protected endpoint with auth disabled
         run: |
           curl -s http://localhost:8891/api/artists | jq -e '.success == true'
-
       - name: Stop API no-auth server
         run: |
           kill $(cat api_no_auth.pid) || true
           rm -f api_no_auth.pid
-
       # Destructive Tests (run near end)
       - name: Reset database before nuke tests
         run: ./reset_db.sh
-
       - name: Nuke Test - Dry-run
         run: |
           echo "Test: Nuke operatie in dry-run modus"
@@ -578,7 +506,6 @@ jobs:
             echo "   Output: $OUTPUT"
             exit 1
           fi
-
       - name: Nuke Test - Cancelled
         run: |
           echo "Test: Nuke operatie annuleren"
@@ -590,7 +517,6 @@ jobs:
             echo "   Output: $OUTPUT"
             exit 1
           fi
-
       # Cleanup
       - name: Cleanup test data
         run: |
@@ -600,4 +526,3 @@ jobs:
 
           # Stop and remove Docker containers
           cd tests && docker compose -f docker-compose.test.yml down -v
-

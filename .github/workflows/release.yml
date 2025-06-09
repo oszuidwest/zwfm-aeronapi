@@ -1,5 +1,4 @@
 name: Release
-
 on:
   workflow_dispatch:
     inputs:
@@ -10,17 +9,14 @@ on:
   push:
     tags:
       - 'v*'
-
 env:
   GO_VERSION: '1.24'
   APP_NAME: 'aeron-imgman'
-
 jobs:
   # Run comprehensive tests first
   comprehensive-test:
     uses: ./.github/workflows/comprehensive-test.yml
     secrets: inherit
-
   build:
     needs: comprehensive-test
     runs-on: ubuntu-latest
@@ -38,7 +34,6 @@ jobs:
             goarch: arm
             goarm: '7'
             suffix: ''
-
           # Windows builds
           - goos: windows
             goarch: amd64
@@ -46,7 +41,6 @@ jobs:
           - goos: windows
             goarch: arm64
             suffix: '.exe'
-
           # macOS builds
           - goos: darwin
             goarch: amd64
@@ -54,19 +48,16 @@ jobs:
           - goos: darwin
             goarch: arm64
             suffix: ''
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
-
+          cache: true
       - name: Download dependencies
         run: go mod download
-
       - name: Set version from tag or input
         id: version
         run: |
@@ -79,7 +70,6 @@ jobs:
           fi
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
           echo "Version: ${VERSION}"
-
       - name: Build binary
         env:
           GOOS: ${{ matrix.goos }}
@@ -96,22 +86,28 @@ jobs:
             -ldflags="-s -w -X main.Version=${VERSION} -X main.Commit=${COMMIT} -X main.BuildTime=${BUILD_TIME}" \
             -o ${{ env.APP_NAME }}-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goarm }}${{ matrix.suffix }} \
             .
-
-
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.APP_NAME }}-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goarm }}
           path: ${{ env.APP_NAME }}-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goarm }}${{ matrix.suffix }}
-
+  docker:
+    needs: comprehensive-test
+    uses: ./.github/workflows/docker-publish.yml
+    with:
+      version: ${{ github.event_name == 'push' && github.ref_name || github.event.inputs.version }}
+    secrets: inherit
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
   release:
-    needs: build
+    needs: [build, docker]
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
       - name: Set version from tag or input
         id: version
         run: |
@@ -123,29 +119,58 @@ jobs:
             VERSION="v0.0.0-$(git rev-parse --short HEAD)"
           fi
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
-
-      - name: Download all artifacts
+      - name: Download binary artifacts
         uses: actions/download-artifact@v4
         with:
           path: ./artifacts
-
+          pattern: ${{ env.APP_NAME }}-*
+          merge-multiple: true
       - name: Prepare release assets
         run: |
-          mkdir -p ./release-assets
-          find ./artifacts -name "${{ env.APP_NAME }}-*" -type f | while read file; do
-            cp "$file" ./release-assets/
-          done
-          ls -la ./release-assets/
-
+          ls -la ./artifacts/
       - name: Generate release notes
-        run: "VERSION=\"${{ steps.version.outputs.version }}\"\ncat > RELEASE_NOTES.md << EOF\n## Downloads\n  #magic___^_^___line\nDownload het juiste bestand voor je platform en maak het uitvoerbaar met \\`chmod +x\\`.\n  #magic___^_^___line\n**Linux**: amd64, arm64, armv7  \n**Windows**: amd64, arm64  \n**macOS**: Intel (amd64), Apple Silicon (arm64)\n  #magic___^_^___line\nVoor installatie-instructies en gebruiksvoorbeelden, zie de [README](README.md).\nEOF\n  #magic___^_^___line\n"
+        run: |
+          cat > RELEASE_NOTES.md << 'EOF'
+          ## Downloads
+
+          Download het juiste bestand voor je platform:
+
+          ### Linux
+          - `aeron-imgman-linux-amd64` - 64-bit Intel/AMD
+          - `aeron-imgman-linux-arm64` - 64-bit ARM (Raspberry Pi 4/5, AWS Graviton)
+          - `aeron-imgman-linux-arm7` - 32-bit ARM (Raspberry Pi 2/3)
+
+          ### Windows
+          - `aeron-imgman-windows-amd64.exe` - 64-bit Intel/AMD
+          - `aeron-imgman-windows-arm64.exe` - 64-bit ARM
+
+          ### macOS
+          - `aeron-imgman-darwin-amd64` - Intel Macs
+          - `aeron-imgman-darwin-arm64` - Apple Silicon (M1/2/3/4/etc...)
+
+          ## Installatie
+
+          1. Download het juiste bestand voor je platform
+          2. Maak het uitvoerbaar (Linux/macOS): `chmod +x aeron-imgman-*`
+          3. Verplaats naar een directory in je PATH (optioneel)
+
+          ## Docker
+
+          ```bash
+          docker pull ghcr.io/oszuidwest/aeron-imgman:${{ steps.version.outputs.version }}
+          ```
+
+          ## Documentatie
+
+          Voor configuratie en gebruiksvoorbeelden, zie de [README](https://github.com/oszuidwest/aeron-imgman#readme).
+          EOF
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.version }}
           name: ${{ steps.version.outputs.version }}
           body_path: RELEASE_NOTES.md
-          files: ./release-assets/*
+          files: ./artifacts/*
           draft: false
           prerelease: false
         env:

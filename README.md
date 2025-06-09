@@ -36,6 +36,24 @@ Je kunt ook gecompileerde executables downloaden via de [Releases pagina](https:
 
 Download het juiste bestand voor je platform, maak het uitvoerbaar (`chmod +x`) en gebruik het direct.
 
+### Docker
+
+De applicatie is ook beschikbaar als Docker image:
+
+```bash
+# Pull de laatste versie
+docker pull ghcr.io/oszuidwest/aeron-imgman:latest
+
+# Of een specifieke versie
+docker pull ghcr.io/oszuidwest/aeron-imgman:v1.0.0
+
+# Run met lokale config file
+docker run -v $(pwd)/config.yaml:/app/config.yaml ghcr.io/oszuidwest/aeron-imgman:latest -scope=artist -stats
+
+# Start als API server
+docker run -p 8080:8080 -v $(pwd)/config.yaml:/app/config.yaml ghcr.io/oszuidwest/aeron-imgman:latest -server
+```
+
 ## Gebruik
 
 ### Basiscommando's
