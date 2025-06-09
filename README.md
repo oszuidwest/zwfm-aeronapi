@@ -12,8 +12,9 @@ Een command-line tool voor het beheer van afbeeldingen in Aeron databases.
 * Ondersteunt JPG, JPEG en PNG invoerbestanden
 * Toont artiesten of tracks zonder afbeeldingen
 * Zoekt artiesten of tracks op gedeeltelijke naam
-* Verwijdert afbeeldingen per scope of alles tegelijk (nuke-functie)
+* Verwijdert afbeeldingen per scope (nuke-functie)
 * Dry-run modus voor het testen van operaties
+* REST API server modus voor integratie met andere applicaties
 * Vereist config.yaml bestand voor alle instellingen
 * Uniforme interface met verplichte -scope parameter
 
@@ -167,6 +168,78 @@ CREATE TABLE {schema}.track (
     picture BYTEA,
     -- andere velden
 );
+```
+
+## REST API
+
+Start de API server:
+```bash
+./aeron-imgman -server -port=8080
+```
+
+### API Endpoints
+
+#### Health Check
+```bash
+GET /api/health
+```
+
+#### Artists
+```bash
+# List artists (limit 50)
+GET /api/artists?without_images=true
+
+# Search artists
+GET /api/artists/search?q=searchterm
+
+# Upload image
+POST /api/artists/upload
+{
+  "name": "Artist Name",  # of gebruik "id": "UUID"
+  "url": "https://example.com/image.jpg"  # of "image": "base64_encoded_data"
+}
+
+# Delete all artist images (requires header)
+DELETE /api/artists/nuke
+Header: X-Confirm-Nuke: VERWIJDER ALLES
+```
+
+#### Tracks
+```bash
+# List tracks (limit 50)
+GET /api/tracks?without_images=true
+
+# Search tracks
+GET /api/tracks/search?q=searchterm
+
+# Upload image
+POST /api/tracks/upload
+{
+  "name": "Track Title",  # of gebruik "id": "UUID"
+  "url": "https://example.com/image.jpg"  # of "image": "base64_encoded_data"
+}
+
+# Delete all track images (requires header)
+DELETE /api/tracks/nuke
+Header: X-Confirm-Nuke: VERWIJDER ALLES
+```
+
+### API Response Format
+
+Succesvolle responses:
+```json
+{
+  "success": true,
+  "data": { ... }
+}
+```
+
+Error responses:
+```json
+{
+  "success": false,
+  "error": "Error message"
+}
 ```
 
 ## Over dit project

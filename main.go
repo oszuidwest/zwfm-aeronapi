@@ -47,10 +47,11 @@ func main() {
 		searchName  = flag.String("search", "", "Zoek met gedeeltelijke naam match")
 		listMode    = flag.Bool("list", false, "Toon alle items zonder afbeeldingen")
 		nukeMode    = flag.Bool("nuke", false, "Verwijder ALLE afbeeldingen uit de database (vereist bevestiging)")
-		nukeAll     = flag.Bool("nukeall", false, "Verwijder ALLE afbeeldingen (artist + track)")
 		dryRun      = flag.Bool("dry-run", false, "Toon wat gedaan zou worden zonder daadwerkelijk bij te werken")
 		versionFlag = flag.Bool("version", false, "Toon versie-informatie")
 		configFile  = flag.String("config", "", "Pad naar config bestand (standaard: config.yaml)")
+		serverMode  = flag.Bool("server", false, "Start REST API server")
+		serverPort  = flag.String("port", "8080", "Server poort (standaard: 8080)")
 	)
 	flag.Parse()
 
@@ -60,23 +61,40 @@ func main() {
 	}
 
 	// Check if no action specified
-	if *name == "" && *id == "" && !*listMode && !*nukeMode && !*nukeAll && *searchName == "" {
+	if *name == "" && *id == "" && !*listMode && !*nukeMode && *searchName == "" && !*serverMode {
 		showUsage()
-	}
-
-	// Validate scope for operations that need it
-	needsScope := *name != "" || *id != "" || *listMode || *searchName != "" || (*nukeMode && !*nukeAll)
-	if needsScope && *scope == "" {
-		log.Fatal("Moet -scope specificeren (artist of track)")
-	}
-	if *scope != "" && *scope != ScopeArtist && *scope != ScopeTrack {
-		log.Fatal("Ongeldige scope: moet 'artist' of 'track' zijn")
 	}
 
 	// Configuratie laden
 	config, err := loadConfig(*configFile)
 	if err != nil {
 		log.Fatal(err)
+	}
+
+	// Server mode
+	if *serverMode {
+		fmt.Printf("Database: %s:%s/%s\n", config.Database.Host, config.Database.Port, config.Database.Name)
+		
+		db, err := sql.Open("postgres", config.DatabaseURL())
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer db.Close()
+
+		if err := db.Ping(); err != nil {
+			log.Fatal(err)
+		}
+
+		apiServer := NewAPIServer(db, config)
+		log.Fatal(apiServer.Start(*serverPort))
+	}
+
+	// Validate scope for all operations except version
+	if *scope == "" {
+		log.Fatal("Moet -scope specificeren (artist of track)")
+	}
+	if *scope != ScopeArtist && *scope != ScopeTrack {
+		log.Fatal("Ongeldige scope: moet 'artist' of 'track' zijn")
 	}
 
 	// Only show database info and connect for operations that need the database
@@ -355,6 +373,7 @@ func showUsage() {
 	fmt.Println("  ./aeron-imgman -scope=track -list")
 	fmt.Println("  ./aeron-imgman -scope=artist -search=\"Name\"")
 	fmt.Println("  ./aeron-imgman -scope=track -search=\"Title\"")
+	fmt.Println("  ./aeron-imgman -server [-port=8080]")
 	fmt.Println("\nOpties:")
 	fmt.Println("  -scope string      Verplicht: 'artist' of 'track'")
 	fmt.Println("  -name string       Naam van artiest of track titel")
@@ -363,9 +382,10 @@ func showUsage() {
 	fmt.Println("  -file string       Lokaal bestand")
 	fmt.Println("  -list              Toon items zonder afbeelding")
 	fmt.Println("  -search string     Zoek items")
-	fmt.Println("  -nuke              Verwijder afbeeldingen van scope")
-	fmt.Println("  -nukeall           Verwijder ALLE afbeeldingen (artist + track)")
+	fmt.Println("  -nuke              Verwijder alle afbeeldingen van scope")
 	fmt.Println("  -dry-run           Simuleer actie")
+	fmt.Println("  -server            Start REST API server")
+	fmt.Println("  -port string       Server poort (standaard: 8080)")
 	fmt.Println("  -version           Toon versie")
 	fmt.Println("  -config string     Pad naar config bestand")
 	fmt.Println("\nVereist: config.yaml")
