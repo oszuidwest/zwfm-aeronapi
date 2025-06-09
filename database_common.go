@@ -5,7 +5,6 @@ import (
 	"fmt"
 )
 
-// Common database operations that can be used for both artists and tracks
 
 type EntityType int
 
@@ -47,7 +46,6 @@ func (e EntityType) QueryConfig(schema string) QueryConfig {
 	}
 }
 
-// Generic function to count items with images
 func countItemsWithImages(db *sql.DB, config QueryConfig) (int, error) {
 	query := fmt.Sprintf(
 		`SELECT COUNT(*) FROM %s.%s WHERE %s IS NOT NULL`,
@@ -62,7 +60,6 @@ func countItemsWithImages(db *sql.DB, config QueryConfig) (int, error) {
 	return count, nil
 }
 
-// Generic function to delete all images
 func deleteAllImages(db *sql.DB, config QueryConfig) (int64, error) {
 	query := fmt.Sprintf(
 		`UPDATE %s.%s SET %s = NULL WHERE %s IS NOT NULL`,

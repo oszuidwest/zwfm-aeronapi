@@ -25,9 +25,15 @@ type ImageConfig struct {
 	RejectSmaller bool `yaml:"reject_smaller"`
 }
 
+type APIConfig struct {
+	Enabled bool     `yaml:"enabled"`
+	Keys    []string `yaml:"keys"`
+}
+
 type Config struct {
 	Database DatabaseConfig `yaml:"database"`
 	Image    ImageConfig    `yaml:"image"`
+	API      APIConfig      `yaml:"api"`
 }
 
 func (c *Config) DatabaseURL() string {
@@ -36,12 +42,9 @@ func (c *Config) DatabaseURL() string {
 }
 
 func loadConfig(configPath string) (*Config, error) {
-	// Geen defaults - alles moet in config file staan
 	config := &Config{}
 
-	// Config bestand is verplicht
 	if configPath == "" {
-		// Zoek naar config.yaml in huidige directory
 		if _, err := os.Stat("config.yaml"); err == nil {
 			configPath = "config.yaml"
 		} else {
@@ -58,7 +61,6 @@ func loadConfig(configPath string) (*Config, error) {
 		return nil, fmt.Errorf("kon config bestand niet parsen: %w", err)
 	}
 
-	// Valideer configuratie
 	if err := validateConfig(config); err != nil {
 		return nil, fmt.Errorf("configuratie onvolledig: %w", err)
 	}
@@ -71,7 +73,6 @@ func validateConfig(config *Config) error {
 		name  string
 		check func() bool
 	}{
-		// Database fields
 		{"database.host", func() bool { return config.Database.Host != "" }},
 		{"database.port", func() bool { return config.Database.Port != "" }},
 		{"database.name", func() bool { return config.Database.Name != "" }},
@@ -79,7 +80,6 @@ func validateConfig(config *Config) error {
 		{"database.password", func() bool { return config.Database.Password != "" }},
 		{"database.schema", func() bool { return config.Database.Schema != "" }},
 		{"database.sslmode", func() bool { return config.Database.SSLMode != "" }},
-		// Image fields
 		{"image.target_width", func() bool { return config.Image.TargetWidth > 0 }},
 		{"image.target_height", func() bool { return config.Image.TargetHeight > 0 }},
 		{"image.quality (1-100)", func() bool { return config.Image.Quality > 0 && config.Image.Quality <= 100 }},

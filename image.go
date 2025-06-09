@@ -14,7 +14,6 @@ import (
 	"github.com/gen2brain/jpegli"
 )
 
-// ImageProcessingResult contains the result of image processing
 type ImageProcessingResult struct {
 	Data      []byte
 	Format    string
@@ -24,7 +23,6 @@ type ImageProcessingResult struct {
 	Savings   float64
 }
 
-// ImageInfo contains image metadata
 type ImageInfo struct {
 	Format string
 	Width  int
@@ -32,7 +30,6 @@ type ImageInfo struct {
 	Size   int
 }
 
-// Ondersteunde formaten
 var SupportedFormats = []string{"jpeg", "jpg", "png"}
 
 type ImageOptimizer struct {
@@ -157,20 +154,19 @@ func (opt *ImageOptimizer) convertPNGToJPEG(data []byte) ([]byte, string, string
 }
 
 func (opt *ImageOptimizer) processImage(img image.Image, originalData []byte, outputFormat string) ([]byte, string, string, error) {
-	// Verklein als groter dan doelgrootte
+	// Resize if image exceeds target dimensions to reduce memory usage
 	bounds := img.Bounds()
 	width, height := bounds.Dx(), bounds.Dy()
 	if width > opt.Config.TargetWidth || height > opt.Config.TargetHeight {
 		img = opt.resizeImage(img, opt.Config.TargetWidth, opt.Config.TargetHeight)
 	}
 
-	// Encode JPEG
 	optimizedData, usedEncoder, err := encodeToJPEG(img, opt.Config, len(originalData))
 	if err != nil {
 		return nil, "", "", err
 	}
 
-	// Geef geoptimaliseerde data terug als deze beter is, anders origineel
+	// Return optimized data if it's better, otherwise return original
 	if optimizedData != nil && len(optimizedData) > 0 {
 		return optimizedData, outputFormat, usedEncoder, nil
 	}
@@ -209,13 +205,11 @@ func (opt *ImageOptimizer) resizeImage(img image.Image, maxWidth, maxHeight int)
 	return dst
 }
 
-// Algemene JPEG encoding logica - retourneert data en encoder vergelijking
 func encodeToJPEG(img image.Image, config ImageConfig, originalSize int) ([]byte, string, error) {
 	var bestData []byte
 	var bestSize int = originalSize
 	var winnerInfo string
 
-	// Probeer altijd standaard JPEG
 	standardData, err := encodeWithStandardJPEG(img, config.Quality)
 	if err != nil {
 		return nil, "", fmt.Errorf("standaard JPEG encoding faalde: %w", err)
@@ -227,25 +221,22 @@ func encodeToJPEG(img image.Image, config ImageConfig, originalSize int) ([]byte
 		winnerInfo = fmt.Sprintf("standaard (%d KB)", len(standardData)/1024)
 	}
 
-	// Probeer altijd Jpegli (verplicht)
+	// Always try Jpegli encoder for better compression
 	if jpegliData, err := encodeWithJpegli(img, config.Quality); err == nil {
 		if len(jpegliData) > 0 {
 			if len(jpegliData) < bestSize {
-				// Jpegli won
 				bestData = jpegliData
 				bestSize = len(jpegliData)
 				winnerInfo = fmt.Sprintf("jpegli (%d KB) vs standaard (%d KB)", len(jpegliData)/1024, len(standardData)/1024)
 			} else {
-				// Standaard won
 				winnerInfo = fmt.Sprintf("standaard (%d KB) vs jpegli (%d KB)", len(standardData)/1024, len(jpegliData)/1024)
 			}
 		}
 	} else {
-		// Jpegli faalde
 		winnerInfo = fmt.Sprintf("standaard (%d KB) - jpegli faalde", len(standardData)/1024)
 	}
 
-	// Gebruik het beste resultaat (kleinste bestandsgrootte)
+	// Use the best result (smallest file size) from both encoders
 	if bestData != nil && len(bestData) > 0 {
 		return bestData, winnerInfo, nil
 	}

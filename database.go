@@ -72,12 +72,10 @@ func lookupArtist(db *sql.DB, schema, artistName, artistID string) (*Artist, err
 	var hasImage bool
 
 	if artistID != "" {
-		// Lookup by ID
 		query = fmt.Sprintf(`SELECT artistid, artist, CASE WHEN picture IS NOT NULL THEN true ELSE false END as has_image 
 		                     FROM %s.artist WHERE artistid = $1`, schema)
 		searchValue = artistID
 	} else {
-		// Lookup by name
 		query = fmt.Sprintf(`SELECT artistid, artist, CASE WHEN picture IS NOT NULL THEN true ELSE false END as has_image 
 		                     FROM %s.artist WHERE artist = $1`, schema)
 		searchValue = artistName
@@ -114,7 +112,6 @@ func updateArtistImageInDB(db *sql.DB, schema, artistID string, imageData []byte
 func nukeAllImages(db *sql.DB, schema string, scope string, dryRun bool) error {
 	var totalCount int
 
-	// Count affected items based on scope
 	if scope == "artist" {
 		artists, err := listArtists(db, schema, true, 0)
 		if err != nil {
@@ -136,10 +133,8 @@ func nukeAllImages(db *sql.DB, schema string, scope string, dryRun bool) error {
 		return nil
 	}
 
-	// Show warning
 	fmt.Printf("%s%sWAARSCHUWING:%s %d %s afbeeldingen verwijderen\n\n", Bold, Red, Reset, totalCount, getScopeDescription(scope))
 
-	// Show sample items
 	if scope == "artist" {
 		artists, _ := listArtists(db, schema, true, 20)
 		for i, artist := range artists {
@@ -177,7 +172,6 @@ func nukeAllImages(db *sql.DB, schema string, scope string, dryRun bool) error {
 		return nil
 	}
 
-	// Delete images based on scope
 	var query string
 	if scope == "artist" {
 		query = fmt.Sprintf(`UPDATE %s.artist SET picture = NULL WHERE picture IS NOT NULL`, schema)
@@ -257,7 +251,6 @@ func displayItemList(title string, items interface{}, showImageStatus bool, maxN
 		}
 	}
 
-	// Title with count
 	fmt.Printf("%s%s:%s %d", Cyan, title, Reset, count)
 	if maxNote != "" {
 		fmt.Printf(" (%s)", maxNote)
@@ -313,7 +306,7 @@ func searchArtists(db *sql.DB, schema, searchTerm string) error {
 }
 
 func listArtistsWithoutImages(db *sql.DB, schema string) error {
-	artists, err := listArtists(db, schema, false, 50) // false = zonder afbeeldingen, 50 = limit
+	artists, err := listArtists(db, schema, false, 50)
 	if err != nil {
 		return err
 	}
@@ -322,8 +315,6 @@ func listArtistsWithoutImages(db *sql.DB, schema string) error {
 	return nil
 }
 
-// Track-related functions
-
 func lookupTrack(db *sql.DB, schema, trackTitle, trackID string) (*Track, error) {
 	var query string
 	var searchValue string
@@ -331,12 +322,10 @@ func lookupTrack(db *sql.DB, schema, trackTitle, trackID string) (*Track, error)
 	var hasImage bool
 
 	if trackID != "" {
-		// Lookup by ID
 		query = fmt.Sprintf(`SELECT titleid, tracktitle, artist, CASE WHEN picture IS NOT NULL THEN true ELSE false END as has_image 
 		                     FROM %s.track WHERE titleid = $1`, schema)
 		searchValue = trackID
 	} else {
-		// Lookup by title
 		query = fmt.Sprintf(`SELECT titleid, tracktitle, artist, CASE WHEN picture IS NOT NULL THEN true ELSE false END as has_image 
 		                     FROM %s.track WHERE tracktitle = $1`, schema)
 		searchValue = trackTitle
@@ -414,7 +403,7 @@ func listTracks(db *sql.DB, schema string, hasImage bool, limit int) ([]Track, e
 }
 
 func listTracksWithoutImages(db *sql.DB, schema string) error {
-	tracks, err := listTracks(db, schema, false, 50) // false = zonder afbeeldingen, 50 = limit
+	tracks, err := listTracks(db, schema, false, 50)
 	if err != nil {
 		return err
 	}

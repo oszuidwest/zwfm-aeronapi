@@ -8,13 +8,11 @@ import (
 	"strings"
 )
 
-// ImageService provides unified image management operations
 type ImageService struct {
 	db     *sql.DB
 	config *Config
 }
 
-// NewImageService creates a new image service instance
 func NewImageService(db *sql.DB, config *Config) *ImageService {
 	return &ImageService{
 		db:     db,
@@ -22,7 +20,6 @@ func NewImageService(db *sql.DB, config *Config) *ImageService {
 	}
 }
 
-// ImageUploadParams contains parameters for image upload
 type ImageUploadParams struct {
 	Scope     string
 	Name      string
@@ -31,17 +28,15 @@ type ImageUploadParams struct {
 	ImageData []byte
 }
 
-// ImageUploadResult contains the result of an image upload
 type ImageUploadResult struct {
 	ItemName       string
-	ItemTitle      string // for tracks
+	ItemTitle      string
 	OriginalSize   int
 	OptimizedSize  int
 	SavingsPercent float64
 	Encoder        string
 }
 
-// Common error types
 var (
 	ErrInvalidScope     = fmt.Errorf("ongeldige scope: moet 'artist' of 'track' zijn")
 	ErrNoNameOrID       = fmt.Errorf("moet naam of id specificeren")
@@ -50,7 +45,6 @@ var (
 	ErrBothImageSources = fmt.Errorf("kan niet zowel url als afbeelding data specificeren")
 )
 
-// ValidateScope validates the scope parameter
 func ValidateScope(scope string) error {
 	if scope != ScopeArtist && scope != ScopeTrack {
 		return ErrInvalidScope
@@ -58,14 +52,11 @@ func ValidateScope(scope string) error {
 	return nil
 }
 
-// ValidateImageUploadParams validates image upload parameters
 func (s *ImageService) ValidateImageUploadParams(params *ImageUploadParams) error {
-	// Validate scope
 	if err := ValidateScope(params.Scope); err != nil {
 		return err
 	}
 
-	// Validate identification
 	if params.Name == "" && params.ID == "" {
 		return ErrNoNameOrID
 	}
@@ -73,7 +64,6 @@ func (s *ImageService) ValidateImageUploadParams(params *ImageUploadParams) erro
 		return ErrBothNameAndID
 	}
 
-	// Validate image source
 	if params.URL == "" && len(params.ImageData) == 0 {
 		return ErrNoImageSource
 	}
@@ -84,14 +74,11 @@ func (s *ImageService) ValidateImageUploadParams(params *ImageUploadParams) erro
 	return nil
 }
 
-// UploadImage handles image upload for both artists and tracks
 func (s *ImageService) UploadImage(params *ImageUploadParams) (*ImageUploadResult, error) {
-	// Validate parameters
 	if err := s.ValidateImageUploadParams(params); err != nil {
 		return nil, err
 	}
 
-	// Load image data if URL provided
 	var imageData []byte
 	var err error
 	if params.URL != "" {
@@ -103,13 +90,11 @@ func (s *ImageService) UploadImage(params *ImageUploadParams) (*ImageUploadResul
 		imageData = params.ImageData
 	}
 
-	// Process and optimize image
 	processingResult, err := processAndOptimizeImage(imageData, s.config.Image)
 	if err != nil {
 		return nil, fmt.Errorf("kon afbeelding niet verwerken: %w", err)
 	}
 
-	// Handle based on scope
 	result := &ImageUploadResult{
 		OriginalSize:   processingResult.Original.Size,
 		OptimizedSize:  processingResult.Optimized.Size,
@@ -145,7 +130,6 @@ func (s *ImageService) UploadImage(params *ImageUploadParams) (*ImageUploadResul
 	return result, nil
 }
 
-// ListWithoutImages returns items without images
 func (s *ImageService) ListWithoutImages(scope string, limit int) (interface{}, error) {
 	if err := ValidateScope(scope); err != nil {
 		return nil, err
@@ -157,7 +141,6 @@ func (s *ImageService) ListWithoutImages(scope string, limit int) (interface{}, 
 	return listTracks(s.db, s.config.Database.Schema, false, limit)
 }
 
-// Search performs a search for items
 func (s *ImageService) Search(scope, searchTerm string) (interface{}, error) {
 	if err := ValidateScope(scope); err != nil {
 		return nil, err
@@ -169,13 +152,11 @@ func (s *ImageService) Search(scope, searchTerm string) (interface{}, error) {
 	return findTracksWithPartialName(s.db, s.config.Database.Schema, searchTerm)
 }
 
-// NukeResult contains the result of a nuke operation
 type NukeResult struct {
 	Count   int
 	Deleted int64
 }
 
-// CountImagesForNuke counts images that would be deleted
 func (s *ImageService) CountImagesForNuke(scope string) (*NukeResult, error) {
 	if err := ValidateScope(scope); err != nil {
 		return nil, err
@@ -200,13 +181,11 @@ func (s *ImageService) CountImagesForNuke(scope string) (*NukeResult, error) {
 	return result, nil
 }
 
-// NukeImages deletes all images for the given scope
 func (s *ImageService) NukeImages(scope string) (*NukeResult, error) {
 	if err := ValidateScope(scope); err != nil {
 		return nil, err
 	}
 
-	// Get count first
 	countResult, err := s.CountImagesForNuke(scope)
 	if err != nil {
 		return nil, err
@@ -216,7 +195,6 @@ func (s *ImageService) NukeImages(scope string) (*NukeResult, error) {
 		return countResult, nil
 	}
 
-	// Delete images
 	var query string
 	if scope == ScopeArtist {
 		query = fmt.Sprintf(`UPDATE %s.artist SET picture = NULL WHERE picture IS NOT NULL`, s.config.Database.Schema)
@@ -233,9 +211,8 @@ func (s *ImageService) NukeImages(scope string) (*NukeResult, error) {
 	return countResult, nil
 }
 
-// DecodeBase64Image decodes a base64 encoded image
 func DecodeBase64Image(data string) ([]byte, error) {
-	// Remove data URL prefix if present
+	// Remove data URL prefix if present (e.g., "data:image/jpeg;base64,")
 	if idx := strings.Index(data, ","); idx != -1 {
 		data = data[idx+1:]
 	}
@@ -243,7 +220,6 @@ func DecodeBase64Image(data string) ([]byte, error) {
 	return io.ReadAll(base64.NewDecoder(base64.StdEncoding, strings.NewReader(data)))
 }
 
-// GetPreviewItems returns a preview of items for nuke operation
 func (s *ImageService) GetPreviewItems(scope string, limit int) ([]string, error) {
 	if err := ValidateScope(scope); err != nil {
 		return nil, err

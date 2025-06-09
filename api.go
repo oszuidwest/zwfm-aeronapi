@@ -8,6 +8,7 @@ import (
 
 type APIServer struct {
 	service *ImageService
+	config  *Config
 }
 
 type APIResponse struct {
@@ -20,7 +21,7 @@ type ImageUploadRequest struct {
 	Name  string `json:"name"`
 	ID    string `json:"id"`
 	URL   string `json:"url"`
-	Image string `json:"image"` // base64 encoded image
+	Image string `json:"image"`
 }
 
 type ItemResponse struct {
@@ -31,47 +32,52 @@ type ItemResponse struct {
 	HasImage bool   `json:"has_image"`
 }
 
-func NewAPIServer(service *ImageService) *APIServer {
+func NewAPIServer(service *ImageService, config *Config) *APIServer {
 	return &APIServer{
 		service: service,
+		config:  config,
 	}
 }
 
 func (s *APIServer) Start(port string) error {
 	mux := http.NewServeMux()
 
-	// Middleware wrapper
-	wrap := func(method string, handler http.HandlerFunc) http.HandlerFunc {
+	wrap := func(method string, handler http.HandlerFunc, requireAuth bool) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 
-			// Log request
 			fmt.Printf("[%s] %s %s\n", r.Method, r.URL.Path, r.RemoteAddr)
-
-			// Method validation
 			if r.Method != method {
 				s.sendError(w, "Method not allowed", http.StatusMethodNotAllowed)
 				return
+			}
+
+			if requireAuth && s.config.API.Enabled {
+				apiKey := r.Header.Get("X-API-Key")
+				if apiKey == "" {
+					apiKey = r.URL.Query().Get("api_key")
+				}
+
+				if !s.isValidAPIKey(apiKey) {
+					s.sendError(w, "Unauthorized: Invalid or missing API key", http.StatusUnauthorized)
+					return
+				}
 			}
 
 			handler(w, r)
 		}
 	}
 
-	// Routes
-	mux.HandleFunc("/api/health", wrap(http.MethodGet, s.handleHealth))
+	mux.HandleFunc("/api/health", wrap(http.MethodGet, s.handleHealth, false))
+	mux.HandleFunc("/api/artists", wrap(http.MethodGet, s.handleArtists, true))
+	mux.HandleFunc("/api/artists/search", wrap(http.MethodGet, s.handleArtistSearch, true))
+	mux.HandleFunc("/api/artists/upload", wrap(http.MethodPost, s.handleArtistImageUpload, true))
+	mux.HandleFunc("/api/artists/nuke", wrap(http.MethodDelete, s.handleArtistNuke, true))
 
-	// Artist endpoints
-	mux.HandleFunc("/api/artists", wrap(http.MethodGet, s.handleArtists))
-	mux.HandleFunc("/api/artists/search", wrap(http.MethodGet, s.handleArtistSearch))
-	mux.HandleFunc("/api/artists/upload", wrap(http.MethodPost, s.handleArtistImageUpload))
-	mux.HandleFunc("/api/artists/nuke", wrap(http.MethodDelete, s.handleArtistNuke))
-
-	// Track endpoints
-	mux.HandleFunc("/api/tracks", wrap(http.MethodGet, s.handleTracks))
-	mux.HandleFunc("/api/tracks/search", wrap(http.MethodGet, s.handleTrackSearch))
-	mux.HandleFunc("/api/tracks/upload", wrap(http.MethodPost, s.handleTrackImageUpload))
-	mux.HandleFunc("/api/tracks/nuke", wrap(http.MethodDelete, s.handleTrackNuke))
+	mux.HandleFunc("/api/tracks", wrap(http.MethodGet, s.handleTracks, true))
+	mux.HandleFunc("/api/tracks/search", wrap(http.MethodGet, s.handleTrackSearch, true))
+	mux.HandleFunc("/api/tracks/upload", wrap(http.MethodPost, s.handleTrackImageUpload, true))
+	mux.HandleFunc("/api/tracks/nuke", wrap(http.MethodDelete, s.handleTrackNuke, true))
 
 	fmt.Printf("%sAPI Server gestart op poort %s%s\n", Green, port, Reset)
 	return http.ListenAndServe(":"+port, mux)
@@ -96,8 +102,6 @@ func (s *APIServer) handleArtists(w http.ResponseWriter, r *http.Request) {
 	if withoutImages {
 		items, err = s.service.ListWithoutImages(ScopeArtist, limit)
 	} else {
-		// For now, we'll use the same function but with true for hasImage
-		// This would need a separate method in service if we want to list with images
 		items, err = s.service.ListWithoutImages(ScopeArtist, limit)
 	}
 
@@ -161,7 +165,6 @@ func (s *APIServer) handleArtistImageUpload(w http.ResponseWriter, r *http.Reque
 		URL:   req.URL,
 	}
 
-	// Decode base64 image if provided
 	if req.Image != "" {
 		imageData, err := DecodeBase64Image(req.Image)
 		if err != nil {
@@ -266,7 +269,6 @@ func (s *APIServer) handleTrackImageUpload(w http.ResponseWriter, r *http.Reques
 		URL:   req.URL,
 	}
 
-	// Decode base64 image if provided
 	if req.Image != "" {
 		imageData, err := DecodeBase64Image(req.Image)
 		if err != nil {
@@ -299,7 +301,6 @@ func (s *APIServer) handleTrackImageUpload(w http.ResponseWriter, r *http.Reques
 
 func (s *APIServer) handleArtistNuke(w http.ResponseWriter, r *http.Request) {
 
-	// This is a dangerous operation, so we require a confirmation header
 	if r.Header.Get("X-Confirm-Nuke") != "VERWIJDER ALLES" {
 		s.sendError(w, "Missing confirmation header: X-Confirm-Nuke", http.StatusBadRequest)
 		return
@@ -319,7 +320,6 @@ func (s *APIServer) handleArtistNuke(w http.ResponseWriter, r *http.Request) {
 
 func (s *APIServer) handleTrackNuke(w http.ResponseWriter, r *http.Request) {
 
-	// This is a dangerous operation, so we require a confirmation header
 	if r.Header.Get("X-Confirm-Nuke") != "VERWIJDER ALLES" {
 		s.sendError(w, "Missing confirmation header: X-Confirm-Nuke", http.StatusBadRequest)
 		return
@@ -352,4 +352,17 @@ func (s *APIServer) sendError(w http.ResponseWriter, message string, code int) {
 		Error:   message,
 	}
 	json.NewEncoder(w).Encode(response)
+}
+
+func (s *APIServer) isValidAPIKey(key string) bool {
+	if key == "" {
+		return false
+	}
+
+	for _, validKey := range s.config.API.Keys {
+		if key == validKey {
+			return true
+		}
+	}
+	return false
 }

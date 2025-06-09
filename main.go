@@ -10,7 +10,7 @@ import (
 	_ "github.com/lib/pq"
 )
 
-// ANSI colors for clean output
+// ANSI color codes
 const (
 	Reset  = "\033[0m"
 	Bold   = "\033[1m"
@@ -27,7 +27,7 @@ var (
 	BuildTime = "unknown"
 )
 
-// Constanten
+// Constants
 const (
 	MaxFileSize = 20 * 1024 * 1024 // 20MB (for download validation)
 	ScopeArtist = "artist"
@@ -35,7 +35,6 @@ const (
 )
 
 func main() {
-	// Remove timestamp from log output
 	log.SetFlags(0)
 
 	var (
@@ -60,18 +59,15 @@ func main() {
 		return
 	}
 
-	// Check if no action specified
 	if *name == "" && *id == "" && !*listMode && !*nukeMode && *searchName == "" && !*serverMode {
 		showUsage()
 	}
 
-	// Configuratie laden
 	config, err := loadConfig(*configFile)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	// Server mode
 	if *serverMode {
 		fmt.Printf("Database: %s:%s/%s\n", config.Database.Host, config.Database.Port, config.Database.Name)
 
@@ -86,11 +82,10 @@ func main() {
 		}
 
 		service := NewImageService(db, config)
-		apiServer := NewAPIServer(service)
+		apiServer := NewAPIServer(service, config)
 		log.Fatal(apiServer.Start(*serverPort))
 	}
 
-	// Validate scope for all operations except version
 	if *scope == "" {
 		log.Fatal("Moet -scope specificeren (artist of track)")
 	}
@@ -98,7 +93,6 @@ func main() {
 		log.Fatal("Ongeldige scope: moet 'artist' of 'track' zijn")
 	}
 
-	// Only show database info and connect for operations that need the database
 	fmt.Printf("Database: %s:%s/%s\n", config.Database.Host, config.Database.Port, config.Database.Name)
 
 	db, err := sql.Open("postgres", config.DatabaseURL())
@@ -111,10 +105,8 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// Create service
 	service := NewImageService(db, config)
 
-	// Handle operations
 	switch {
 	case *listMode:
 		if err := handleListCommand(service, *scope); err != nil {
@@ -139,7 +131,6 @@ func main() {
 			URL:   *imageURL,
 		}
 
-		// Load image data if file path provided
 		if *imagePath != "" {
 			imageData, err := readImageFile(*imagePath, config.Image.MaxFileSizeMB)
 			if err != nil {
@@ -154,7 +145,6 @@ func main() {
 	}
 }
 
-// Command handlers
 func handleListCommand(service *ImageService, scope string) error {
 	items, err := service.ListWithoutImages(scope, 50)
 	if err != nil {
@@ -196,7 +186,6 @@ func handleSearchCommand(service *ImageService, scope, searchTerm string) error 
 }
 
 func handleNukeCommand(service *ImageService, scope string, dryRun bool) error {
-	// Get count and preview
 	result, err := service.CountImagesForNuke(scope)
 	if err != nil {
 		return err
@@ -207,10 +196,8 @@ func handleNukeCommand(service *ImageService, scope string, dryRun bool) error {
 		return nil
 	}
 
-	// Show warning
 	fmt.Printf("%s%sWAARSCHUWING:%s %d %s afbeeldingen verwijderen\n\n", Bold, Red, Reset, result.Count, getScopeDescription(scope))
 
-	// Show preview
 	previewItems, err := service.GetPreviewItems(scope, 20)
 	if err != nil {
 		return err
@@ -239,7 +226,6 @@ func handleNukeCommand(service *ImageService, scope string, dryRun bool) error {
 		return nil
 	}
 
-	// Execute nuke
 	nukeResult, err := service.NukeImages(scope)
 	if err != nil {
 		return err
@@ -251,7 +237,6 @@ func handleNukeCommand(service *ImageService, scope string, dryRun bool) error {
 
 func handleUploadCommand(service *ImageService, params *ImageUploadParams, dryRun bool) error {
 	if dryRun {
-		// For dry run, we need to check if the item exists
 		if params.Scope == ScopeArtist {
 			_, err := lookupArtist(service.db, service.config.Database.Schema, params.Name, params.ID)
 			if err != nil {
@@ -289,8 +274,6 @@ func processAndOptimizeImage(imageData []byte, config ImageConfig) (*ImageProces
 	if err != nil {
 		return nil, err
 	}
-
-	// Original image info processed internally
 
 	if err := validateImageFormat(originalInfo.Format); err != nil {
 		return nil, err
@@ -334,8 +317,7 @@ func shouldSkipOptimization(info *ImageInfo, config ImageConfig) bool {
 }
 
 func createSkippedResult(imageData []byte, originalInfo *ImageInfo) *ImageProcessingResult {
-	// Image already perfect size - no processing needed
-	result := &ImageProcessingResult{
+	return &ImageProcessingResult{
 		Data:      imageData,
 		Format:    originalInfo.Format,
 		Encoder:   "origineel (geen optimalisatie)",
@@ -343,13 +325,9 @@ func createSkippedResult(imageData []byte, originalInfo *ImageInfo) *ImageProces
 		Optimized: *originalInfo,
 		Savings:   0,
 	}
-	// Skipped optimization - already perfect size
-	return result
 }
 
 func optimizeImageData(imageData []byte, originalInfo *ImageInfo, config ImageConfig) (*ImageProcessingResult, error) {
-	// Processing image for optimization
-
 	optimizer := NewImageOptimizer(config)
 	optimizedData, optFormat, optEncoder, err := optimizer.OptimizeImage(imageData)
 	if err != nil {
@@ -368,17 +346,14 @@ func optimizeImageData(imageData []byte, originalInfo *ImageInfo, config ImageCo
 
 	savings := calculateSavings(originalInfo.Size, optimizedInfo.Size)
 
-	result := &ImageProcessingResult{
+	return &ImageProcessingResult{
 		Data:      optimizedData,
 		Format:    optFormat,
 		Encoder:   optEncoder,
 		Original:  *originalInfo,
 		Optimized: *optimizedInfo,
 		Savings:   savings,
-	}
-
-	// Image optimized successfully
-	return result, nil
+	}, nil
 }
 
 func calculateSavings(originalSize, optimizedSize int) float64 {
@@ -386,7 +361,6 @@ func calculateSavings(originalSize, optimizedSize int) float64 {
 	return float64(savings) / float64(originalSize) * 100
 }
 
-// Moved from output.go
 func showUsage() {
 	fmt.Printf("%sAeron Image Manager%s\n\n", Bold, Reset)
 	fmt.Println("Gebruik:")

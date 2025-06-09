@@ -22,3 +22,11 @@ image:
   
   # Verwerkingsgedrag
   reject_smaller: true
+
+# API configuratie (optioneel)
+api:
+  # Schakel API authenticatie in/uit
+  enabled: false
+  # API sleutels voor toegang
+  keys:
+    # - "your-secret-api-key-here"
