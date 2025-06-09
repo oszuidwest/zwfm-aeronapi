@@ -29,9 +29,15 @@ var (
 
 // Constants
 const (
-	MaxFileSize = 20 * 1024 * 1024 // 20MB (for download validation)
 	ScopeArtist = "artist"
 	ScopeTrack  = "track"
+
+	// Default limits
+	DefaultListLimit   = 10
+	DefaultNukePreview = 20
+
+	// Size constants
+	Kilobyte = 1024
 )
 
 func main() {
@@ -44,7 +50,8 @@ func main() {
 		imageURL    = flag.String("url", "", "URL van de afbeelding om te downloaden")
 		imagePath   = flag.String("file", "", "Lokaal pad naar afbeelding")
 		searchName  = flag.String("search", "", "Zoek met gedeeltelijke naam match")
-		listMode    = flag.Bool("list", false, "Toon alle items zonder afbeeldingen")
+		listMode    = flag.Bool("list", false, "Toon alle items")
+		listFilter  = flag.String("filter", "without", "Filter voor list: 'with' of 'without' (standaard: without)")
 		nukeMode    = flag.Bool("nuke", false, "Verwijder ALLE afbeeldingen uit de database (vereist bevestiging)")
 		dryRun      = flag.Bool("dry-run", false, "Toon wat gedaan zou worden zonder daadwerkelijk bij te werken")
 		versionFlag = flag.Bool("version", false, "Toon versie-informatie")
@@ -109,17 +116,17 @@ func main() {
 
 	switch {
 	case *listMode:
-		if err := handleListCommand(service, *scope); err != nil {
+		if err := handleList(service, *scope, *listFilter); err != nil {
 			log.Fatal(err)
 		}
 
 	case *searchName != "":
-		if err := handleSearchCommand(service, *scope, *searchName); err != nil {
+		if err := handleSearch(service, *scope, *searchName); err != nil {
 			log.Fatal(err)
 		}
 
 	case *nukeMode:
-		if err := handleNukeCommand(service, *scope, *dryRun); err != nil {
+		if err := handleNuke(service, *scope, *dryRun); err != nil {
 			log.Fatal(err)
 		}
 
@@ -132,36 +139,85 @@ func main() {
 		}
 
 		if *imagePath != "" {
-			imageData, err := readImageFile(*imagePath, config.Image.MaxFileSizeMB)
+			imageData, err := readImageFile(*imagePath)
 			if err != nil {
 				log.Fatal(err)
 			}
 			params.ImageData = imageData
 		}
 
-		if err := handleUploadCommand(service, params, *dryRun); err != nil {
+		if err := handleUpload(service, params, *dryRun); err != nil {
 			log.Fatal(err)
 		}
 	}
 }
 
-func handleListCommand(service *ImageService, scope string) error {
-	items, err := service.ListWithoutImages(scope, 50)
+func handleList(service *ImageService, scope string, filter string) error {
+	// Get statistics
+	stats, err := service.GetStatistics(scope)
 	if err != nil {
 		return err
 	}
 
-	if scope == ScopeArtist {
-		artists := items.([]Artist)
-		displayArtistList("Artiesten zonder afbeeldingen", artists, false, "max 50 getoond")
-	} else {
-		tracks := items.([]Track)
-		displayTrackList("Tracks zonder afbeeldingen", tracks, false, "max 50 getoond")
+	// Display statistics
+	displayStatistics(scope, stats)
+
+	// Optionally show some items without images as examples
+	if stats.WithoutImages > 0 && filter != "stats-only" {
+		fmt.Println()
+
+		// Show up to DefaultListLimit items without images
+		limit := DefaultListLimit
+		if stats.WithoutImages < limit {
+			limit = stats.WithoutImages
+		}
+
+		result, err := service.ListWithFilter(scope, false, limit)
+		if err != nil {
+			return err
+		}
+
+		if scope == ScopeArtist {
+			artists := result.Items.([]Artist)
+			fmt.Printf("Eerste %d artiesten zonder afbeelding:\n", len(artists))
+			for _, artist := range artists {
+				fmt.Printf("  • %s\n", artist.Name)
+			}
+		} else {
+			tracks := result.Items.([]Track)
+			fmt.Printf("Eerste %d tracks zonder afbeelding:\n", len(tracks))
+			for _, track := range tracks {
+				fmt.Printf("  • %s - %s\n", track.Artist, track.Title)
+			}
+		}
+
+		if stats.WithoutImages > limit {
+			fmt.Printf("  ... en nog %d meer\n", stats.WithoutImages-limit)
+		}
 	}
+
 	return nil
 }
 
-func handleSearchCommand(service *ImageService, scope, searchTerm string) error {
+func displayStatistics(scope string, stats *Statistics) {
+	itemType := "Artiesten"
+	if scope == ScopeTrack {
+		itemType = "Tracks"
+	}
+
+	fmt.Printf("%s%s Statistieken%s\n", Bold, itemType, Reset)
+	fmt.Printf("Totaal: %d\n", stats.Total)
+	fmt.Printf("  %s✓%s Met afbeelding: %d\n", Green, Reset, stats.WithImages)
+	fmt.Printf("  %s✗%s Zonder afbeelding: %d\n", Red, Reset, stats.WithoutImages)
+
+	if scope == ScopeArtist {
+		fmt.Printf("  %s⚠%s  Orphaned (zonder tracks): %d\n", Yellow, Reset, stats.Orphaned)
+	} else {
+		fmt.Printf("  %s⚠%s  Orphaned (zonder artiest): %d\n", Yellow, Reset, stats.Orphaned)
+	}
+}
+
+func handleSearch(service *ImageService, scope, searchTerm string) error {
 	items, err := service.Search(scope, searchTerm)
 	if err != nil {
 		return err
@@ -185,29 +241,29 @@ func handleSearchCommand(service *ImageService, scope, searchTerm string) error 
 	return nil
 }
 
-func handleNukeCommand(service *ImageService, scope string, dryRun bool) error {
-	result, err := service.CountImagesForNuke(scope)
+func handleNuke(service *ImageService, scope string, dryRun bool) error {
+	result, err := service.CountForNuke(scope)
 	if err != nil {
 		return err
 	}
 
 	if result.Count == 0 {
-		fmt.Printf("Geen %s met afbeeldingen gevonden.\n", getScopeDescription(scope))
+		fmt.Printf("Geen %s met afbeeldingen gevonden.\n", scopeDesc(scope))
 		return nil
 	}
 
-	fmt.Printf("%s%sWAARSCHUWING:%s %d %s afbeeldingen verwijderen\n\n", Bold, Red, Reset, result.Count, getScopeDescription(scope))
+	fmt.Printf("%s%sWAARSCHUWING:%s %d %s afbeeldingen verwijderen\n\n", Bold, Red, Reset, result.Count, scopeDesc(scope))
 
-	previewItems, err := service.GetPreviewItems(scope, 20)
+	previewItems, err := service.GetPreviewItems(scope, DefaultNukePreview)
 	if err != nil {
 		return err
 	}
 
 	for i, item := range previewItems {
-		if i < 20 {
+		if i < DefaultNukePreview {
 			fmt.Printf("  • %s\n", item)
-		} else if i == 20 {
-			fmt.Printf("  ... en %d meer\n", result.Count-20)
+		} else if i == DefaultNukePreview {
+			fmt.Printf("  ... en %d meer\n", result.Count-DefaultNukePreview)
 			break
 		}
 	}
@@ -231,11 +287,11 @@ func handleNukeCommand(service *ImageService, scope string, dryRun bool) error {
 		return err
 	}
 
-	fmt.Printf("%s✓%s %d %s afbeeldingen verwijderd\n", Green, Reset, nukeResult.Deleted, getScopeDescription(scope))
+	fmt.Printf("%s✓%s %d %s afbeeldingen verwijderd\n", Green, Reset, nukeResult.Deleted, scopeDesc(scope))
 	return nil
 }
 
-func handleUploadCommand(service *ImageService, params *ImageUploadParams, dryRun bool) error {
+func handleUpload(service *ImageService, params *ImageUploadParams, dryRun bool) error {
 	if dryRun {
 		if params.Scope == ScopeArtist {
 			_, err := lookupArtist(service.db, service.config.Database.Schema, params.Name, params.ID)
@@ -260,34 +316,39 @@ func handleUploadCommand(service *ImageService, params *ImageUploadParams, dryRu
 
 	if params.Scope == ScopeArtist {
 		fmt.Printf("%s✓%s %s: %dKB → %dKB (%s)\n", Green, Reset, result.ItemName,
-			result.OriginalSize/1024, result.OptimizedSize/1024, result.Encoder)
+			result.OriginalSize/Kilobyte, result.OptimizedSize/Kilobyte, result.Encoder)
 	} else {
 		fmt.Printf("%s✓%s %s - %s: %dKB → %dKB (%s)\n", Green, Reset, result.ItemName, result.ItemTitle,
-			result.OriginalSize/1024, result.OptimizedSize/1024, result.Encoder)
+			result.OriginalSize/Kilobyte, result.OptimizedSize/Kilobyte, result.Encoder)
 	}
 
 	return nil
 }
 
-func processAndOptimizeImage(imageData []byte, config ImageConfig) (*ImageProcessingResult, error) {
+func processImage(imageData []byte, config ImageConfig) (*ImageProcessingResult, error) {
 	originalInfo, err := extractImageInfo(imageData)
 	if err != nil {
 		return nil, err
 	}
 
-	if err := validateImageFormat(originalInfo.Format); err != nil {
+	// Validate image
+	if err := validateImage(originalInfo, config); err != nil {
 		return nil, err
 	}
 
-	if err := validateImageDimensions(originalInfo, config); err != nil {
-		return nil, err
-	}
-
+	// Skip optimization if already at target size
 	if shouldSkipOptimization(originalInfo, config) {
 		return createSkippedResult(imageData, originalInfo), nil
 	}
 
 	return optimizeImageData(imageData, originalInfo, config)
+}
+
+func validateImage(info *ImageInfo, config ImageConfig) error {
+	if err := validateImageFormat(info.Format); err != nil {
+		return err
+	}
+	return validateImageDimensions(info, config)
 }
 
 func extractImageInfo(imageData []byte) (*ImageInfo, error) {
@@ -368,8 +429,8 @@ func showUsage() {
 	fmt.Println("  ./aeron-imgman -scope=artist -id=\"UUID\" -file=\"/path/image.jpg\"")
 	fmt.Println("  ./aeron-imgman -scope=track -name=\"Title\" -url=\"image.jpg\"")
 	fmt.Println("  ./aeron-imgman -scope=track -id=\"UUID\" -file=\"/path/image.jpg\"")
-	fmt.Println("  ./aeron-imgman -scope=artist -list")
-	fmt.Println("  ./aeron-imgman -scope=track -list")
+	fmt.Println("  ./aeron-imgman -scope=artist -list [-filter=without|with]")
+	fmt.Println("  ./aeron-imgman -scope=track -list [-filter=without|with]")
 	fmt.Println("  ./aeron-imgman -scope=artist -search=\"Name\"")
 	fmt.Println("  ./aeron-imgman -scope=track -search=\"Title\"")
 	fmt.Println("  ./aeron-imgman -server [-port=8080]")
@@ -379,7 +440,8 @@ func showUsage() {
 	fmt.Println("  -id string         UUID van artiest of track")
 	fmt.Println("  -url string        URL van afbeelding")
 	fmt.Println("  -file string       Lokaal bestand")
-	fmt.Println("  -list              Toon items zonder afbeelding")
+	fmt.Println("  -list              Toon statistieken en voorbeelden")
+	fmt.Println("  -filter string     Filter voor list: 'with', 'without' of 'stats-only'")
 	fmt.Println("  -search string     Zoek items")
 	fmt.Println("  -nuke              Verwijder alle afbeeldingen van scope")
 	fmt.Println("  -dry-run           Simuleer actie")

@@ -1,0 +1,622 @@
+name: Comprehensive Test
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  GO_VERSION: '1.24'
+  POSTGRES_USER: aeron
+  POSTGRES_PASSWORD: aeron123
+  POSTGRES_DB: aeron_db
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Cache Go modules
+        uses: actions/cache@v3
+        with:
+          path: ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Install dependencies
+        run: |
+          go mod download
+          go mod tidy
+
+          # Install required tools
+          sudo apt-get update
+          sudo apt-get install -y jq imagemagick postgresql-client
+
+      - name: Run formatters and linters
+        run: |
+          # Check formatting
+          if [ "$(gofmt -s -l . | wc -l)" -gt 0 ]; then
+            echo "The following files are not formatted:"
+            gofmt -s -l .
+            exit 1
+          fi
+
+          # Run go vet
+          go vet ./...
+
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v3
+        with:
+          version: latest
+          args: --out-format=colored-line-number --timeout=5m
+
+      - name: Build application
+        run: |
+          go build -ldflags="-X main.Version=test -X main.Commit=${{ github.sha }} -X main.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)" -o aeron-imgman .
+          ./aeron-imgman -version
+
+      - name: Start test database with Docker Compose
+        run: |
+          cd tests
+          docker compose -f docker-compose.test.yml up -d
+
+          # Wait for database (much faster with Docker Compose)
+          for i in {1..10}; do
+            if docker exec aeron-test-db pg_isready -U aeron; then
+              echo "Database is ready!"
+              break
+            fi
+            echo "Waiting for database..."
+            sleep 1
+          done
+
+          # Database already has mock data loaded from the image
+
+      - name: Create test images
+        run: |
+          convert -size 100x100 xc:red test_small.png
+          convert -size 2000x2000 xc:blue test_large.png
+          ls -la test_*.png
+
+      - name: Create database reset function
+        run: |
+          # Create reusable function for database reset
+          cat > reset_db.sh << 'EOF'
+          #!/bin/bash
+          echo "Resetting database with fresh mock data..."
+          docker exec aeron-test-db psql -U aeron -d postgres -c "DROP DATABASE IF EXISTS aeron_db;"
+          docker exec aeron-test-db psql -U aeron -d postgres -c "CREATE DATABASE aeron_db;"
+          docker exec aeron-test-db psql -U aeron -d aeron_db -f /docker-entrypoint-initdb.d/01-mock-data.sql
+          echo "Database reset complete"
+          EOF
+          chmod +x reset_db.sh
+
+      # Database Integrity Tests (verify test infrastructure)
+      - name: Database Test - Verify initial data setup
+        run: |
+          echo "Test: Controleer database test data"
+
+          # Tel alle records
+          ARTIST_COUNT=$(docker exec aeron-test-db psql -U aeron -d aeron_db -t -c "SELECT COUNT(*) FROM aeron.artist;" | tr -d ' ')
+          TRACK_COUNT=$(docker exec aeron-test-db psql -U aeron -d aeron_db -t -c "SELECT COUNT(*) FROM aeron.track;" | tr -d ' ')
+          ARTISTS_WITH_IMG=$(docker exec aeron-test-db psql -U aeron -d aeron_db -t -c "SELECT COUNT(*) FROM aeron.artist WHERE picture IS NOT NULL;" | tr -d ' ')
+          TRACKS_WITH_IMG=$(docker exec aeron-test-db psql -U aeron -d aeron_db -t -c "SELECT COUNT(*) FROM aeron.track WHERE picture IS NOT NULL;" | tr -d ' ')
+          ARTISTS_WITHOUT_IMG=$(docker exec aeron-test-db psql -U aeron -d aeron_db -t -c "SELECT COUNT(*) FROM aeron.artist WHERE picture IS NULL;" | tr -d ' ')
+
+          echo "Database inhoud:"
+          echo "  Totaal artiesten: $ARTIST_COUNT (verwacht: 80)"
+          echo "  Artiesten met afbeelding: $ARTISTS_WITH_IMG (verwacht: 10)"
+          echo "  Artiesten zonder afbeelding: $ARTISTS_WITHOUT_IMG (verwacht: 70)"
+          echo "  Totaal tracks: $TRACK_COUNT"
+          echo "  Tracks met afbeelding: $TRACKS_WITH_IMG"
+
+          # Controleer verwachte aantallen
+          ERRORS=0
+          if [ "$ARTIST_COUNT" -eq 80 ]; then
+            echo "✓ Verwachtte 80 artiesten, kreeg 80 artiesten"
+          else
+            echo "✗ Verwachtte 80 artiesten, kreeg $ARTIST_COUNT artiesten"
+            ERRORS=$((ERRORS + 1))
+          fi
+
+          if [ "$ARTISTS_WITH_IMG" -eq 10 ]; then
+            echo "✓ Verwachtte 10 artiesten met afbeelding, kreeg 10"
+          else
+            echo "✗ Verwachtte 10 artiesten met afbeelding, kreeg $ARTISTS_WITH_IMG"
+            ERRORS=$((ERRORS + 1))
+          fi
+
+          if [ "$ARTISTS_WITHOUT_IMG" -eq 70 ]; then
+            echo "✓ Verwachtte 70 artiesten zonder afbeelding, kreeg 70"
+          else
+            echo "✗ Verwachtte 70 artiesten zonder afbeelding, kreeg $ARTISTS_WITHOUT_IMG"
+            ERRORS=$((ERRORS + 1))
+          fi
+
+          if [ $ERRORS -gt 0 ]; then
+            exit 1
+          fi
+
+      - name: Database Test - Schema exists
+        run: |
+          docker exec aeron-test-db psql -U aeron -d aeron_db \
+            -c "SELECT schema_name FROM information_schema.schemata WHERE schema_name = 'aeron';" | grep -q 'aeron'
+
+      - name: Database Test - Artist table exists
+        run: |
+          docker exec aeron-test-db psql -U aeron -d aeron_db \
+            -c "SELECT table_name FROM information_schema.tables WHERE table_schema = 'aeron' AND table_name = 'artist';" | grep -q 'artist'
+
+      - name: Database Test - Track table exists
+        run: |
+          docker exec aeron-test-db psql -U aeron -d aeron_db \
+            -c "SELECT table_name FROM information_schema.tables WHERE table_schema = 'aeron' AND table_name = 'track';" | grep -q 'track'
+
+      - name: Create test configuration
+        run: |
+          # Create test config pointing to Docker container on port 5433
+          cat > test_config.yaml << 'EOF'
+          database:
+            host: localhost
+            port: "5433"
+            name: aeron_db
+            user: aeron
+            password: aeron123
+            schema: aeron
+            sslmode: disable
+
+          image:
+            target_width: 1280
+            target_height: 1280
+            quality: 90
+            reject_smaller: true
+
+          api:
+            enabled: true
+            keys:
+              - "test-api-key-12345"
+              - "another-test-key-67890"
+          EOF
+
+      # CLI Tests
+      - name: Reset database before CLI tests
+        run: ./reset_db.sh
+
+      - name: CLI Test - Version
+        run: |
+          echo "Test: Controleer versie informatie"
+          ./aeron-imgman -version
+          echo "✓ Versie informatie correct weergegeven"
+
+      - name: CLI Test - Usage (no args)
+        run: |
+          echo "Test: Controleer help bericht zonder argumenten"
+          set +e  # Sta non-zero exit codes toe
+          OUTPUT=$(./aeron-imgman 2>&1)
+          EXIT_CODE=$?
+          set -e
+          
+          # Controleer dat het programma exit code 1 geeft (usage)
+          if [ $EXIT_CODE -eq 1 ]; then
+            echo "✓ Programma geeft correcte exit code 1 bij geen argumenten"
+          else
+            echo "✗ Verwachtte exit code 1, kreeg $EXIT_CODE"
+            exit 1
+          fi
+          
+          # Controleer help tekst (strip ANSI codes)
+          CLEAN_OUTPUT=$(echo "$OUTPUT" | sed 's/\x1b\[[0-9;]*m//g')
+          if echo "$CLEAN_OUTPUT" | grep -q 'Aeron Image Manager'; then
+            echo "✓ Help bericht toont 'Aeron Image Manager'"
+          else
+            echo "✗ Verwachtte help bericht met 'Aeron Image Manager'"
+            echo "Output (zonder ANSI codes):"
+            echo "$CLEAN_OUTPUT"
+            exit 1
+          fi
+          
+          # Controleer dat usage voorbeelden worden getoond
+          if echo "$CLEAN_OUTPUT" | grep -q './aeron-imgman -scope=artist'; then
+            echo "✓ Usage voorbeelden worden correct getoond"
+          else
+            echo "✗ Verwachtte usage voorbeelden"
+            exit 1
+          fi
+
+      - name: CLI Test - List artists statistics
+        run: |
+          echo "Test: Lijst artiesten statistieken"
+          OUTPUT=$(./aeron-imgman -config=test_config.yaml -scope=artist -list 2>&1)
+          echo "$OUTPUT"
+          if echo "$OUTPUT" | grep -q "Totaal: 80"; then
+            echo "✓ Verwachtte 80 artiesten totaal, kreeg 80 artiesten"
+          else
+            echo "✗ Verwachtte 80 artiesten totaal"
+            echo "   Output was: $OUTPUT"
+            exit 1
+          fi
+
+      - name: CLI Test - List tracks without images
+        run: |
+          ./aeron-imgman -config=test_config.yaml -scope=track -list
+
+      - name: CLI Test - Search artists
+        run: |
+          ./aeron-imgman -config=test_config.yaml -scope=artist -search='Radio'
+
+      - name: CLI Test - Search tracks
+        run: |
+          ./aeron-imgman -config=test_config.yaml -scope=track -search='Love'
+
+      - name: CLI Test - Artist image upload (dry-run)
+        run: |
+          ./aeron-imgman -config=test_config.yaml -scope=artist -name='OneRepublic' -file=test_small.png -dry-run
+
+      - name: CLI Test - Artist image upload (file)
+        run: |
+          ./aeron-imgman -config=test_config.yaml -scope=artist -name='OneRepublic' -file=test_large.png
+
+      - name: CLI Test - Track image upload (file)
+        run: |
+          ./aeron-imgman -config=test_config.yaml -scope=track -name='Counting Stars' -file=test_large.png
+
+      - name: CLI Test - Invalid scope error
+        run: |
+          echo "Test: Ongeldige scope moet foutmelding geven"
+          OUTPUT=$(./aeron-imgman -config=test_config.yaml -scope=invalid -list 2>&1 || true)
+          if echo "$OUTPUT" | grep -qi 'ongeldige scope'; then
+            echo "✓ Verwachtte foutmelding 'Ongeldige scope', kreeg: '$OUTPUT'"
+          else
+            echo "✗ Verwachtte foutmelding met 'Ongeldige scope' maar kreeg:"
+            echo "   $OUTPUT"
+            exit 1
+          fi
+
+      - name: CLI Test - Reject small image
+        run: |
+          echo "Test: Te kleine afbeelding moet geweigerd worden"
+          OUTPUT=$(./aeron-imgman -config=test_config.yaml -scope=artist -name='Coldplay' -file=test_small.png 2>&1 || true)
+          if echo "$OUTPUT" | grep -q 'afbeelding te klein'; then
+            echo "✓ Kleine afbeelding (100x100) werd correct geweigerd met melding 'afbeelding te klein'"
+          else
+            echo "✗ Verwachtte weigering van kleine afbeelding"
+            echo "   Output: $OUTPUT"
+            exit 1
+          fi
+
+      - name: CLI Test - No name or ID error
+        run: |
+          ! ./aeron-imgman -config=test_config.yaml -scope=artist -url='http://example.com/image.jpg' 2>&1
+
+      # API Tests
+      - name: Reset database before API tests
+        run: ./reset_db.sh
+
+      - name: Start API server
+        run: |
+          ./aeron-imgman -config=test_config.yaml -server -port=8888 &
+          echo $! > api.pid
+          sleep 3
+
+      - name: API Test - Health check
+        run: |
+          echo "Test: API health endpoint"
+          RESPONSE=$(curl -s http://localhost:8888/api/health)
+          if echo "$RESPONSE" | jq -e '.success == true' > /dev/null; then
+            echo "✓ Health endpoint geeft success=true terug"
+          else
+            echo "✗ Verwachtte success=true maar kreeg:"
+            echo "   $RESPONSE" | jq .
+            exit 1
+          fi
+
+      - name: API Test - Artists statistics (default)
+        run: |
+          echo "Test: API artists endpoint geeft standaard statistieken"
+          RESPONSE=$(curl -s -H 'X-API-Key: test-api-key-12345' 'http://localhost:8888/api/artists')
+          TOTAL=$(echo "$RESPONSE" | jq '.data.total')
+          WITH_IMAGES=$(echo "$RESPONSE" | jq '.data.with_images')
+          WITHOUT_IMAGES=$(echo "$RESPONSE" | jq '.data.without_images')
+          ORPHANED=$(echo "$RESPONSE" | jq '.data.orphaned')
+
+          echo "Verwachtte: 80 totaal, 10 met afbeeldingen, 70 zonder, orphaned check"
+          echo "Gekregen: $TOTAL totaal, $WITH_IMAGES met, $WITHOUT_IMAGES zonder, $ORPHANED orphaned"
+
+          if [ "$TOTAL" -eq 80 ] && [ "$WITH_IMAGES" -eq 10 ] && [ "$WITHOUT_IMAGES" -eq 70 ]; then
+            echo "✓ API /artists endpoint geeft correcte statistieken"
+          else
+            echo "✗ Fout in statistieken:"
+            echo "$RESPONSE" | jq .
+            exit 1
+          fi
+
+
+      - name: API Test - List artists (no auth)
+        run: |
+          echo "Test: API moet authenticatie vereisen"
+          RESPONSE=$(curl -s 'http://localhost:8888/api/artists')
+          if echo "$RESPONSE" | jq -e '.success == false' > /dev/null; then
+            echo "✓ Verwachtte toegang geweigerd zonder API key, kreeg success=false"
+          else
+            echo "✗ API zou toegang moeten weigeren zonder API key"
+            echo "   Response: $RESPONSE"
+            exit 1
+          fi
+
+      - name: API Test - Search tracks
+        run: |
+          # Should return tracks with "Love" in the title
+          RESPONSE=$(curl -s -H 'X-API-Key: test-api-key-12345' 'http://localhost:8888/api/tracks/search?q=Love')
+          echo "$RESPONSE" | jq -e '.success == true'
+          COUNT=$(echo "$RESPONSE" | jq '.data | length')
+          if [ "$COUNT" -lt 2 ]; then
+            echo "ERROR: Expected at least 2 tracks with 'Love', got $COUNT"
+            echo "$RESPONSE" | jq .
+            exit 1
+          fi
+          echo "✓ Verified: $COUNT tracks found with 'Love'"
+
+      - name: API Test - Artist image upload (URL)
+        run: |
+          curl -s -X POST -H 'X-API-Key: test-api-key-12345' http://localhost:8888/api/artists/upload \
+            -H 'Content-Type: application/json' \
+            -d '{"name":"Queen","url":"https://picsum.photos/1500"}' \
+            -m 10 | jq -e '.success == true'
+
+      - name: API Test - Track image upload (base64)
+        run: |
+          BASE64_IMAGE=$(base64 -w 0 < test_small.png)
+          curl -s -X POST -H 'X-API-Key: test-api-key-12345' http://localhost:8888/api/tracks/upload \
+            -H 'Content-Type: application/json' \
+            -d '{"name":"Bohemian Rhapsody","image":"data:image/png;base64,'$BASE64_IMAGE'"}' | \
+            jq -e '.success == false and (.error | contains("afbeelding te klein"))'
+
+      - name: API Test - Nuke without confirmation
+        run: |
+          curl -s -X DELETE -H 'X-API-Key: test-api-key-12345' http://localhost:8888/api/artists/nuke | jq -e '.success == false'
+
+      - name: API Test - Method not allowed
+        run: |
+          curl -s -X PUT -H 'X-API-Key: test-api-key-12345' http://localhost:8888/api/artists | jq -e '.success == false'
+
+      - name: Stop API server
+        run: |
+          kill $(cat api.pid) || true
+          rm -f api.pid
+          sleep 1
+
+      # Image Optimization Tests
+      - name: Reset database before optimization tests
+        run: ./reset_db.sh
+
+      - name: Image Optimization Test - Verify optimization
+        run: |
+          echo "Test: Afbeelding optimalisatie"
+          echo "Stap 1: Upload grote afbeelding (2000x2000)"
+          ./aeron-imgman -config=test_config.yaml -scope=artist -name='OneRepublic' -file=test_large.png
+
+          echo "Stap 2: Controleer of afbeelding kleiner is dan 500KB"
+          SIZE=$(docker exec aeron-test-db psql -U aeron -d aeron_db -t -c "SELECT length(picture) FROM aeron.artist WHERE artist = 'OneRepublic' AND picture IS NOT NULL;" | tr -d ' ')
+          SIZE_KB=$((SIZE / 1024))
+
+          if [ "$SIZE" -lt 500000 ]; then
+            echo "✓ Afbeelding succesvol geoptimaliseerd naar ${SIZE_KB}KB (kleiner dan 500KB)"
+          else
+            echo "✗ Afbeelding niet voldoende geoptimaliseerd: ${SIZE_KB}KB"
+            exit 1
+          fi
+
+      - name: Image Optimization Test - Dual encoder comparison
+        run: |
+          ./aeron-imgman -config=test_config.yaml -scope=artist -name='Imagine Dragons' -file=test_large.png 2>&1 | grep -E '(jpegli|standaard)'
+
+      # Concurrent Operations Test
+      - name: Reset database before concurrent tests
+        run: ./reset_db.sh
+
+      - name: Concurrent Operations Test
+        run: |
+          echo "Test: Gelijktijdige uploads"
+          echo "Start 3 uploads tegelijk:"
+          echo "  1. Maroon 5 (artiest)"
+          echo "  2. Ed Sheeran (artiest)"
+          echo "  3. Sugar (track)"
+
+          ./aeron-imgman -config=test_config.yaml -scope=artist -name='Maroon 5' -file=test_large.png &
+          PID1=$!
+          ./aeron-imgman -config=test_config.yaml -scope=artist -name='Ed Sheeran' -file=test_large.png &
+          PID2=$!
+          ./aeron-imgman -config=test_config.yaml -scope=track -name='Sugar' -file=test_large.png &
+          PID3=$!
+
+          if wait $PID1 && wait $PID2 && wait $PID3; then
+            echo "✓ Alle 3 gelijktijdige uploads succesvol afgerond"
+          else
+            echo "✗ Een of meer gelijktijdige uploads zijn mislukt"
+            exit 1
+          fi
+
+      # Edge Cases and Error Handling
+      - name: Reset database before edge case tests
+        run: ./reset_db.sh
+
+      - name: Edge Case Test - Non-existent artist
+        run: |
+          echo "Test: Upload naar niet-bestaande artiest"
+          OUTPUT=$(./aeron-imgman -config=test_config.yaml -scope=artist -name='NONEXISTENT_ARTIST_XYZ' -file=test_large.png 2>&1 || true)
+          if echo "$OUTPUT" | grep -q 'niet gevonden'; then
+            echo "✓ Niet-bestaande artiest 'NONEXISTENT_ARTIST_XYZ' gaf verwachte fout 'niet gevonden'"
+          else
+            echo "✗ Verwachtte 'niet gevonden' fout voor niet-bestaande artiest"
+            echo "   Output: $OUTPUT"
+            exit 1
+          fi
+
+      - name: Edge Case Test - Non-existent track
+        run: |
+          ./aeron-imgman -config=test_config.yaml -scope=track -name='NONEXISTENT_TRACK_XYZ' -file=test_large.png 2>&1 | grep -q 'niet gevonden'
+
+      - name: Edge Case Test - Invalid URL
+        run: |
+          ! ./aeron-imgman -config=test_config.yaml -scope=artist -name='Coldplay' -url='not-a-url' 2>&1
+
+      - name: Edge Case Test - Both name and ID
+        run: |
+          ! ./aeron-imgman -config=test_config.yaml -scope=artist -name='Test' -id='123e4567-e89b-12d3-a456-426614174000' -url='http://example.com/image.jpg' 2>&1
+
+      # API Authentication Tests
+      - name: API Auth Test - Setup auth config
+        run: |
+          cat > test_auth_config.yaml << 'EOF'
+          database:
+            host: localhost
+            port: "5433"
+            name: aeron_db
+            user: aeron
+            password: aeron123
+            schema: aeron
+            sslmode: disable
+
+          image:
+            target_width: 1280
+            target_height: 1280
+            quality: 90
+            reject_smaller: true
+
+          api:
+            enabled: true
+            keys:
+              - "test-api-key-12345"
+              - "another-test-key-67890"
+          EOF
+
+      - name: API Auth Test - Start server with auth
+        run: |
+          ./aeron-imgman -config=test_auth_config.yaml -server -port=8890 &
+          echo $! > api_auth.pid
+          sleep 3
+
+      - name: API Auth Test - Health endpoint (no auth required)
+        run: |
+          curl -s http://localhost:8890/api/health | jq -e '.success == true'
+
+      - name: API Auth Test - Protected endpoint without API key
+        run: |
+          echo "Test: API endpoint zonder API key"
+          RESPONSE=$(curl -s -w "\n%{http_code}" http://localhost:8890/api/artists)
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          BODY=$(echo "$RESPONSE" | head -n-1)
+
+          if echo "$BODY" | jq -e '.success == false' > /dev/null; then
+            echo "✓ Verwachtte weigering zonder API key, kreeg success=false"
+          else
+            echo "✗ API zou request moeten weigeren zonder API key"
+            echo "   Response: $BODY"
+            exit 1
+          fi
+
+      - name: API Auth Test - Protected endpoint with invalid API key
+        run: |
+          curl -s -H "X-API-Key: invalid-key" http://localhost:8890/api/artists | jq -e '.success == false'
+
+      - name: API Auth Test - Protected endpoint with valid API key (header)
+        run: |
+          curl -s -H "X-API-Key: test-api-key-12345" http://localhost:8890/api/artists | jq -e '.success == true'
+
+      - name: API Auth Test - Protected endpoint with valid API key (query param)
+        run: |
+          curl -s "http://localhost:8890/api/artists?key=another-test-key-67890" | jq -e '.success == true'
+
+      - name: Stop API auth server
+        run: |
+          kill $(cat api_auth.pid) || true
+          rm -f api_auth.pid
+          sleep 1
+
+      - name: API Auth Test - Setup no auth config
+        run: |
+          cat > test_no_auth_config.yaml << 'EOF'
+          database:
+            host: localhost
+            port: "5433"
+            name: aeron_db
+            user: aeron
+            password: aeron123
+            schema: aeron
+            sslmode: disable
+
+          image:
+            target_width: 1280
+            target_height: 1280
+            quality: 90
+            reject_smaller: true
+
+          api:
+            enabled: false
+            keys: []
+          EOF
+
+      - name: API Auth Test - Start server without auth
+        run: |
+          ./aeron-imgman -config=test_no_auth_config.yaml -server -port=8891 &
+          echo $! > api_no_auth.pid
+          sleep 3
+
+      - name: API Auth Test - Protected endpoint with auth disabled
+        run: |
+          curl -s http://localhost:8891/api/artists | jq -e '.success == true'
+
+      - name: Stop API no-auth server
+        run: |
+          kill $(cat api_no_auth.pid) || true
+          rm -f api_no_auth.pid
+
+      # Destructive Tests (run near end)
+      - name: Reset database before nuke tests
+        run: ./reset_db.sh
+
+      - name: Nuke Test - Dry-run
+        run: |
+          echo "Test: Nuke operatie in dry-run modus"
+          OUTPUT=$(./aeron-imgman -config=test_config.yaml -scope=artist -nuke -dry-run 2>&1)
+          if echo "$OUTPUT" | grep -q 'DRY RUN'; then
+            echo "✓ Dry-run modus toont waarschuwing zonder daadwerkelijk te verwijderen"
+          else
+            echo "✗ Verwachtte 'DRY RUN' melding"
+            echo "   Output: $OUTPUT"
+            exit 1
+          fi
+
+      - name: Nuke Test - Cancelled
+        run: |
+          echo "Test: Nuke operatie annuleren"
+          OUTPUT=$(echo 'CANCEL' | ./aeron-imgman -config=test_config.yaml -scope=artist -nuke 2>&1)
+          if echo "$OUTPUT" | grep -q 'geannuleerd'; then
+            echo "✓ Gebruiker typte 'CANCEL', operatie werd correct geannuleerd"
+          else
+            echo "✗ Verwachtte 'geannuleerd' melding bij CANCEL input"
+            echo "   Output: $OUTPUT"
+            exit 1
+          fi
+
+      # Cleanup
+      - name: Cleanup test data
+        run: |
+          docker exec aeron-test-db psql -U aeron -d aeron_db -c "UPDATE aeron.artist SET picture = NULL WHERE artist LIKE 'TEST_%';"
+          docker exec aeron-test-db psql -U aeron -d aeron_db -c "UPDATE aeron.track SET picture = NULL WHERE tracktitle LIKE 'TEST_%';"
+          rm -f test_*.png test_*.yaml api*.pid
+
+          # Stop and remove Docker containers
+          cd tests && docker compose -f docker-compose.test.yml down -v
+

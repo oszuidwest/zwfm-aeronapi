@@ -21,7 +21,6 @@ type ImageConfig struct {
 	TargetWidth   int  `yaml:"target_width"`
 	TargetHeight  int  `yaml:"target_height"`
 	Quality       int  `yaml:"quality"`
-	MaxFileSizeMB int  `yaml:"max_file_size_mb"`
 	RejectSmaller bool `yaml:"reject_smaller"`
 }
 
@@ -83,7 +82,6 @@ func validateConfig(config *Config) error {
 		{"image.target_width", func() bool { return config.Image.TargetWidth > 0 }},
 		{"image.target_height", func() bool { return config.Image.TargetHeight > 0 }},
 		{"image.quality (1-100)", func() bool { return config.Image.Quality > 0 && config.Image.Quality <= 100 }},
-		{"image.max_file_size_mb", func() bool { return config.Image.MaxFileSizeMB > 0 }},
 	}
 
 	var missing []string

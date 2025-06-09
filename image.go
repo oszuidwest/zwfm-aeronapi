@@ -42,7 +42,7 @@ func NewImageOptimizer(config ImageConfig) *ImageOptimizer {
 	}
 }
 
-func downloadImage(url string, maxSizeMB int) ([]byte, error) {
+func downloadImage(url string) ([]byte, error) {
 	resp, err := http.Get(url)
 	if err != nil {
 		return nil, err
@@ -53,27 +53,9 @@ func downloadImage(url string, maxSizeMB int) ([]byte, error) {
 		return nil, fmt.Errorf("kon afbeelding niet downloaden: HTTP %d", resp.StatusCode)
 	}
 
-	return readImageFromReader(resp.Body, maxSizeMB)
-}
-
-func readImageFile(path string, maxSizeMB int) ([]byte, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = file.Close() }()
-
-	return readImageFromReader(file, maxSizeMB)
-}
-
-func readImageFromReader(r io.Reader, maxSizeMB int) ([]byte, error) {
-	data, err := io.ReadAll(r)
+	data, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("kon afbeelding data niet lezen: %w", err)
-	}
-
-	if err := validateImageSize(data, maxSizeMB); err != nil {
-		return nil, err
 	}
 
 	if err := validateImageData(data); err != nil {
@@ -83,12 +65,17 @@ func readImageFromReader(r io.Reader, maxSizeMB int) ([]byte, error) {
 	return data, nil
 }
 
-func validateImageSize(data []byte, maxSizeMB int) error {
-	maxSize := maxSizeMB * 1024 * 1024
-	if len(data) > maxSize {
-		return fmt.Errorf("image size (%d bytes) exceeds maximum allowed size (%d bytes)", len(data), maxSize)
+func readImageFile(path string) ([]byte, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
 	}
-	return nil
+
+	if err := validateImageData(data); err != nil {
+		return nil, err
+	}
+
+	return data, nil
 }
 
 func validateImageData(data []byte) error {
@@ -127,7 +114,7 @@ func (opt *ImageOptimizer) OptimizeImage(data []byte) ([]byte, string, string, e
 
 	switch format {
 	case "jpeg", "jpg":
-		return opt.optimizeJPEGPure(data)
+		return opt.optimizeJPEG(data)
 	case "png":
 		return opt.convertPNGToJPEG(data)
 	default:
@@ -135,7 +122,7 @@ func (opt *ImageOptimizer) OptimizeImage(data []byte) ([]byte, string, string, e
 	}
 }
 
-func (opt *ImageOptimizer) optimizeJPEGPure(data []byte) ([]byte, string, string, error) {
+func (opt *ImageOptimizer) optimizeJPEG(data []byte) ([]byte, string, string, error) {
 	img, err := jpeg.Decode(bytes.NewReader(data))
 	if err != nil {
 		return nil, "", "", fmt.Errorf("kon JPEG niet decoderen: %w", err)
@@ -161,7 +148,7 @@ func (opt *ImageOptimizer) processImage(img image.Image, originalData []byte, ou
 		img = opt.resizeImage(img, opt.Config.TargetWidth, opt.Config.TargetHeight)
 	}
 
-	optimizedData, usedEncoder, err := encodeToJPEG(img, opt.Config, len(originalData))
+	optimizedData, usedEncoder, err := encodeToJPEG(img, opt.Config)
 	if err != nil {
 		return nil, "", "", err
 	}
@@ -205,43 +192,31 @@ func (opt *ImageOptimizer) resizeImage(img image.Image, maxWidth, maxHeight int)
 	return dst
 }
 
-func encodeToJPEG(img image.Image, config ImageConfig, originalSize int) ([]byte, string, error) {
-	var bestData []byte
-	var bestSize = originalSize
-	var winnerInfo string
-
-	standardData, err := encodeWithStandardJPEG(img, config.Quality)
+func encodeToJPEG(img image.Image, config ImageConfig) ([]byte, string, error) {
+	// Try standard JPEG encoder first
+	standardData, err := encodeStandardJPEG(img, config.Quality)
 	if err != nil {
 		return nil, "", fmt.Errorf("standaard JPEG encoding faalde: %w", err)
 	}
 
-	if len(standardData) > 0 {
-		bestData = standardData
-		bestSize = len(standardData)
-		winnerInfo = fmt.Sprintf("standaard (%d KB)", len(standardData)/1024)
+	// Try Jpegli encoder for potentially better compression
+	jpegliData, jpegliErr := encodeWithJpegli(img, config.Quality)
+
+	// Determine the best result
+	if jpegliErr == nil && len(jpegliData) > 0 && len(jpegliData) < len(standardData) {
+		// Jpegli produced smaller file
+		winnerInfo := fmt.Sprintf("jpegli (%d KB) vs standaard (%d KB)", len(jpegliData)/Kilobyte, len(standardData)/Kilobyte)
+		return jpegliData, winnerInfo, nil
 	}
 
-	// Always try Jpegli encoder for better compression
-	if jpegliData, err := encodeWithJpegli(img, config.Quality); err == nil {
-		if len(jpegliData) > 0 {
-			if len(jpegliData) < bestSize {
-				bestData = jpegliData
-				bestSize = len(jpegliData)
-				winnerInfo = fmt.Sprintf("jpegli (%d KB) vs standaard (%d KB)", len(jpegliData)/1024, len(standardData)/1024)
-			} else {
-				winnerInfo = fmt.Sprintf("standaard (%d KB) vs jpegli (%d KB)", len(standardData)/1024, len(jpegliData)/1024)
-			}
-		}
-	} else {
-		winnerInfo = fmt.Sprintf("standaard (%d KB) - jpegli faalde", len(standardData)/1024)
+	// Standard JPEG is better or Jpegli failed
+	if jpegliErr != nil {
+		winnerInfo := fmt.Sprintf("standaard (%d KB) - jpegli faalde", len(standardData)/Kilobyte)
+		return standardData, winnerInfo, nil
 	}
 
-	// Use the best result (smallest file size) from both encoders
-	if len(bestData) > 0 {
-		return bestData, winnerInfo, nil
-	}
-
-	return nil, "", fmt.Errorf("beide encoding methoden faalden")
+	winnerInfo := fmt.Sprintf("standaard (%d KB) vs jpegli (%d KB)", len(standardData)/Kilobyte, len(jpegliData)/Kilobyte)
+	return standardData, winnerInfo, nil
 }
 
 func encodeWithJpegli(img image.Image, quality int) ([]byte, error) {
@@ -253,7 +228,7 @@ func encodeWithJpegli(img image.Image, quality int) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-func encodeWithStandardJPEG(img image.Image, quality int) ([]byte, error) {
+func encodeStandardJPEG(img image.Image, quality int) ([]byte, error) {
 	var buf bytes.Buffer
 	options := &jpeg.Options{Quality: quality}
 	if err := jpeg.Encode(&buf, img, options); err != nil {

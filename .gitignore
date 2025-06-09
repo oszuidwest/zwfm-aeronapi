@@ -34,9 +34,12 @@ Thumbs.db
 # Local config files (keep examples)
 local-config.yaml
 *.local.yaml
+.yamlfmt
 
-# Logs
+# Logs and test reports
 *.log
+test_report.md
+test_*.png
 
 # Build artifacts and releases
 aeron-imgman-*
@@ -45,3 +48,4 @@ release-assets/
 artifacts/
 CLAUDE.md
 /docker
+.yamlfmt

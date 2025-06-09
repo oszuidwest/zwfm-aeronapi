@@ -1,0 +1,19 @@
+version: '3.8'
+
+services:
+  postgres-test:
+    image: postgres:16-alpine
+    container_name: aeron-test-db
+    environment:
+      POSTGRES_USER: aeron
+      POSTGRES_PASSWORD: aeron123
+      POSTGRES_DB: aeron_db
+    ports:
+      - "5433:5432" # Different port to avoid conflicts with local dev
+    volumes:
+      - ./fixtures/mock_data.sql:/docker-entrypoint-initdb.d/01-mock-data.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aeron"]
+      interval: 5s
+      timeout: 5s
+      retries: 5

@@ -6,6 +6,16 @@ import (
 	"net/http"
 )
 
+// HTTP status codes for clarity
+const (
+	StatusOK                  = http.StatusOK
+	StatusBadRequest          = http.StatusBadRequest
+	StatusUnauthorized        = http.StatusUnauthorized
+	StatusNotFound            = http.StatusNotFound
+	StatusMethodNotAllowed    = http.StatusMethodNotAllowed
+	StatusInternalServerError = http.StatusInternalServerError
+)
+
 type APIServer struct {
 	service *ImageService
 	config  *Config
@@ -32,6 +42,13 @@ type ItemResponse struct {
 	HasImage bool   `json:"has_image"`
 }
 
+type StatisticsResponse struct {
+	Total         int `json:"total"`
+	WithImages    int `json:"with_images"`
+	WithoutImages int `json:"without_images"`
+	Orphaned      int `json:"orphaned"`
+}
+
 func NewAPIServer(service *ImageService, config *Config) *APIServer {
 	return &APIServer{
 		service: service,
@@ -48,18 +65,18 @@ func (s *APIServer) Start(port string) error {
 
 			fmt.Printf("[%s] %s %s\n", r.Method, r.URL.Path, r.RemoteAddr)
 			if r.Method != method {
-				s.sendError(w, "Method not allowed", http.StatusMethodNotAllowed)
+				s.sendError(w, "Method not allowed", StatusMethodNotAllowed)
 				return
 			}
 
 			if requireAuth && s.config.API.Enabled {
 				apiKey := r.Header.Get("X-API-Key")
 				if apiKey == "" {
-					apiKey = r.URL.Query().Get("api_key")
+					apiKey = r.URL.Query().Get("key")
 				}
 
 				if !s.isValidAPIKey(apiKey) {
-					s.sendError(w, "Unauthorized: Invalid or missing API key", http.StatusUnauthorized)
+					s.sendError(w, "Unauthorized: Invalid or missing API key", StatusUnauthorized)
 					return
 				}
 			}
@@ -71,12 +88,12 @@ func (s *APIServer) Start(port string) error {
 	mux.HandleFunc("/api/health", wrap(http.MethodGet, s.handleHealth, false))
 	mux.HandleFunc("/api/artists", wrap(http.MethodGet, s.handleArtists, true))
 	mux.HandleFunc("/api/artists/search", wrap(http.MethodGet, s.handleArtistSearch, true))
-	mux.HandleFunc("/api/artists/upload", wrap(http.MethodPost, s.handleArtistImageUpload, true))
+	mux.HandleFunc("/api/artists/upload", wrap(http.MethodPost, s.handleArtistUpload, true))
 	mux.HandleFunc("/api/artists/nuke", wrap(http.MethodDelete, s.handleArtistNuke, true))
 
 	mux.HandleFunc("/api/tracks", wrap(http.MethodGet, s.handleTracks, true))
 	mux.HandleFunc("/api/tracks/search", wrap(http.MethodGet, s.handleTrackSearch, true))
-	mux.HandleFunc("/api/tracks/upload", wrap(http.MethodPost, s.handleTrackImageUpload, true))
+	mux.HandleFunc("/api/tracks/upload", wrap(http.MethodPost, s.handleTrackUpload, true))
 	mux.HandleFunc("/api/tracks/nuke", wrap(http.MethodDelete, s.handleTrackNuke, true))
 
 	fmt.Printf("%sAPI Server gestart op poort %s%s\n", Green, port, Reset)
@@ -93,31 +110,18 @@ func (s *APIServer) handleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *APIServer) handleArtists(w http.ResponseWriter, r *http.Request) {
-
-	withoutImages := r.URL.Query().Get("without_images") == "true"
-	limit := 50
-
-	var items interface{}
-	var err error
-	if withoutImages {
-		items, err = s.service.ListWithoutImages(ScopeArtist, limit)
-	} else {
-		items, err = s.service.ListWithoutImages(ScopeArtist, limit)
-	}
-
+	// Default: return statistics
+	stats, err := s.service.GetStatistics(ScopeArtist)
 	if err != nil {
-		s.sendError(w, err.Error(), http.StatusInternalServerError)
+		s.sendError(w, err.Error(), StatusInternalServerError)
 		return
 	}
 
-	artists := items.([]Artist)
-	response := make([]ItemResponse, len(artists))
-	for i, artist := range artists {
-		response[i] = ItemResponse{
-			ID:       artist.ID,
-			Name:     artist.Name,
-			HasImage: artist.HasImage,
-		}
+	response := StatisticsResponse{
+		Total:         stats.Total,
+		WithImages:    stats.WithImages,
+		WithoutImages: stats.WithoutImages,
+		Orphaned:      stats.Orphaned,
 	}
 
 	s.sendSuccess(w, response)
@@ -127,13 +131,13 @@ func (s *APIServer) handleArtistSearch(w http.ResponseWriter, r *http.Request) {
 
 	query := r.URL.Query().Get("q")
 	if query == "" {
-		s.sendError(w, "Missing search query", http.StatusBadRequest)
+		s.sendError(w, "Missing search query", StatusBadRequest)
 		return
 	}
 
 	items, err := s.service.Search(ScopeArtist, query)
 	if err != nil {
-		s.sendError(w, err.Error(), http.StatusInternalServerError)
+		s.sendError(w, err.Error(), StatusInternalServerError)
 		return
 	}
 
@@ -150,11 +154,11 @@ func (s *APIServer) handleArtistSearch(w http.ResponseWriter, r *http.Request) {
 	s.sendSuccess(w, response)
 }
 
-func (s *APIServer) handleArtistImageUpload(w http.ResponseWriter, r *http.Request) {
+func (s *APIServer) handleArtistUpload(w http.ResponseWriter, r *http.Request) {
 
 	var req ImageUploadRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		s.sendError(w, "Invalid request body", http.StatusBadRequest)
+		s.sendError(w, "Invalid request body", StatusBadRequest)
 		return
 	}
 
@@ -168,7 +172,7 @@ func (s *APIServer) handleArtistImageUpload(w http.ResponseWriter, r *http.Reque
 	if req.Image != "" {
 		imageData, err := DecodeBase64Image(req.Image)
 		if err != nil {
-			s.sendError(w, "Invalid base64 image", http.StatusBadRequest)
+			s.sendError(w, "Invalid base64 image", StatusBadRequest)
 			return
 		}
 		params.ImageData = imageData
@@ -178,10 +182,10 @@ func (s *APIServer) handleArtistImageUpload(w http.ResponseWriter, r *http.Reque
 	if err != nil {
 		if err.Error() == "moet naam of id specificeren" ||
 			err.Error() == "kan niet zowel naam als id specificeren" {
-			s.sendError(w, err.Error(), http.StatusBadRequest)
+			s.sendError(w, err.Error(), StatusBadRequest)
 			return
 		}
-		s.sendError(w, err.Error(), http.StatusInternalServerError)
+		s.sendError(w, err.Error(), StatusInternalServerError)
 		return
 	}
 
@@ -195,32 +199,18 @@ func (s *APIServer) handleArtistImageUpload(w http.ResponseWriter, r *http.Reque
 }
 
 func (s *APIServer) handleTracks(w http.ResponseWriter, r *http.Request) {
-
-	withoutImages := r.URL.Query().Get("without_images") == "true"
-	limit := 50
-
-	var items interface{}
-	var err error
-	if withoutImages {
-		items, err = s.service.ListWithoutImages(ScopeTrack, limit)
-	} else {
-		items, err = s.service.ListWithoutImages(ScopeTrack, limit)
-	}
-
+	// Default: return statistics
+	stats, err := s.service.GetStatistics(ScopeTrack)
 	if err != nil {
-		s.sendError(w, err.Error(), http.StatusInternalServerError)
+		s.sendError(w, err.Error(), StatusInternalServerError)
 		return
 	}
 
-	tracks := items.([]Track)
-	response := make([]ItemResponse, len(tracks))
-	for i, track := range tracks {
-		response[i] = ItemResponse{
-			ID:       track.ID,
-			Title:    track.Title,
-			Artist:   track.Artist,
-			HasImage: track.HasImage,
-		}
+	response := StatisticsResponse{
+		Total:         stats.Total,
+		WithImages:    stats.WithImages,
+		WithoutImages: stats.WithoutImages,
+		Orphaned:      stats.Orphaned,
 	}
 
 	s.sendSuccess(w, response)
@@ -230,13 +220,13 @@ func (s *APIServer) handleTrackSearch(w http.ResponseWriter, r *http.Request) {
 
 	query := r.URL.Query().Get("q")
 	if query == "" {
-		s.sendError(w, "Missing search query", http.StatusBadRequest)
+		s.sendError(w, "Missing search query", StatusBadRequest)
 		return
 	}
 
 	items, err := s.service.Search(ScopeTrack, query)
 	if err != nil {
-		s.sendError(w, err.Error(), http.StatusInternalServerError)
+		s.sendError(w, err.Error(), StatusInternalServerError)
 		return
 	}
 
@@ -254,11 +244,11 @@ func (s *APIServer) handleTrackSearch(w http.ResponseWriter, r *http.Request) {
 	s.sendSuccess(w, response)
 }
 
-func (s *APIServer) handleTrackImageUpload(w http.ResponseWriter, r *http.Request) {
+func (s *APIServer) handleTrackUpload(w http.ResponseWriter, r *http.Request) {
 
 	var req ImageUploadRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		s.sendError(w, "Invalid request body", http.StatusBadRequest)
+		s.sendError(w, "Invalid request body", StatusBadRequest)
 		return
 	}
 
@@ -272,7 +262,7 @@ func (s *APIServer) handleTrackImageUpload(w http.ResponseWriter, r *http.Reques
 	if req.Image != "" {
 		imageData, err := DecodeBase64Image(req.Image)
 		if err != nil {
-			s.sendError(w, "Invalid base64 image", http.StatusBadRequest)
+			s.sendError(w, "Invalid base64 image", StatusBadRequest)
 			return
 		}
 		params.ImageData = imageData
@@ -282,10 +272,10 @@ func (s *APIServer) handleTrackImageUpload(w http.ResponseWriter, r *http.Reques
 	if err != nil {
 		if err.Error() == "moet naam of id specificeren" ||
 			err.Error() == "kan niet zowel naam als id specificeren" {
-			s.sendError(w, err.Error(), http.StatusBadRequest)
+			s.sendError(w, err.Error(), StatusBadRequest)
 			return
 		}
-		s.sendError(w, err.Error(), http.StatusInternalServerError)
+		s.sendError(w, err.Error(), StatusInternalServerError)
 		return
 	}
 
@@ -302,13 +292,13 @@ func (s *APIServer) handleTrackImageUpload(w http.ResponseWriter, r *http.Reques
 func (s *APIServer) handleArtistNuke(w http.ResponseWriter, r *http.Request) {
 
 	if r.Header.Get("X-Confirm-Nuke") != "VERWIJDER ALLES" {
-		s.sendError(w, "Missing confirmation header: X-Confirm-Nuke", http.StatusBadRequest)
+		s.sendError(w, "Missing confirmation header: X-Confirm-Nuke", StatusBadRequest)
 		return
 	}
 
 	result, err := s.service.NukeImages(ScopeArtist)
 	if err != nil {
-		s.sendError(w, err.Error(), http.StatusInternalServerError)
+		s.sendError(w, err.Error(), StatusInternalServerError)
 		return
 	}
 
@@ -321,13 +311,13 @@ func (s *APIServer) handleArtistNuke(w http.ResponseWriter, r *http.Request) {
 func (s *APIServer) handleTrackNuke(w http.ResponseWriter, r *http.Request) {
 
 	if r.Header.Get("X-Confirm-Nuke") != "VERWIJDER ALLES" {
-		s.sendError(w, "Missing confirmation header: X-Confirm-Nuke", http.StatusBadRequest)
+		s.sendError(w, "Missing confirmation header: X-Confirm-Nuke", StatusBadRequest)
 		return
 	}
 
 	result, err := s.service.NukeImages(ScopeTrack)
 	if err != nil {
-		s.sendError(w, err.Error(), http.StatusInternalServerError)
+		s.sendError(w, err.Error(), StatusInternalServerError)
 		return
 	}
 

@@ -29,8 +29,8 @@ type ImageUploadParams struct {
 }
 
 type ImageUploadResult struct {
-	ItemName       string
-	ItemTitle      string
+	ItemName       string // Artist name or Track artist
+	ItemTitle      string // Track title (empty for artists)
 	OriginalSize   int
 	OptimizedSize  int
 	SavingsPercent float64
@@ -52,7 +52,7 @@ func ValidateScope(scope string) error {
 	return nil
 }
 
-func (s *ImageService) ValidateImageUploadParams(params *ImageUploadParams) error {
+func (s *ImageService) ValidateUploadParams(params *ImageUploadParams) error {
 	if err := ValidateScope(params.Scope); err != nil {
 		return err
 	}
@@ -75,14 +75,14 @@ func (s *ImageService) ValidateImageUploadParams(params *ImageUploadParams) erro
 }
 
 func (s *ImageService) UploadImage(params *ImageUploadParams) (*ImageUploadResult, error) {
-	if err := s.ValidateImageUploadParams(params); err != nil {
+	if err := s.ValidateUploadParams(params); err != nil {
 		return nil, err
 	}
 
 	var imageData []byte
 	var err error
 	if params.URL != "" {
-		imageData, err = downloadImage(params.URL, s.config.Image.MaxFileSizeMB)
+		imageData, err = downloadImage(params.URL)
 		if err != nil {
 			return nil, fmt.Errorf("kon afbeelding niet downloaden: %w", err)
 		}
@@ -90,7 +90,7 @@ func (s *ImageService) UploadImage(params *ImageUploadParams) (*ImageUploadResul
 		imageData = params.ImageData
 	}
 
-	processingResult, err := processAndOptimizeImage(imageData, s.config.Image)
+	processingResult, err := processImage(imageData, s.config.Image)
 	if err != nil {
 		return nil, fmt.Errorf("kon afbeelding niet verwerken: %w", err)
 	}
@@ -108,7 +108,7 @@ func (s *ImageService) UploadImage(params *ImageUploadParams) (*ImageUploadResul
 			return nil, err
 		}
 
-		if err := updateArtistImageInDB(s.db, s.config.Database.Schema, artist.ID, processingResult.Data); err != nil {
+		if err := updateArtistImage(s.db, s.config.Database.Schema, artist.ID, processingResult.Data); err != nil {
 			return nil, fmt.Errorf("kon database niet bijwerken: %w", err)
 		}
 
@@ -119,7 +119,7 @@ func (s *ImageService) UploadImage(params *ImageUploadParams) (*ImageUploadResul
 			return nil, err
 		}
 
-		if err := saveTrackImageToDatabase(s.db, s.config.Database.Schema, track.ID, processingResult.Data); err != nil {
+		if err := updateTrackImage(s.db, s.config.Database.Schema, track.ID, processingResult.Data); err != nil {
 			return nil, fmt.Errorf("kon database niet bijwerken: %w", err)
 		}
 
@@ -130,15 +130,51 @@ func (s *ImageService) UploadImage(params *ImageUploadParams) (*ImageUploadResul
 	return result, nil
 }
 
-func (s *ImageService) ListWithoutImages(scope string, limit int) (interface{}, error) {
+type ListResult struct {
+	Items interface{}
+	Total int
+}
+
+type Statistics struct {
+	Total         int
+	WithImages    int
+	WithoutImages int
+	Orphaned      int
+}
+
+func (s *ImageService) ListWithFilter(scope string, withImages bool, limit int) (*ListResult, error) {
 	if err := ValidateScope(scope); err != nil {
 		return nil, err
 	}
 
+	var table string
 	if scope == ScopeArtist {
-		return listArtists(s.db, s.config.Database.Schema, false, limit)
+		table = "artist"
+	} else {
+		table = "track"
 	}
-	return listTracks(s.db, s.config.Database.Schema, false, limit)
+
+	// Get total count
+	totalCount, err := countItems(s.db, s.config.Database.Schema, table, withImages)
+	if err != nil {
+		return nil, err
+	}
+
+	// Get items
+	var items interface{}
+	if scope == ScopeArtist {
+		items, err = listArtists(s.db, s.config.Database.Schema, withImages, limit)
+	} else {
+		items, err = listTracks(s.db, s.config.Database.Schema, withImages, limit)
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	return &ListResult{
+		Items: items,
+		Total: totalCount,
+	}, nil
 }
 
 func (s *ImageService) Search(scope, searchTerm string) (interface{}, error) {
@@ -147,9 +183,9 @@ func (s *ImageService) Search(scope, searchTerm string) (interface{}, error) {
 	}
 
 	if scope == ScopeArtist {
-		return findArtistsWithPartialName(s.db, s.config.Database.Schema, searchTerm)
+		return searchArtists(s.db, s.config.Database.Schema, searchTerm)
 	}
-	return findTracksWithPartialName(s.db, s.config.Database.Schema, searchTerm)
+	return searchTracks(s.db, s.config.Database.Schema, searchTerm)
 }
 
 type NukeResult struct {
@@ -157,28 +193,24 @@ type NukeResult struct {
 	Deleted int64
 }
 
-func (s *ImageService) CountImagesForNuke(scope string) (*NukeResult, error) {
+func (s *ImageService) CountForNuke(scope string) (*NukeResult, error) {
 	if err := ValidateScope(scope); err != nil {
 		return nil, err
 	}
 
-	result := &NukeResult{}
-
+	var table string
 	if scope == ScopeArtist {
-		artists, err := listArtists(s.db, s.config.Database.Schema, true, 0)
-		if err != nil {
-			return nil, err
-		}
-		result.Count = len(artists)
+		table = "artist"
 	} else {
-		tracks, err := listTracks(s.db, s.config.Database.Schema, true, 0)
-		if err != nil {
-			return nil, err
-		}
-		result.Count = len(tracks)
+		table = "track"
 	}
 
-	return result, nil
+	count, err := countItems(s.db, s.config.Database.Schema, table, true)
+	if err != nil {
+		return nil, err
+	}
+
+	return &NukeResult{Count: count}, nil
 }
 
 func (s *ImageService) NukeImages(scope string) (*NukeResult, error) {
@@ -186,7 +218,7 @@ func (s *ImageService) NukeImages(scope string) (*NukeResult, error) {
 		return nil, err
 	}
 
-	countResult, err := s.CountImagesForNuke(scope)
+	countResult, err := s.CountForNuke(scope)
 	if err != nil {
 		return nil, err
 	}
@@ -204,7 +236,7 @@ func (s *ImageService) NukeImages(scope string) (*NukeResult, error) {
 
 	result, err := s.db.Exec(query)
 	if err != nil {
-		return nil, fmt.Errorf("kon %s afbeeldingen niet verwijderen: %w", getScopeDescription(scope), err)
+		return nil, fmt.Errorf("kon %s afbeeldingen niet verwijderen: %w", scopeDesc(scope), err)
 	}
 
 	countResult.Deleted, _ = result.RowsAffected()
@@ -220,26 +252,64 @@ func DecodeBase64Image(data string) ([]byte, error) {
 	return io.ReadAll(base64.NewDecoder(base64.StdEncoding, strings.NewReader(data)))
 }
 
-func (s *ImageService) GetPreviewItems(scope string, limit int) ([]string, error) {
+func (s *ImageService) GetStatistics(scope string) (*Statistics, error) {
 	if err := ValidateScope(scope); err != nil {
 		return nil, err
 	}
 
-	var items []string
-
+	var table string
 	if scope == ScopeArtist {
-		artists, err := listArtists(s.db, s.config.Database.Schema, true, limit)
-		if err != nil {
-			return nil, err
-		}
+		table = "artist"
+	} else {
+		table = "track"
+	}
+
+	// Get counts
+	withImages, err := countItems(s.db, s.config.Database.Schema, table, true)
+	if err != nil {
+		return nil, fmt.Errorf("kon items met afbeeldingen niet tellen: %w", err)
+	}
+
+	withoutImages, err := countItems(s.db, s.config.Database.Schema, table, false)
+	if err != nil {
+		return nil, fmt.Errorf("kon items zonder afbeeldingen niet tellen: %w", err)
+	}
+
+	total := withImages + withoutImages
+
+	// Get orphaned count
+	var orphaned int
+	if scope == ScopeArtist {
+		orphaned, err = countOrphanedArtists(s.db, s.config.Database.Schema)
+	} else {
+		orphaned, err = countOrphanedTracks(s.db, s.config.Database.Schema)
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	return &Statistics{
+		Total:         total,
+		WithImages:    withImages,
+		WithoutImages: withoutImages,
+		Orphaned:      orphaned,
+	}, nil
+}
+
+func (s *ImageService) GetPreviewItems(scope string, limit int) ([]string, error) {
+	result, err := s.ListWithFilter(scope, true, limit)
+	if err != nil {
+		return nil, err
+	}
+
+	var items []string
+	if scope == ScopeArtist {
+		artists := result.Items.([]Artist)
 		for _, artist := range artists {
 			items = append(items, artist.Name)
 		}
 	} else {
-		tracks, err := listTracks(s.db, s.config.Database.Schema, true, limit)
-		if err != nil {
-			return nil, err
-		}
+		tracks := result.Items.([]Track)
 		for _, track := range tracks {
 			items = append(items, fmt.Sprintf("%s - %s", track.Artist, track.Title))
 		}

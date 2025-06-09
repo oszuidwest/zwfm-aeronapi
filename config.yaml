@@ -13,13 +13,10 @@ image:
   # Dit is hoe groot de afbeeldingen in de DB komen
   target_width: 640
   target_height: 640
-  
+
   # JPEG-kwaliteit (1-100)
   quality: 90
-  
-  # Maximale bestandsgrootte van bronbestand
-  max_file_size_mb: 200
-  
+
   # Verwerkingsgedrag
   reject_smaller: true
 
@@ -29,4 +26,4 @@ api:
   enabled: false
   # API sleutels voor toegang
   keys:
-    # - "your-secret-api-key-here"
+# - "your-secret-api-key-here"

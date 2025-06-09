@@ -61,7 +61,7 @@ jobs:
             goarch: arm
             goarm: '7'
             suffix: ''
-          
+
           # Windows builds
           - goos: windows
             goarch: amd64
@@ -69,7 +69,7 @@ jobs:
           - goos: windows
             goarch: arm64
             suffix: '.exe'
-          
+
           # macOS builds
           - goos: darwin
             goarch: amd64
@@ -113,7 +113,7 @@ jobs:
           VERSION="${{ steps.version.outputs.version }}"
           COMMIT=$(git rev-parse --short HEAD)
           BUILD_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-          
+
           # Build binary
           go build \
             -ldflags="-s -w -X main.Version=${VERSION} -X main.Commit=${COMMIT} -X main.BuildTime=${BUILD_TIME}" \
@@ -161,20 +161,7 @@ jobs:
           ls -la ./release-assets/
 
       - name: Generate release notes
-        run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          cat > RELEASE_NOTES.md << EOF
-          ## Downloads
-          
-          Download het juiste bestand voor je platform en maak het uitvoerbaar met \`chmod +x\`.
-          
-          **Linux**: amd64, arm64, armv7  
-          **Windows**: amd64, arm64  
-          **macOS**: Intel (amd64), Apple Silicon (arm64)
-          
-          Voor installatie-instructies en gebruiksvoorbeelden, zie de [README](README.md).
-          EOF
-
+        run: "VERSION=\"${{ steps.version.outputs.version }}\"\ncat > RELEASE_NOTES.md << EOF\n## Downloads\n  #magic___^_^___line\nDownload het juiste bestand voor je platform en maak het uitvoerbaar met \\`chmod +x\\`.\n  #magic___^_^___line\n**Linux**: amd64, arm64, armv7  \n**Windows**: amd64, arm64  \n**macOS**: Intel (amd64), Apple Silicon (arm64)\n  #magic___^_^___line\nVoor installatie-instructies en gebruiksvoorbeelden, zie de [README](README.md).\nEOF\n  #magic___^_^___line\n"
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:

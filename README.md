@@ -1,6 +1,6 @@
 # Aeron Image Manager
 
-Een command-line tool voor het beheer van afbeeldingen in Aeron databases.
+Een command-line tool voor het beheer van afbeeldingen in Aeron databases met slimme beeldoptimalisatie.
 
 > \[!WARNING]
 > Aeron is een product van Broadcast Partners. Deze tool is niet officieel en is niet ontwikkeld in opdracht van of in samenwerking met Broadcast Partners. Gebruik ervan is volledig op eigen risico. Maak altijd eerst een backup van de database voordat je deze tool gebruikt.
@@ -8,9 +8,9 @@ Een command-line tool voor het beheer van afbeeldingen in Aeron databases.
 ## Functionaliteit
 
 * Voegt afbeeldingen toe aan artiesten- en trackrecords in PostgreSQL database
-* Optimaliseert afbeeldingen met Jpegli-encoder 
+* **Dubbele encoder optimalisatie**: Vergelijkt automatisch Jpegli vs standaard JPEG en kiest de kleinste bestandsgrootte
 * Ondersteunt JPG, JPEG en PNG invoerbestanden
-* Toont artiesten of tracks zonder afbeeldingen
+* Toont artiesten of tracks zonder afbeeldingen met totaaltellingen
 * Zoekt artiesten of tracks op gedeeltelijke naam
 * Verwijdert afbeeldingen per scope (nuke-functie)
 * Dry-run modus voor het testen van operaties
@@ -48,11 +48,23 @@ Download het juiste bestand voor je platform, maak het uitvoerbaar (`chmod +x`) 
 # Trackafbeelding bijwerken via lokaal bestand
 ./aeron-imgman -scope=track -name="Counting Stars" -file="/pad/naar/image.jpg"
 
-# Artiesten zonder afbeelding tonen
+# Statistieken tonen voor artiesten (totaal, met/zonder afbeeldingen)
 ./aeron-imgman -scope=artist -list
 
-# Tracks zonder afbeelding tonen
+# Artiesten zonder afbeelding tonen met voorbeelden
+./aeron-imgman -scope=artist -list -filter=without
+
+# Artiesten MET afbeelding tonen met voorbeelden
+./aeron-imgman -scope=artist -list -filter=with
+
+# Tracks statistieken tonen
 ./aeron-imgman -scope=track -list
+
+# Tracks zonder afbeelding tonen met voorbeelden
+./aeron-imgman -scope=track -list -filter=without
+
+# Tracks MET afbeelding tonen met voorbeelden
+./aeron-imgman -scope=track -list -filter=with
 
 # Zoeken naar artiesten met gedeeltelijke naam
 ./aeron-imgman -scope=artist -search="Chef"
@@ -87,8 +99,11 @@ Download het juiste bestand voor je platform, maak het uitvoerbaar (`chmod +x`) 
   -search string    Zoek items met gedeeltelijke naam match
   -config string    Pad naar config bestand (standaard: config.yaml)
   -dry-run          Toon wat gedaan zou worden zonder bij te werken
-  -list             Toon items zonder afbeeldingen
+  -list             Toon statistieken en voorbeelden
+  -filter string    Filter voor list voorbeelden: 'with', 'without' of 'stats-only'
   -nuke             Verwijder afbeeldingen van opgegeven scope
+  -server           Start REST API server
+  -port string      Server poort (standaard: 8080)
   -version          Toon versie-informatie
 ```
 
@@ -131,7 +146,6 @@ Veiligheidsmaatregelen:
 * Uitvoerformaat: altijd JPEG, ongeacht invoerformaat
 * Schaling: afbeeldingen groter dan doelafmetingen worden verkleind
 * Validatie: kleinere afbeeldingen worden geweigerd (configureerbaar)
-* Maximum bestandsgrootte: Configureerbaar via config.yaml (bijvoorbeeld 200 MB)
 
 ### Encoding optimalisatie
 
@@ -141,6 +155,12 @@ De tool gebruikt een slimme aanpak voor bestandscompressie:
 2. **Automatische selectie**: De encoder met de kleinste bestandsgrootte wordt automatisch gekozen
 3. **Rapportage**: De tool toont welke encoder werd gebruikt en hoeveel ruimte werd bespaard
 4. **Geen kwaliteitsverlies**: Beide encoders gebruiken dezelfde kwaliteitsinstellingen
+
+Voorbeeld output:
+```
+✓ Queen: 2048KB → 187KB (jpegli)
+✓ Coldplay: 1536KB → 201KB (standaard)
+```
 
 Dit zorgt ervoor dat je altijd de best mogelijke compressie krijgt, ongeacht het type bronafbeelding.
 
@@ -186,8 +206,17 @@ GET /api/health
 
 #### Artists
 ```bash
-# List artists (limit 50)
-GET /api/artists?without_images=true
+# Artist statistieken
+GET /api/artists
+Response: {
+  "success": true,
+  "data": {
+    "total": 80,
+    "with_images": 10,
+    "without_images": 70,
+    "orphaned": 5
+  }
+}
 
 # Search artists
 GET /api/artists/search?q=searchterm
@@ -206,8 +235,17 @@ Header: X-Confirm-Nuke: VERWIJDER ALLES
 
 #### Tracks
 ```bash
-# List tracks (limit 50)
-GET /api/tracks?without_images=true
+# Track statistieken
+GET /api/tracks
+Response: {
+  "success": true,
+  "data": {
+    "total": 120,
+    "with_images": 10,
+    "without_images": 110,
+    "orphaned": 3
+  }
+}
 
 # Search tracks
 GET /api/tracks/search?q=searchterm
@@ -224,13 +262,37 @@ DELETE /api/tracks/nuke
 Header: X-Confirm-Nuke: VERWIJDER ALLES
 ```
 
+### API Authenticatie
+
+De API ondersteunt optionele authenticatie via API keys:
+
+```yaml
+# In config.yaml
+api:
+  enabled: true  # Schakel authenticatie in
+  keys:
+    - "your-api-key-here"
+    - "another-api-key"
+```
+
+Gebruik de API key op één van deze manieren:
+```bash
+# Via header (aanbevolen)
+curl -H "X-API-Key: your-api-key-here" http://localhost:8080/api/artists
+
+# Via query parameter
+curl http://localhost:8080/api/artists?key=your-api-key-here
+```
+
 ### API Response Format
 
 Succesvolle responses:
 ```json
 {
   "success": true,
-  "data": { ... }
+  "data": { ... },
+  "total": 70,   // Bij list endpoints: totaal aantal items
+  "shown": 50    // Bij list endpoints: aantal getoonde items
 }
 ```
 
