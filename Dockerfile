@@ -25,7 +25,7 @@ ARG BUILD_TIME
 
 # Build the binary
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build \
-    -ldflags="-w -s -extldflags '-static' -X main.Version=${VERSION} -X main.Commit=${COMMIT} -X 'main.BuildTime=${BUILD_TIME}'" \
+    -ldflags="-w -s -extldflags '-static' -X main.Version=${VERSION} -X main.Commit=${COMMIT} -X main.BuildTime=${BUILD_TIME}" \
     -a -installsuffix cgo \
     -o aeron-imgman .
 

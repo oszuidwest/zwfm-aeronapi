@@ -72,14 +72,16 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=ref,event=branch
             type=ref,event=pr
             type=semver,pattern={{version}},value=${{ steps.version.outputs.version }}
             type=semver,pattern={{major}}.{{minor}},value=${{ steps.version.outputs.version }}
             type=semver,pattern={{major}},value=${{ steps.version.outputs.version }}
             type=raw,value=latest,enable={{is_default_branch}}
             type=raw,value=edge,enable=${{ github.event_name == 'workflow_dispatch' && inputs.version == '' }}
-            type=sha,prefix=${{ steps.version.outputs.version }}-
+
+      - name: Set build time
+        id: buildtime
+        run: echo "time=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> $GITHUB_OUTPUT
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
@@ -94,6 +96,6 @@ jobs:
           build-args: |
             VERSION=${{ steps.version.outputs.version }}
             COMMIT=${{ github.sha }}
-            BUILD_TIME=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+            BUILD_TIME=${{ steps.buildtime.outputs.time }}
           provenance: false
           sbom: false
