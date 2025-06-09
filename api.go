@@ -1,18 +1,13 @@
 package main
 
 import (
-	"database/sql"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
-	"strings"
 )
 
 type APIServer struct {
-	db     *sql.DB
-	config *Config
+	service *ImageService
 }
 
 type APIResponse struct {
@@ -36,10 +31,9 @@ type ItemResponse struct {
 	HasImage bool   `json:"has_image"`
 }
 
-func NewAPIServer(db *sql.DB, config *Config) *APIServer {
+func NewAPIServer(service *ImageService) *APIServer {
 	return &APIServer{
-		db:     db,
-		config: config,
+		service: service,
 	}
 }
 
@@ -47,63 +41,72 @@ func (s *APIServer) Start(port string) error {
 	mux := http.NewServeMux()
 
 	// Middleware wrapper
-	wrap := func(handler http.HandlerFunc) http.HandlerFunc {
+	wrap := func(method string, handler http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
-			
+
 			// Log request
 			fmt.Printf("[%s] %s %s\n", r.Method, r.URL.Path, r.RemoteAddr)
-			
+
+			// Method validation
+			if r.Method != method {
+				s.sendError(w, "Method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+
 			handler(w, r)
 		}
 	}
 
 	// Routes
-	mux.HandleFunc("/api/health", wrap(s.handleHealth))
-	
+	mux.HandleFunc("/api/health", wrap(http.MethodGet, s.handleHealth))
+
 	// Artist endpoints
-	mux.HandleFunc("/api/artists", wrap(s.handleArtists))
-	mux.HandleFunc("/api/artists/search", wrap(s.handleArtistSearch))
-	mux.HandleFunc("/api/artists/upload", wrap(s.handleArtistImageUpload))
-	mux.HandleFunc("/api/artists/nuke", wrap(s.handleArtistNuke))
-	
+	mux.HandleFunc("/api/artists", wrap(http.MethodGet, s.handleArtists))
+	mux.HandleFunc("/api/artists/search", wrap(http.MethodGet, s.handleArtistSearch))
+	mux.HandleFunc("/api/artists/upload", wrap(http.MethodPost, s.handleArtistImageUpload))
+	mux.HandleFunc("/api/artists/nuke", wrap(http.MethodDelete, s.handleArtistNuke))
+
 	// Track endpoints
-	mux.HandleFunc("/api/tracks", wrap(s.handleTracks))
-	mux.HandleFunc("/api/tracks/search", wrap(s.handleTrackSearch))
-	mux.HandleFunc("/api/tracks/upload", wrap(s.handleTrackImageUpload))
-	mux.HandleFunc("/api/tracks/nuke", wrap(s.handleTrackNuke))
+	mux.HandleFunc("/api/tracks", wrap(http.MethodGet, s.handleTracks))
+	mux.HandleFunc("/api/tracks/search", wrap(http.MethodGet, s.handleTrackSearch))
+	mux.HandleFunc("/api/tracks/upload", wrap(http.MethodPost, s.handleTrackImageUpload))
+	mux.HandleFunc("/api/tracks/nuke", wrap(http.MethodDelete, s.handleTrackNuke))
 
 	fmt.Printf("%sAPI Server gestart op poort %s%s\n", Green, port, Reset)
 	return http.ListenAndServe(":"+port, mux)
 }
 
 func (s *APIServer) handleHealth(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		s.sendError(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
 
 	s.sendSuccess(w, map[string]string{
 		"status": "healthy",
-		"database": fmt.Sprintf("%s:%s/%s", s.config.Database.Host, s.config.Database.Port, s.config.Database.Name),
+		"database": fmt.Sprintf("%s:%s/%s", s.service.config.Database.Host,
+			s.service.config.Database.Port, s.service.config.Database.Name),
 	})
 }
 
 func (s *APIServer) handleArtists(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		s.sendError(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
 
 	withoutImages := r.URL.Query().Get("without_images") == "true"
 	limit := 50
-	
-	artists, err := listArtists(s.db, s.config.Database.Schema, !withoutImages, limit)
+
+	var items interface{}
+	var err error
+	if withoutImages {
+		items, err = s.service.ListWithoutImages(ScopeArtist, limit)
+	} else {
+		// For now, we'll use the same function but with true for hasImage
+		// This would need a separate method in service if we want to list with images
+		items, err = s.service.ListWithoutImages(ScopeArtist, limit)
+	}
+
 	if err != nil {
 		s.sendError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
+	artists := items.([]Artist)
 	response := make([]ItemResponse, len(artists))
 	for i, artist := range artists {
 		response[i] = ItemResponse{
@@ -117,10 +120,6 @@ func (s *APIServer) handleArtists(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *APIServer) handleArtistSearch(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		s.sendError(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
 
 	query := r.URL.Query().Get("q")
 	if query == "" {
@@ -128,12 +127,13 @@ func (s *APIServer) handleArtistSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	artists, err := findArtistsWithPartialName(s.db, s.config.Database.Schema, query)
+	items, err := s.service.Search(ScopeArtist, query)
 	if err != nil {
 		s.sendError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
+	artists := items.([]Artist)
 	response := make([]ItemResponse, len(artists))
 	for i, artist := range artists {
 		response[i] = ItemResponse{
@@ -147,10 +147,6 @@ func (s *APIServer) handleArtistSearch(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *APIServer) handleArtistImageUpload(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		s.sendError(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
 
 	var req ImageUploadRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -158,85 +154,62 @@ func (s *APIServer) handleArtistImageUpload(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Validate input
-	if req.Name == "" && req.ID == "" {
-		s.sendError(w, "Either name or id must be provided", http.StatusBadRequest)
-		return
-	}
-	if req.Name != "" && req.ID != "" {
-		s.sendError(w, "Cannot specify both name and id", http.StatusBadRequest)
-		return
-	}
-	if req.URL == "" && req.Image == "" {
-		s.sendError(w, "Either url or image must be provided", http.StatusBadRequest)
-		return
-	}
-	if req.URL != "" && req.Image != "" {
-		s.sendError(w, "Cannot specify both url and image", http.StatusBadRequest)
-		return
+	params := &ImageUploadParams{
+		Scope: ScopeArtist,
+		Name:  req.Name,
+		ID:    req.ID,
+		URL:   req.URL,
 	}
 
-	// Lookup artist
-	artist, err := lookupArtist(s.db, s.config.Database.Schema, req.Name, req.ID)
-	if err != nil {
-		s.sendError(w, err.Error(), http.StatusNotFound)
-		return
-	}
-
-	// Load image data
-	var imageData []byte
-	if req.URL != "" {
-		imageData, err = downloadImage(req.URL, s.config.Image.MaxFileSizeMB)
-		if err != nil {
-			s.sendError(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-	} else {
-		// Decode base64 image
-		imageData, err = decodeBase64Image(req.Image)
+	// Decode base64 image if provided
+	if req.Image != "" {
+		imageData, err := DecodeBase64Image(req.Image)
 		if err != nil {
 			s.sendError(w, "Invalid base64 image", http.StatusBadRequest)
 			return
 		}
+		params.ImageData = imageData
 	}
 
-	// Process and optimize image
-	result, err := processAndOptimizeImage(imageData, s.config.Image)
+	result, err := s.service.UploadImage(params)
 	if err != nil {
-		s.sendError(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	// Save to database
-	if err := updateArtistImageInDB(s.db, s.config.Database.Schema, artist.ID, result.Data); err != nil {
+		if err.Error() == "moet naam of id specificeren" ||
+			err.Error() == "kan niet zowel naam als id specificeren" {
+			s.sendError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		s.sendError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	s.sendSuccess(w, map[string]interface{}{
-		"artist": artist.Name,
-		"original_size": result.Original.Size,
-		"optimized_size": result.Optimized.Size,
-		"savings_percent": result.Savings,
-		"encoder": result.Encoder,
+		"artist":          result.ItemName,
+		"original_size":   result.OriginalSize,
+		"optimized_size":  result.OptimizedSize,
+		"savings_percent": result.SavingsPercent,
+		"encoder":         result.Encoder,
 	})
 }
 
 func (s *APIServer) handleTracks(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		s.sendError(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
 
 	withoutImages := r.URL.Query().Get("without_images") == "true"
 	limit := 50
-	
-	tracks, err := listTracks(s.db, s.config.Database.Schema, !withoutImages, limit)
+
+	var items interface{}
+	var err error
+	if withoutImages {
+		items, err = s.service.ListWithoutImages(ScopeTrack, limit)
+	} else {
+		items, err = s.service.ListWithoutImages(ScopeTrack, limit)
+	}
+
 	if err != nil {
 		s.sendError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
+	tracks := items.([]Track)
 	response := make([]ItemResponse, len(tracks))
 	for i, track := range tracks {
 		response[i] = ItemResponse{
@@ -251,10 +224,6 @@ func (s *APIServer) handleTracks(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *APIServer) handleTrackSearch(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		s.sendError(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
 
 	query := r.URL.Query().Get("q")
 	if query == "" {
@@ -262,12 +231,13 @@ func (s *APIServer) handleTrackSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tracks, err := findTracksWithPartialName(s.db, s.config.Database.Schema, query)
+	items, err := s.service.Search(ScopeTrack, query)
 	if err != nil {
 		s.sendError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
+	tracks := items.([]Track)
 	response := make([]ItemResponse, len(tracks))
 	for i, track := range tracks {
 		response[i] = ItemResponse{
@@ -282,10 +252,6 @@ func (s *APIServer) handleTrackSearch(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *APIServer) handleTrackImageUpload(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		s.sendError(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
 
 	var req ImageUploadRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -293,76 +259,45 @@ func (s *APIServer) handleTrackImageUpload(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Validate input
-	if req.Name == "" && req.ID == "" {
-		s.sendError(w, "Either name or id must be provided", http.StatusBadRequest)
-		return
-	}
-	if req.Name != "" && req.ID != "" {
-		s.sendError(w, "Cannot specify both name and id", http.StatusBadRequest)
-		return
-	}
-	if req.URL == "" && req.Image == "" {
-		s.sendError(w, "Either url or image must be provided", http.StatusBadRequest)
-		return
-	}
-	if req.URL != "" && req.Image != "" {
-		s.sendError(w, "Cannot specify both url and image", http.StatusBadRequest)
-		return
+	params := &ImageUploadParams{
+		Scope: ScopeTrack,
+		Name:  req.Name,
+		ID:    req.ID,
+		URL:   req.URL,
 	}
 
-	// Lookup track
-	track, err := lookupTrack(s.db, s.config.Database.Schema, req.Name, req.ID)
-	if err != nil {
-		s.sendError(w, err.Error(), http.StatusNotFound)
-		return
-	}
-
-	// Load image data
-	var imageData []byte
-	if req.URL != "" {
-		imageData, err = downloadImage(req.URL, s.config.Image.MaxFileSizeMB)
-		if err != nil {
-			s.sendError(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-	} else {
-		// Decode base64 image
-		imageData, err = decodeBase64Image(req.Image)
+	// Decode base64 image if provided
+	if req.Image != "" {
+		imageData, err := DecodeBase64Image(req.Image)
 		if err != nil {
 			s.sendError(w, "Invalid base64 image", http.StatusBadRequest)
 			return
 		}
+		params.ImageData = imageData
 	}
 
-	// Process and optimize image
-	result, err := processAndOptimizeImage(imageData, s.config.Image)
+	result, err := s.service.UploadImage(params)
 	if err != nil {
-		s.sendError(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	// Save to database
-	if err := saveTrackImageToDatabase(s.db, s.config.Database.Schema, track.ID, result.Data); err != nil {
+		if err.Error() == "moet naam of id specificeren" ||
+			err.Error() == "kan niet zowel naam als id specificeren" {
+			s.sendError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		s.sendError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	s.sendSuccess(w, map[string]interface{}{
-		"track": track.Title,
-		"artist": track.Artist,
-		"original_size": result.Original.Size,
-		"optimized_size": result.Optimized.Size,
-		"savings_percent": result.Savings,
-		"encoder": result.Encoder,
+		"track":           result.ItemTitle,
+		"artist":          result.ItemName,
+		"original_size":   result.OriginalSize,
+		"optimized_size":  result.OptimizedSize,
+		"savings_percent": result.SavingsPercent,
+		"encoder":         result.Encoder,
 	})
 }
 
 func (s *APIServer) handleArtistNuke(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodDelete {
-		s.sendError(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
 
 	// This is a dangerous operation, so we require a confirmation header
 	if r.Header.Get("X-Confirm-Nuke") != "VERWIJDER ALLES" {
@@ -370,42 +305,19 @@ func (s *APIServer) handleArtistNuke(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get count before deletion
-	artists, err := listArtists(s.db, s.config.Database.Schema, true, 0)
-	if err != nil {
-		s.sendError(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	count := len(artists)
-
-	if count == 0 {
-		s.sendSuccess(w, map[string]interface{}{
-			"deleted": 0,
-			"message": "Geen artiesten met afbeeldingen gevonden",
-		})
-		return
-	}
-
-	// Delete all artist images
-	query := fmt.Sprintf(`UPDATE %s.artist SET picture = NULL WHERE picture IS NOT NULL`, s.config.Database.Schema)
-	result, err := s.db.Exec(query)
+	result, err := s.service.NukeImages(ScopeArtist)
 	if err != nil {
 		s.sendError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	rowsAffected, _ := result.RowsAffected()
 	s.sendSuccess(w, map[string]interface{}{
-		"deleted": rowsAffected,
-		"message": fmt.Sprintf("%d artiest afbeeldingen verwijderd", rowsAffected),
+		"deleted": result.Deleted,
+		"message": fmt.Sprintf("%d artiest afbeeldingen verwijderd", result.Deleted),
 	})
 }
 
 func (s *APIServer) handleTrackNuke(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodDelete {
-		s.sendError(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
 
 	// This is a dangerous operation, so we require a confirmation header
 	if r.Header.Get("X-Confirm-Nuke") != "VERWIJDER ALLES" {
@@ -413,34 +325,15 @@ func (s *APIServer) handleTrackNuke(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get count before deletion
-	tracks, err := listTracks(s.db, s.config.Database.Schema, true, 0)
-	if err != nil {
-		s.sendError(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	count := len(tracks)
-
-	if count == 0 {
-		s.sendSuccess(w, map[string]interface{}{
-			"deleted": 0,
-			"message": "Geen tracks met afbeeldingen gevonden",
-		})
-		return
-	}
-
-	// Delete all track images
-	query := fmt.Sprintf(`UPDATE %s.track SET picture = NULL WHERE picture IS NOT NULL`, s.config.Database.Schema)
-	result, err := s.db.Exec(query)
+	result, err := s.service.NukeImages(ScopeTrack)
 	if err != nil {
 		s.sendError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	rowsAffected, _ := result.RowsAffected()
 	s.sendSuccess(w, map[string]interface{}{
-		"deleted": rowsAffected,
-		"message": fmt.Sprintf("%d track afbeeldingen verwijderd", rowsAffected),
+		"deleted": result.Deleted,
+		"message": fmt.Sprintf("%d track afbeeldingen verwijderd", result.Deleted),
 	})
 }
 
@@ -459,13 +352,4 @@ func (s *APIServer) sendError(w http.ResponseWriter, message string, code int) {
 		Error:   message,
 	}
 	json.NewEncoder(w).Encode(response)
-}
-
-func decodeBase64Image(data string) ([]byte, error) {
-	// Remove data URL prefix if present
-	if idx := strings.Index(data, ","); idx != -1 {
-		data = data[idx+1:]
-	}
-	
-	return io.ReadAll(base64.NewDecoder(base64.StdEncoding, strings.NewReader(data)))
 }

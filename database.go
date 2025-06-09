@@ -238,30 +238,63 @@ func findArtistsWithPartialName(db *sql.DB, schema, partialName string) ([]Artis
 	return artists, nil
 }
 
-func displayArtistList(title string, artists []Artist, showImageStatus bool, maxNote string) {
-	if len(artists) == 0 {
-		fmt.Printf("%sGeen artiesten gevonden%s\n", Yellow, Reset)
-		return
+func displayItemList(title string, items interface{}, showImageStatus bool, maxNote string, isTrack bool) {
+	var count int
+
+	if isTrack {
+		tracks := items.([]Track)
+		count = len(tracks)
+		if count == 0 {
+			fmt.Printf("%sGeen tracks gevonden%s\n", Yellow, Reset)
+			return
+		}
+	} else {
+		artists := items.([]Artist)
+		count = len(artists)
+		if count == 0 {
+			fmt.Printf("%sGeen artiesten gevonden%s\n", Yellow, Reset)
+			return
+		}
 	}
 
 	// Title with count
-	fmt.Printf("%s%s:%s %d", Cyan, title, Reset, len(artists))
+	fmt.Printf("%s%s:%s %d", Cyan, title, Reset, count)
 	if maxNote != "" {
 		fmt.Printf(" (%s)", maxNote)
 	}
 	fmt.Println()
 
-	for _, artist := range artists {
-		if showImageStatus {
-			if artist.HasImage {
-				fmt.Printf("  %s✓%s %s\n", Green, Reset, artist.Name)
+	if isTrack {
+		tracks := items.([]Track)
+		for _, track := range tracks {
+			if showImageStatus {
+				if track.HasImage {
+					fmt.Printf("  %s✓%s %s - %s\n", Green, Reset, track.Artist, track.Title)
+				} else {
+					fmt.Printf("  %s✗%s %s - %s\n", Red, Reset, track.Artist, track.Title)
+				}
 			} else {
-				fmt.Printf("  %s✗%s %s\n", Red, Reset, artist.Name)
+				fmt.Printf("  • %s - %s\n", track.Artist, track.Title)
 			}
-		} else {
-			fmt.Printf("  • %s\n", artist.Name)
+		}
+	} else {
+		artists := items.([]Artist)
+		for _, artist := range artists {
+			if showImageStatus {
+				if artist.HasImage {
+					fmt.Printf("  %s✓%s %s\n", Green, Reset, artist.Name)
+				} else {
+					fmt.Printf("  %s✗%s %s\n", Red, Reset, artist.Name)
+				}
+			} else {
+				fmt.Printf("  • %s\n", artist.Name)
+			}
 		}
 	}
+}
+
+func displayArtistList(title string, artists []Artist, showImageStatus bool, maxNote string) {
+	displayItemList(title, artists, showImageStatus, maxNote, false)
 }
 
 func searchArtists(db *sql.DB, schema, searchTerm string) error {
@@ -391,29 +424,7 @@ func listTracksWithoutImages(db *sql.DB, schema string) error {
 }
 
 func displayTrackList(title string, tracks []Track, showImageStatus bool, maxNote string) {
-	if len(tracks) == 0 {
-		fmt.Printf("%sGeen tracks gevonden%s\n", Yellow, Reset)
-		return
-	}
-
-	// Title with count
-	fmt.Printf("%s%s:%s %d", Cyan, title, Reset, len(tracks))
-	if maxNote != "" {
-		fmt.Printf(" (%s)", maxNote)
-	}
-	fmt.Println()
-
-	for _, track := range tracks {
-		if showImageStatus {
-			if track.HasImage {
-				fmt.Printf("  %s✓%s %s - %s\n", Green, Reset, track.Artist, track.Title)
-			} else {
-				fmt.Printf("  %s✗%s %s - %s\n", Red, Reset, track.Artist, track.Title)
-			}
-		} else {
-			fmt.Printf("  • %s - %s\n", track.Artist, track.Title)
-		}
-	}
+	displayItemList(title, tracks, showImageStatus, maxNote, true)
 }
 
 func findTracksWithPartialName(db *sql.DB, schema, partialName string) ([]Track, error) {

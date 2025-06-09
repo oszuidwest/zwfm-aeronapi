@@ -74,7 +74,7 @@ func main() {
 	// Server mode
 	if *serverMode {
 		fmt.Printf("Database: %s:%s/%s\n", config.Database.Host, config.Database.Port, config.Database.Name)
-		
+
 		db, err := sql.Open("postgres", config.DatabaseURL())
 		if err != nil {
 			log.Fatal(err)
@@ -85,7 +85,8 @@ func main() {
 			log.Fatal(err)
 		}
 
-		apiServer := NewAPIServer(db, config)
+		service := NewImageService(db, config)
+		apiServer := NewAPIServer(service)
 		log.Fatal(apiServer.Start(*serverPort))
 	}
 
@@ -110,142 +111,177 @@ func main() {
 		log.Fatal(err)
 	}
 
+	// Create service
+	service := NewImageService(db, config)
+
 	// Handle operations
 	switch {
 	case *listMode:
-		if err := listItemsWithoutImages(db, config.Database.Schema, *scope); err != nil {
+		if err := handleListCommand(service, *scope); err != nil {
 			log.Fatal(err)
 		}
 
 	case *searchName != "":
-		if err := searchItems(db, config.Database.Schema, *scope, *searchName); err != nil {
+		if err := handleSearchCommand(service, *scope, *searchName); err != nil {
 			log.Fatal(err)
 		}
 
 	case *nukeMode:
-		if err := nukeAllImages(db, config.Database.Schema, *scope, *dryRun); err != nil {
+		if err := handleNukeCommand(service, *scope, *dryRun); err != nil {
 			log.Fatal(err)
 		}
 
 	case *name != "" || *id != "":
-		// Validate input
-		if *name != "" && *id != "" {
-			log.Fatal("Kan niet zowel -name als -id specificeren")
-		}
-		if err := validateImageInput(*imageURL, *imagePath); err != nil {
-			log.Fatal(err)
+		params := &ImageUploadParams{
+			Scope: *scope,
+			Name:  *name,
+			ID:    *id,
+			URL:   *imageURL,
 		}
 
-		// Process image
-		if err := processImage(db, config, *scope, *name, *id, *imageURL, *imagePath, *dryRun); err != nil {
+		// Load image data if file path provided
+		if *imagePath != "" {
+			imageData, err := readImageFile(*imagePath, config.Image.MaxFileSizeMB)
+			if err != nil {
+				log.Fatal(err)
+			}
+			params.ImageData = imageData
+		}
+
+		if err := handleUploadCommand(service, params, *dryRun); err != nil {
 			log.Fatal(err)
 		}
 	}
 }
 
-// Unified image processing function
-func processImage(db *sql.DB, config *Config, scope, name, id, imageURL, imagePath string, dryRun bool) error {
-	// Load image data
-	imageData, err := loadImageFromSource(imageURL, imagePath, config.Image.MaxFileSizeMB)
+// Command handlers
+func handleListCommand(service *ImageService, scope string) error {
+	items, err := service.ListWithoutImages(scope, 50)
 	if err != nil {
 		return err
 	}
 
-	// Process and optimize image
-	processingResult, err := processAndOptimizeImage(imageData, config.Image)
-	if err != nil {
-		return err
-	}
-
-	// Handle based on scope
 	if scope == ScopeArtist {
-		artist, err := lookupArtist(db, config.Database.Schema, name, id)
-		if err != nil {
-			return err
-		}
-
-		if dryRun {
-			fmt.Printf("%sDRY RUN:%s Would update image for %s\n", Yellow, Reset, artist.Name)
-			return nil
-		}
-
-		if err := updateArtistImageInDB(db, config.Database.Schema, artist.ID, processingResult.Data); err != nil {
-			return err
-		}
-
-		fmt.Printf("%s✓%s %s: %dKB → %dKB (%s)\n", Green, Reset, artist.Name,
-			processingResult.Original.Size/1024, processingResult.Optimized.Size/1024, processingResult.Encoder)
+		artists := items.([]Artist)
+		displayArtistList("Artiesten zonder afbeeldingen", artists, false, "max 50 getoond")
 	} else {
-		track, err := lookupTrack(db, config.Database.Schema, name, id)
-		if err != nil {
-			return err
-		}
-
-		if dryRun {
-			fmt.Printf("%sDRY RUN:%s Would update image for track: %s - %s\n", Yellow, Reset, track.Artist, track.Title)
-			return nil
-		}
-
-		if err := saveTrackImageToDatabase(db, config.Database.Schema, track.ID, processingResult.Data); err != nil {
-			return err
-		}
-
-		fmt.Printf("%s✓%s %s - %s: %dKB → %dKB (%s)\n", Green, Reset, track.Artist, track.Title,
-			processingResult.Original.Size/1024, processingResult.Optimized.Size/1024, processingResult.Encoder)
+		tracks := items.([]Track)
+		displayTrackList("Tracks zonder afbeeldingen", tracks, false, "max 50 getoond")
 	}
-
 	return nil
 }
 
-// Unified list function
-func listItemsWithoutImages(db *sql.DB, schema, scope string) error {
-	if scope == ScopeArtist {
-		return listArtistsWithoutImages(db, schema)
+func handleSearchCommand(service *ImageService, scope, searchTerm string) error {
+	items, err := service.Search(scope, searchTerm)
+	if err != nil {
+		return err
 	}
-	return listTracksWithoutImages(db, schema)
-}
 
-// Unified search function
-func searchItems(db *sql.DB, schema, scope, searchTerm string) error {
 	if scope == ScopeArtist {
-		return searchArtists(db, schema, searchTerm)
-	}
-	return searchTracks(db, schema, searchTerm)
-}
-
-type ImageProcessingResult struct {
-	Data      []byte
-	Format    string
-	Encoder   string
-	Original  ImageInfo
-	Optimized ImageInfo
-	Savings   float64
-}
-
-type ImageInfo struct {
-	Format string
-	Width  int
-	Height int
-	Size   int
-}
-
-func loadImageFromSource(imageURL, imagePath string, maxFileSizeMB int) ([]byte, error) {
-	var imageData []byte
-	var err error
-
-	if imageURL != "" {
-		imageData, err = downloadImage(imageURL, maxFileSizeMB)
-		if err != nil {
-			return nil, err
+		artists := items.([]Artist)
+		if len(artists) == 0 {
+			fmt.Printf("%sGeen artiesten gevonden met '%s' in hun naam%s\n", Yellow, searchTerm, Reset)
+			return nil
 		}
+		displayArtistList(fmt.Sprintf("Artiesten met '%s' in hun naam", searchTerm), artists, true, "")
 	} else {
-		imageData, err = readImageFile(imagePath, maxFileSizeMB)
-		if err != nil {
-			return nil, err
+		tracks := items.([]Track)
+		if len(tracks) == 0 {
+			fmt.Printf("%sGeen tracks gevonden met '%s' in titel of artiest%s\n", Yellow, searchTerm, Reset)
+			return nil
+		}
+		displayTrackList(fmt.Sprintf("Tracks met '%s' in titel of artiest", searchTerm), tracks, true, "")
+	}
+	return nil
+}
+
+func handleNukeCommand(service *ImageService, scope string, dryRun bool) error {
+	// Get count and preview
+	result, err := service.CountImagesForNuke(scope)
+	if err != nil {
+		return err
+	}
+
+	if result.Count == 0 {
+		fmt.Printf("Geen %s met afbeeldingen gevonden.\n", getScopeDescription(scope))
+		return nil
+	}
+
+	// Show warning
+	fmt.Printf("%s%sWAARSCHUWING:%s %d %s afbeeldingen verwijderen\n\n", Bold, Red, Reset, result.Count, getScopeDescription(scope))
+
+	// Show preview
+	previewItems, err := service.GetPreviewItems(scope, 20)
+	if err != nil {
+		return err
+	}
+
+	for i, item := range previewItems {
+		if i < 20 {
+			fmt.Printf("  • %s\n", item)
+		} else if i == 20 {
+			fmt.Printf("  ... en %d meer\n", result.Count-20)
+			break
 		}
 	}
 
-	return imageData, nil
+	if dryRun {
+		fmt.Printf("\n%sDRY RUN:%s Zou verwijderen maar doet dit niet\n", Yellow, Reset)
+		return nil
+	}
+
+	fmt.Printf("\nBevestig met '%sVERWIJDER ALLES%s': ", Red, Reset)
+	var confirmation string
+	fmt.Scanln(&confirmation)
+
+	if confirmation != "VERWIJDER ALLES" {
+		fmt.Println("Operatie geannuleerd.")
+		return nil
+	}
+
+	// Execute nuke
+	nukeResult, err := service.NukeImages(scope)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("%s✓%s %d %s afbeeldingen verwijderd\n", Green, Reset, nukeResult.Deleted, getScopeDescription(scope))
+	return nil
+}
+
+func handleUploadCommand(service *ImageService, params *ImageUploadParams, dryRun bool) error {
+	if dryRun {
+		// For dry run, we need to check if the item exists
+		if params.Scope == ScopeArtist {
+			_, err := lookupArtist(service.db, service.config.Database.Schema, params.Name, params.ID)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("%sDRY RUN:%s Would update image for artist\n", Yellow, Reset)
+		} else {
+			_, err := lookupTrack(service.db, service.config.Database.Schema, params.Name, params.ID)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("%sDRY RUN:%s Would update image for track\n", Yellow, Reset)
+		}
+		return nil
+	}
+
+	result, err := service.UploadImage(params)
+	if err != nil {
+		return err
+	}
+
+	if params.Scope == ScopeArtist {
+		fmt.Printf("%s✓%s %s: %dKB → %dKB (%s)\n", Green, Reset, result.ItemName,
+			result.OriginalSize/1024, result.OptimizedSize/1024, result.Encoder)
+	} else {
+		fmt.Printf("%s✓%s %s - %s: %dKB → %dKB (%s)\n", Green, Reset, result.ItemName, result.ItemTitle,
+			result.OriginalSize/1024, result.OptimizedSize/1024, result.Encoder)
+	}
+
+	return nil
 }
 
 func processAndOptimizeImage(imageData []byte, config ImageConfig) (*ImageProcessingResult, error) {
@@ -348,17 +384,6 @@ func optimizeImageData(imageData []byte, originalInfo *ImageInfo, config ImageCo
 func calculateSavings(originalSize, optimizedSize int) float64 {
 	savings := originalSize - optimizedSize
 	return float64(savings) / float64(originalSize) * 100
-}
-
-// Moved from image_utils.go
-func validateImageInput(imageURL, imagePath string) error {
-	if imageURL == "" && imagePath == "" {
-		return fmt.Errorf("zowel -url of -file moet gespecificeerd worden")
-	}
-	if imageURL != "" && imagePath != "" {
-		return fmt.Errorf("kan niet zowel -url als -file specificeren")
-	}
-	return nil
 }
 
 // Moved from output.go

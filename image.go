@@ -14,6 +14,24 @@ import (
 	"github.com/gen2brain/jpegli"
 )
 
+// ImageProcessingResult contains the result of image processing
+type ImageProcessingResult struct {
+	Data      []byte
+	Format    string
+	Encoder   string
+	Original  ImageInfo
+	Optimized ImageInfo
+	Savings   float64
+}
+
+// ImageInfo contains image metadata
+type ImageInfo struct {
+	Format string
+	Width  int
+	Height int
+	Size   int
+}
+
 // Ondersteunde formaten
 var SupportedFormats = []string{"jpeg", "jpg", "png"}
 
