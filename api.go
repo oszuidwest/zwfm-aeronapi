@@ -63,7 +63,7 @@ func (s *APIServer) Start(port string) error {
 		return func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 
-			fmt.Printf("[%s] %s %s\n", r.Method, r.URL.Path, r.RemoteAddr)
+			fmt.Printf("[%s] %s\n", r.Method, r.URL.Path)
 			if r.Method != method {
 				s.sendError(w, "Method not allowed", StatusMethodNotAllowed)
 				return
@@ -101,9 +101,9 @@ func (s *APIServer) Start(port string) error {
 func (s *APIServer) handleHealth(w http.ResponseWriter, r *http.Request) {
 
 	s.sendSuccess(w, map[string]string{
-		"status": "healthy",
-		"database": fmt.Sprintf("%s:%s/%s", s.service.config.Database.Host,
-			s.service.config.Database.Port, s.service.config.Database.Name),
+		"status":   "healthy",
+		"version":  Version,
+		"database": s.service.config.Database.Name,
 	})
 }
 
