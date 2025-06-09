@@ -155,7 +155,7 @@ func processImage(db *sql.DB, config *Config, scope, name, id, imageURL, imagePa
 			return err
 		}
 
-		fmt.Printf("%s✓%s %s: %dKB → %dKB (%s)\n", Green, Reset, artist.Name, 
+		fmt.Printf("%s✓%s %s: %dKB → %dKB (%s)\n", Green, Reset, artist.Name,
 			processingResult.Original.Size/1024, processingResult.Optimized.Size/1024, processingResult.Encoder)
 	} else {
 		track, err := lookupTrack(db, config.Database.Schema, name, id)
@@ -373,6 +373,6 @@ func showUsage() {
 }
 
 func showVersion() {
-	fmt.Printf("%sAeron Image Manager%s v%s (%s)\n", Bold, Reset, Version, Commit)
+	fmt.Printf("%sAeron Image Manager%s %s (%s)\n", Bold, Reset, Version, Commit)
 	fmt.Println("Copyright 2025 Streekomroep ZuidWest")
 }
