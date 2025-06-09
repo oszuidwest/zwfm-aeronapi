@@ -7,14 +7,15 @@ Een command-line tool voor het beheer van afbeeldingen in Aeron databases.
 
 ## Functionaliteit
 
-* Voegt afbeeldingen toe aan artiestenrecords in PostgreSQL database
+* Voegt afbeeldingen toe aan artiesten- en trackrecords in PostgreSQL database
 * Optimaliseert afbeeldingen met Jpegli-encoder 
 * Ondersteunt JPG, JPEG en PNG invoerbestanden
-* Toont artiesten zonder afbeeldingen
-* Zoekt artiesten op gedeeltelijke naam
-* Verwijdert alle afbeeldingen tegelijk (nuke-functie)
+* Toont artiesten of tracks zonder afbeeldingen
+* Zoekt artiesten of tracks op gedeeltelijke naam
+* Verwijdert afbeeldingen per scope of alles tegelijk (nuke-functie)
 * Dry-run modus voor het testen van operaties
 * Vereist config.yaml bestand voor alle instellingen
+* Uniforme interface met verplichte -scope parameter
 
 ## Installatie
 
@@ -41,26 +42,33 @@ Download het juiste bestand voor je platform, maak het uitvoerbaar (`chmod +x`) 
 
 ```bash
 # Artiestafbeelding bijwerken via URL
-./aeron-imgman -artist="OneRepublic" -url="https://example.com/image.jpg"
+./aeron-imgman -scope=artist -name="OneRepublic" -url="https://example.com/image.jpg"
 
-# Artiestafbeelding bijwerken via lokaal bestand
-./aeron-imgman -artist="OneRepublic" -file="/pad/naar/image.jpg"
+# Trackafbeelding bijwerken via lokaal bestand
+./aeron-imgman -scope=track -name="Counting Stars" -file="/pad/naar/image.jpg"
 
 # Artiesten zonder afbeelding tonen
-./aeron-imgman -list
+./aeron-imgman -scope=artist -list
+
+# Tracks zonder afbeelding tonen
+./aeron-imgman -scope=track -list
 
 # Zoeken naar artiesten met gedeeltelijke naam
-./aeron-imgman -search="Chef"
+./aeron-imgman -scope=artist -search="Chef"
 
-# ALLE afbeeldingen uit database verwijderen (vereist bevestiging)
-./aeron-imgman -nuke
+# Zoeken naar tracks met gedeeltelijke naam
+./aeron-imgman -scope=track -search="Stars"
+
+# Afbeeldingen verwijderen per scope
+./aeron-imgman -scope=artist -nuke
+./aeron-imgman -scope=track -nuke
 
 # Versie-informatie tonen
 ./aeron-imgman -version
 
 # Dry-run (voorbeeld zonder wijzigingen)
-./aeron-imgman -artist="OneRepublic" -url="image.jpg" -dry-run
-./aeron-imgman -nuke -dry-run
+./aeron-imgman -scope=artist -name="OneRepublic" -url="image.jpg" -dry-run
+./aeron-imgman -scope=track -nuke -dry-run
 ```
 
 ### Alle beschikbare opties
@@ -70,24 +78,30 @@ Download het juiste bestand voor je platform, maak het uitvoerbaar (`chmod +x`) 
 ./aeron-imgman
 
 # Opties:
-  -artist string    Artiest naam om bij te werken (vereist)
+  -scope string     Verplicht: 'artist' of 'track'
+  -name string      Naam van artiest of track titel
+  -id string        UUID van artiest of track
   -url string       URL van de afbeelding om te downloaden
   -file string      Lokaal pad naar afbeelding
-  -search string    Zoek artiesten met gedeeltelijke naam match
+  -search string    Zoek items met gedeeltelijke naam match
   -config string    Pad naar config bestand (standaard: config.yaml)
   -dry-run          Toon wat gedaan zou worden zonder bij te werken
-  -list             Toon artiesten zonder afbeeldingen
-  -nuke             Verwijder ALLE afbeeldingen (vereist bevestiging)
+  -list             Toon items zonder afbeeldingen
+  -nuke             Verwijder afbeeldingen van opgegeven scope
   -version          Toon versie-informatie
 ```
 
 ### Nuke modus
 
-De `-nuke` functie verwijdert **alle** artiestafbeeldingen uit de database in één keer. Deze functie is bedoeld voor situaties waarin je met een frisse start wil beginnen. Hierbij zijn een aantal veiligheidsmaatregelen
+De `-nuke` functie verwijdert afbeeldingen uit de database op basis van de opgegeven scope:
 
-* **Voorvertoning**: Toont eerst hoeveel en welke artiesten geraakt worden
+* `-scope=artist -nuke`: Verwijdert alle artiestafbeeldingen
+* `-scope=track -nuke`: Verwijdert alle trackafbeeldingen
+
+Veiligheidsmaatregelen:
+* **Voorvertoning**: Toont eerst hoeveel en welke items geraakt worden
 * **Bevestiging vereist**: Je moet expliciet "VERWIJDER ALLES" typen om door te gaan
-* **Dry-run ondersteuning**: Test de functie zonder veranderingen doort te voeren met `-dry-run`
+* **Dry-run ondersteuning**: Test de functie zonder veranderingen door te voeren met `-dry-run`
 
 > **⚠️ WAARSCHUWING**: De nuke-functie is onomkeerbaar. Maak altijd eerst een backup van je database!
 
@@ -97,10 +111,11 @@ De `-nuke` functie verwijdert **alle** artiestafbeeldingen uit de database in é
 
 ```bash
 # Gebruikt standaard config.yaml in huidige directory
-./aeron-imgman -artist="Naam Artiest" -url="image.jpg"
+./aeron-imgman -scope=artist -name="Naam Artiest" -url="image.jpg"
+./aeron-imgman -scope=track -name="Track Titel" -url="image.jpg"
 
 # Of aangepaste configuratie gebruiken
-./aeron-imgman -config="/pad/naar/config.yaml" -artist="Naam Artiest" -url="image.jpg"
+./aeron-imgman -config="/pad/naar/config.yaml" -scope=artist -name="Naam Artiest" -url="image.jpg"
 ```
 
 #### Configuratie vereist
@@ -136,13 +151,21 @@ Dit zorgt ervoor dat je altijd de best mogelijke compressie krijgt, ongeacht het
 
 ## Databaseschema
 
-De tool vereist de volgende PostgreSQL-tabel zoals gebruikt door Aeron:
+De tool vereist de volgende PostgreSQL-tabellen zoals gebruikt door Aeron:
 
 ```sql
 CREATE TABLE {schema}.artist (
     artistid UUID PRIMARY KEY,
     artist VARCHAR NOT NULL,
     picture BYTEA
+);
+
+CREATE TABLE {schema}.track (
+    titleid UUID PRIMARY KEY,
+    tracktitle VARCHAR NOT NULL,
+    artist VARCHAR,
+    picture BYTEA,
+    -- andere velden
 );
 ```
 

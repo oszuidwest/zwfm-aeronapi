@@ -30,6 +30,8 @@ var (
 // Constanten
 const (
 	MaxFileSize = 20 * 1024 * 1024 // 20MB (for download validation)
+	ScopeArtist = "artist"
+	ScopeTrack  = "track"
 )
 
 func main() {
@@ -37,13 +39,15 @@ func main() {
 	log.SetFlags(0)
 
 	var (
-		artistName  = flag.String("artist", "", "Artiest naam om bij te werken")
-		artistID    = flag.String("artistid", "", "Artiest ID om bij te werken")
+		scope       = flag.String("scope", "", "Verplicht: 'artist' of 'track'")
+		name        = flag.String("name", "", "Naam van artiest of track titel")
+		id          = flag.String("id", "", "UUID van artiest of track")
 		imageURL    = flag.String("url", "", "URL van de afbeelding om te downloaden")
 		imagePath   = flag.String("file", "", "Lokaal pad naar afbeelding")
-		searchName  = flag.String("search", "", "Zoek artiesten met gedeeltelijke naam match")
-		listMode    = flag.Bool("list", false, "Toon a;;e artiesten zonder afbeeldingen")
+		searchName  = flag.String("search", "", "Zoek met gedeeltelijke naam match")
+		listMode    = flag.Bool("list", false, "Toon alle items zonder afbeeldingen")
 		nukeMode    = flag.Bool("nuke", false, "Verwijder ALLE afbeeldingen uit de database (vereist bevestiging)")
+		nukeAll     = flag.Bool("nukeall", false, "Verwijder ALLE afbeeldingen (artist + track)")
 		dryRun      = flag.Bool("dry-run", false, "Toon wat gedaan zou worden zonder daadwerkelijk bij te werken")
 		versionFlag = flag.Bool("version", false, "Toon versie-informatie")
 		configFile  = flag.String("config", "", "Pad naar config bestand (standaard: config.yaml)")
@@ -55,8 +59,18 @@ func main() {
 		return
 	}
 
-	if *artistName == "" && *artistID == "" && !*listMode && !*nukeMode && *searchName == "" {
+	// Check if no action specified
+	if *name == "" && *id == "" && !*listMode && !*nukeMode && !*nukeAll && *searchName == "" {
 		showUsage()
+	}
+
+	// Validate scope for operations that need it
+	needsScope := *name != "" || *id != "" || *listMode || *searchName != "" || (*nukeMode && !*nukeAll)
+	if needsScope && *scope == "" {
+		log.Fatal("Moet -scope specificeren (artist of track)")
+	}
+	if *scope != "" && *scope != ScopeArtist && *scope != ScopeTrack {
+		log.Fatal("Ongeldige scope: moet 'artist' of 'track' zijn")
 	}
 
 	// Configuratie laden
@@ -66,57 +80,119 @@ func main() {
 	}
 
 	// Only show database info and connect for operations that need the database
-	if *listMode || *searchName != "" || *nukeMode || *artistName != "" || *artistID != "" {
-		fmt.Printf("Database: %s:%s/%s\n", config.Database.Host, config.Database.Port, config.Database.Name)
+	fmt.Printf("Database: %s:%s/%s\n", config.Database.Host, config.Database.Port, config.Database.Name)
 
-		db, err := sql.Open("postgres", config.DatabaseURL())
-		if err != nil {
+	db, err := sql.Open("postgres", config.DatabaseURL())
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer db.Close()
+
+	if err := db.Ping(); err != nil {
+		log.Fatal(err)
+	}
+
+	// Handle operations
+	switch {
+	case *listMode:
+		if err := listItemsWithoutImages(db, config.Database.Schema, *scope); err != nil {
 			log.Fatal(err)
 		}
-		defer db.Close()
 
-		if err := db.Ping(); err != nil {
+	case *searchName != "":
+		if err := searchItems(db, config.Database.Schema, *scope, *searchName); err != nil {
 			log.Fatal(err)
 		}
 
-		if *listMode {
-			if err := listArtistsWithoutImages(db, config.Database.Schema); err != nil {
-				log.Fatal(err)
-			}
-			return
+	case *nukeMode:
+		if err := nukeAllImages(db, config.Database.Schema, *scope, *dryRun); err != nil {
+			log.Fatal(err)
 		}
 
-		if *searchName != "" {
-			if err := searchArtists(db, config.Database.Schema, *searchName); err != nil {
-				log.Fatal(err)
-			}
-			return
+	case *name != "" || *id != "":
+		// Validate input
+		if *name != "" && *id != "" {
+			log.Fatal("Kan niet zowel -name als -id specificeren")
 		}
-
-		if *nukeMode {
-			if err := nukeAllImages(db, config.Database.Schema, *dryRun); err != nil {
-				log.Fatal(err)
-			}
-			return
-		}
-
-		// Continue to image processing for artist operations
 		if err := validateImageInput(*imageURL, *imagePath); err != nil {
 			log.Fatal(err)
 		}
 
-		// Validate that either artist name or ID is provided, but not both
-		if *artistName != "" && *artistID != "" {
-			log.Fatal("Kan niet zowel -artist als -artistid specificeren")
-		}
-		if *artistName == "" && *artistID == "" {
-			log.Fatal("Moet óf -artist óf -artistid specificeren")
-		}
-
-		if err := processArtistImage(db, config, *artistName, *artistID, *imageURL, *imagePath, *dryRun); err != nil {
+		// Process image
+		if err := processImage(db, config, *scope, *name, *id, *imageURL, *imagePath, *dryRun); err != nil {
 			log.Fatal(err)
 		}
 	}
+}
+
+// Unified image processing function
+func processImage(db *sql.DB, config *Config, scope, name, id, imageURL, imagePath string, dryRun bool) error {
+	// Load image data
+	imageData, err := loadImageFromSource(imageURL, imagePath, config.Image.MaxFileSizeMB)
+	if err != nil {
+		return err
+	}
+
+	// Process and optimize image
+	processingResult, err := processAndOptimizeImage(imageData, config.Image)
+	if err != nil {
+		return err
+	}
+
+	// Handle based on scope
+	if scope == ScopeArtist {
+		artist, err := lookupArtist(db, config.Database.Schema, name, id)
+		if err != nil {
+			return err
+		}
+
+		if dryRun {
+			fmt.Printf("%sDRY RUN:%s Would update image for %s\n", Yellow, Reset, artist.Name)
+			return nil
+		}
+
+		if err := updateArtistImageInDB(db, config.Database.Schema, artist.ID, processingResult.Data); err != nil {
+			return err
+		}
+
+		fmt.Printf("%s✓%s %s: %dKB → %dKB (%s)\n", Green, Reset, artist.Name, 
+			processingResult.Original.Size/1024, processingResult.Optimized.Size/1024, processingResult.Encoder)
+	} else {
+		track, err := lookupTrack(db, config.Database.Schema, name, id)
+		if err != nil {
+			return err
+		}
+
+		if dryRun {
+			fmt.Printf("%sDRY RUN:%s Would update image for track: %s - %s\n", Yellow, Reset, track.Artist, track.Title)
+			return nil
+		}
+
+		if err := saveTrackImageToDatabase(db, config.Database.Schema, track.ID, processingResult.Data); err != nil {
+			return err
+		}
+
+		fmt.Printf("%s✓%s %s - %s: %dKB → %dKB (%s)\n", Green, Reset, track.Artist, track.Title,
+			processingResult.Original.Size/1024, processingResult.Optimized.Size/1024, processingResult.Encoder)
+	}
+
+	return nil
+}
+
+// Unified list function
+func listItemsWithoutImages(db *sql.DB, schema, scope string) error {
+	if scope == ScopeArtist {
+		return listArtistsWithoutImages(db, schema)
+	}
+	return listTracksWithoutImages(db, schema)
+}
+
+// Unified search function
+func searchItems(db *sql.DB, schema, scope, searchTerm string) error {
+	if scope == ScopeArtist {
+		return searchArtists(db, schema, searchTerm)
+	}
+	return searchTracks(db, schema, searchTerm)
 }
 
 type ImageProcessingResult struct {
@@ -256,46 +332,6 @@ func calculateSavings(originalSize, optimizedSize int) float64 {
 	return float64(savings) / float64(originalSize) * 100
 }
 
-func saveImageToDatabase(db *sql.DB, schema, artistID string, imageData []byte) error {
-	// Updating database with new image
-	if err := updateArtistImageInDB(db, schema, artistID, imageData); err != nil {
-		return fmt.Errorf("kon database niet bijwerken: %w", err)
-	}
-	return nil
-}
-
-func processArtistImage(db *sql.DB, config *Config, artistName, artistID, imageURL, imagePath string, dryRun bool) error {
-	// Lookup artist by name or ID
-	artist, err := lookupArtist(db, config.Database.Schema, artistName, artistID)
-	if err != nil {
-		return err
-	}
-
-	// Artist found in database
-
-	imageData, err := loadImageFromSource(imageURL, imagePath, config.Image.MaxFileSizeMB)
-	if err != nil {
-		return err
-	}
-
-	processingResult, err := processAndOptimizeImage(imageData, config.Image)
-	if err != nil {
-		return err
-	}
-
-	if dryRun {
-		fmt.Printf("%sDRY RUN:%s Would update image for %s\n", Yellow, Reset, artist.Name)
-		return nil
-	}
-
-	if err := saveImageToDatabase(db, config.Database.Schema, artist.ID, processingResult.Data); err != nil {
-		return err
-	}
-
-	fmt.Printf("%s✓%s %s: %dKB → %dKB (%s)\n", Green, Reset, artist.Name, processingResult.Original.Size/1024, processingResult.Optimized.Size/1024, processingResult.Encoder)
-	return nil
-}
-
 // Moved from image_utils.go
 func validateImageInput(imageURL, imagePath string) error {
 	if imageURL == "" && imagePath == "" {
@@ -311,20 +347,27 @@ func validateImageInput(imageURL, imagePath string) error {
 func showUsage() {
 	fmt.Printf("%sAeron Image Manager%s\n\n", Bold, Reset)
 	fmt.Println("Gebruik:")
-	fmt.Println("  ./aeron-imgman -artist=\"Name\" -url=\"image.jpg\"")
-	fmt.Println("  ./aeron-imgman -artistid=\"UUID\" -file=\"/path/image.jpg\"")
-	fmt.Println("  ./aeron-imgman -list")
-	fmt.Println("  ./aeron-imgman -search=\"Name\"")
+	fmt.Println("  ./aeron-imgman -scope=artist -name=\"Name\" -url=\"image.jpg\"")
+	fmt.Println("  ./aeron-imgman -scope=artist -id=\"UUID\" -file=\"/path/image.jpg\"")
+	fmt.Println("  ./aeron-imgman -scope=track -name=\"Title\" -url=\"image.jpg\"")
+	fmt.Println("  ./aeron-imgman -scope=track -id=\"UUID\" -file=\"/path/image.jpg\"")
+	fmt.Println("  ./aeron-imgman -scope=artist -list")
+	fmt.Println("  ./aeron-imgman -scope=track -list")
+	fmt.Println("  ./aeron-imgman -scope=artist -search=\"Name\"")
+	fmt.Println("  ./aeron-imgman -scope=track -search=\"Title\"")
 	fmt.Println("\nOpties:")
-	fmt.Println("  -artist string     Artiest naam")
-	fmt.Println("  -artistid string   Artiest ID (UUID)")
+	fmt.Println("  -scope string      Verplicht: 'artist' of 'track'")
+	fmt.Println("  -name string       Naam van artiest of track titel")
+	fmt.Println("  -id string         UUID van artiest of track")
 	fmt.Println("  -url string        URL van afbeelding")
 	fmt.Println("  -file string       Lokaal bestand")
-	fmt.Println("  -list              Toon artiesten zonder afbeelding")
-	fmt.Println("  -search string     Zoek artiesten")
-	fmt.Println("  -nuke              Verwijder ALLE afbeeldingen")
+	fmt.Println("  -list              Toon items zonder afbeelding")
+	fmt.Println("  -search string     Zoek items")
+	fmt.Println("  -nuke              Verwijder afbeeldingen van scope")
+	fmt.Println("  -nukeall           Verwijder ALLE afbeeldingen (artist + track)")
 	fmt.Println("  -dry-run           Simuleer actie")
 	fmt.Println("  -version           Toon versie")
+	fmt.Println("  -config string     Pad naar config bestand")
 	fmt.Println("\nVereist: config.yaml")
 	os.Exit(1)
 }
