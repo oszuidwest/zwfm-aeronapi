@@ -141,8 +141,8 @@ func (opt *ImageOptimizer) processImage(img image.Image, originalData []byte, ou
 		return nil, "", "", err
 	}
 
-	// Return optimized data if it's better, otherwise return original
-	if len(optimizedData) > 0 {
+	// Return optimized data only if it's smaller than original
+	if len(optimizedData) > 0 && len(optimizedData) < len(originalData) {
 		return optimizedData, outputFormat, usedEncoder, nil
 	}
 
@@ -304,6 +304,18 @@ func optimizeImageData(imageData []byte, originalInfo *ImageInfo, config ImageCo
 			Height: originalInfo.Height,
 			Size:   len(optimizedData),
 		}
+	}
+
+	// If the "optimized" version is larger, use the original
+	if len(optimizedData) >= len(imageData) {
+		return &ImageProcessingResult{
+			Data:      imageData,
+			Format:    originalInfo.Format,
+			Encoder:   "origineel (kleiner dan geoptimaliseerd)",
+			Original:  *originalInfo,
+			Optimized: *originalInfo,
+			Savings:   0,
+		}, nil
 	}
 
 	savings := calculateSavings(originalInfo.Size, optimizedInfo.Size)

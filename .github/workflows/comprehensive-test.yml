@@ -430,17 +430,16 @@ jobs:
             echo "$RESPONSE" | jq .
             exit 1
           fi
-      - name: Edge Case Test - Invalid scope
+      - name: Edge Case Test - Invalid endpoint
         run: |
-          RESPONSE=$(curl -s -X POST -H 'X-API-Key: test-api-key-12345' http://localhost:8894/api/invalid/upload \
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST -H 'X-API-Key: test-api-key-12345' http://localhost:8894/api/invalid/upload \
             -H 'Content-Type: application/json' \
             -d '{"name":"Test","url":"https://picsum.photos/500"}')
           
-          if echo "$RESPONSE" | jq -e '.success == false' > /dev/null; then
-            echo "✓ Ongeldig endpoint gaf fout"
+          if [ "$HTTP_CODE" = "404" ]; then
+            echo "✓ Ongeldig endpoint gaf 404 fout"
           else  
-            echo "✗ Verwachtte fout voor ongeldig endpoint"
-            echo "$RESPONSE" | jq .
+            echo "✗ Verwachtte 404 voor ongeldig endpoint, kreeg: $HTTP_CODE"
             exit 1
           fi
       - name: Stop API edge case server
