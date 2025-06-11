@@ -113,20 +113,55 @@ Response:
   "data": {
     "total": 80,
     "with_images": 10,
-    "without_images": 70,
-    "orphaned": 5
+    "without_images": 70
   }
 }
 ```
 
-#### Artiestafbeelding uploaden
+#### Individuele artiest ophalen
 ```http
-POST /api/artists/upload
+GET /api/artists/{artistid}
+X-API-Key: jouw-api-key
+```
+
+Response:
+```json
+{
+  "success": true,
+  "data": {
+    "artistid": "123e4567-e89b-12d3-a456-426614174000",
+    "artist": "Queen",
+    "info": "British rock band formed in London in 1970",
+    "website": "https://www.queenонline.com",
+    "twitter": "@QueenWillRock",
+    "instagram": "@officialqueen",
+    "has_image": true,
+    "repeat_value": 5
+  }
+}
+```
+
+#### Artiestafbeelding beheren
+Het endpoint `/api/artists/{artistid}/image` ondersteunt ophalen (GET), uploaden (POST) en verwijderen (DELETE) van afbeeldingen.
+
+##### Afbeelding ophalen
+```http
+GET /api/artists/{artistid}/image
+X-API-Key: jouw-api-key
+```
+
+Returns:
+- **Content-Type**: `image/jpeg` or `image/png` (detected automatically)
+- **Status**: 200 (OK) with binary image data
+- **Status**: 404 (Not Found) if artist doesn't exist or has no image
+
+##### Afbeelding uploaden
+```http
+POST /api/artists/{artistid}/image
 X-API-Key: jouw-api-key
 Content-Type: application/json
 
 {
-  "name": "Artiestnaam",
   "url": "https://example.com/afbeelding.jpg"
 }
 ```
@@ -134,18 +169,33 @@ Content-Type: application/json
 Of met base64-afbeelding:
 ```json
 {
-  "name": "Artiestnaam",
   "image": "data:image/jpeg;base64,..."
 }
 ```
 
-Of met ID:
+##### Afbeelding verwijderen
+```http
+DELETE /api/artists/{artistid}/image
+X-API-Key: jouw-api-key
+```
+
+Response:
 ```json
 {
-  "id": "123e4567-e89b-12d3-a456-426614174000",
-  "url": "https://example.com/afbeelding.jpg"
+  "success": true,
+  "data": {
+    "message": "Artiest afbeelding succesvol verwijderd",
+    "artist_id": "123e4567-e89b-12d3-a456-426614174000"
+  }
 }
 ```
+
+**Ondersteunde formaten**: JPEG (.jpg, .jpeg) en PNG (.png)
+
+**Note**: 
+- De artiest ID wordt uit de URL gehaald. Name-based lookup wordt niet meer ondersteund op dit endpoint.
+- Het oude `/api/artists/upload` endpoint is vervangen door dit geharmoniseerde endpoint.
+- Andere formaten (WEBP, GIF, BMP, etc.) worden geweigerd bij upload
 
 #### Alle artiestafbeeldingen verwijderen
 ```http
@@ -162,6 +212,71 @@ GET /api/tracks
 X-API-Key: jouw-api-key
 ```
 
+#### Individuele track ophalen
+```http
+GET /api/tracks/{trackid}
+X-API-Key: jouw-api-key
+```
+
+Response:
+```json
+{
+  "success": true,
+  "data": {
+    "titleid": "123e4567-e89b-12d3-a456-426614174000",
+    "tracktitle": "Bohemian Rhapsody",
+    "artist": "Queen",
+    "artistid": "987e6543-e21b-12d3-a456-426614174000",
+    "year": "1975",
+    "knownlength": 354000,
+    "introtime": 5000,
+    "outrotime": 10000,
+    "tempo": 120,
+    "bpm": 76,
+    "gender": 1,
+    "language": 1,
+    "mood": 3,
+    "exporttype": 1,
+    "repeat_value": 5,
+    "rating": 9,
+    "has_image": true,
+    "website": "https://www.queen.com",
+    "conductor": "",
+    "orchestra": ""
+  }
+}
+```
+
+#### Trackafbeelding beheren
+
+##### Afbeelding ophalen
+```http
+GET /api/tracks/{trackid}/image
+X-API-Key: jouw-api-key
+```
+
+Returns:
+- **Content-Type**: `image/jpeg` or `image/png` (detected automatically)
+- **Status**: 200 (OK) with binary image data
+- **Status**: 404 (Not Found) if track doesn't exist or has no image
+
+##### Afbeelding verwijderen
+```http
+DELETE /api/tracks/{trackid}/image
+X-API-Key: jouw-api-key
+```
+
+Response:
+```json
+{
+  "success": true,
+  "data": {
+    "message": "Track afbeelding succesvol verwijderd",
+    "track_id": "123e4567-e89b-12d3-a456-426614174000"
+  }
+}
+```
+
 #### Trackafbeelding uploaden
 ```http
 POST /api/tracks/upload
@@ -173,6 +288,8 @@ Content-Type: application/json
   "url": "https://example.com/afbeelding.jpg"
 }
 ```
+
+**Ondersteunde formaten**: JPEG (.jpg, .jpeg) en PNG (.png)
 
 #### Alle trackafbeeldingen verwijderen
 ```http
@@ -229,6 +346,8 @@ Response:
       "artistid": "987e6543-e21b-12d3-a456-426614174000",
       "artistname": "OneRepublic",
       "start_time": "14:35:00",
+      "end_time": "14:38:30",
+      "duration": 210000,
       "has_track_image": true,
       "has_artist_image": false
     }
@@ -277,19 +396,22 @@ Foutresponses:
 
 ## Afbeeldingverwerking
 
+- **Ondersteunde formaten**: JPEG (.jpg, .jpeg) en PNG (.png) - andere formaten worden geweigerd
 - **Doelafmetingen**: Configureerbaar (standaard 1280×1280)
 - **Kwaliteit**: Configureerbaar (standaard 90)
-- **Slimme encoding**: Vergelijkt automatisch jpegli met standaard JPEG en selecteert het kleinste bestand
-- **Outputformaat**: Altijd JPEG ongeacht input
+- **Slimme verwerking**:
+  - **Perfect sized**: Origineel formaat behouden (PNG blijft PNG, JPEG blijft JPEG)
+  - **Needs resize**: Altijd geconverteerd naar JPEG met jpegli/standaard optimalisatie
 - **Validatie**: Kleinere afbeeldingen worden geweigerd (configureerbaar)
 
 ### Encoding-optimalisatie
 
-De API gebruikt intelligente compressie:
+De API gebruikt intelligente compressie voor afbeeldingen die moeten worden verkleind:
 
-1. **Dubbele encoding**: Elke afbeelding wordt gecodeerd met zowel jpegli als de standaard Go JPEG-encoder
+1. **Dubbele encoding**: Afbeeldingen die geresized worden, worden gecodeerd met zowel jpegli als standaard Go JPEG-encoder
 2. **Automatische selectie**: De encoder die het kleinste bestand produceert wordt automatisch gekozen
-3. **Rapportage**: Toont welke encoder is gebruikt en hoeveel ruimte is bespaard
+3. **Origineel behoud**: Perfect sized afbeeldingen behouden hun originele formaat zonder re-encoding
+4. **Rapportage**: Toont welke encoder is gebruikt en hoeveel ruimte is bespaard
 
 Voorbeeldresponse:
 ```json

@@ -6,10 +6,14 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
 )
 
 type AeronAPI struct {
-	service *ImageService
+	service *AeronService
 	config  *Config
 }
 
@@ -30,10 +34,9 @@ type ImageStatsResponse struct {
 	Total         int `json:"total"`
 	WithImages    int `json:"with_images"`
 	WithoutImages int `json:"without_images"`
-	Orphaned      int `json:"orphaned"`
 }
 
-func NewAeronAPI(service *ImageService, config *Config) *AeronAPI {
+func NewAeronAPI(service *AeronService, config *Config) *AeronAPI {
 	return &AeronAPI{
 		service: service,
 		config:  config,
@@ -41,47 +44,133 @@ func NewAeronAPI(service *ImageService, config *Config) *AeronAPI {
 }
 
 func (s *AeronAPI) Start(port string) error {
-	mux := http.NewServeMux()
+	router := chi.NewRouter()
 
-	wrap := func(method string, handler http.HandlerFunc, requireAuth bool) http.HandlerFunc {
-		return func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
+	// Add Chi built-in middleware
+	router.Use(middleware.RequestID)
+	router.Use(middleware.Logger)
+	router.Use(middleware.Recoverer)
+	router.Use(middleware.RealIP)
+	router.Use(middleware.Compress(5))               // Replaces our gzip middleware
+	router.Use(middleware.Timeout(30 * time.Second)) // Replaces our timeout middleware
 
-			fmt.Printf("[%s] %s\n", r.Method, r.URL.Path)
-			if r.Method != method {
-				s.sendError(w, "Methode niet toegestaan", http.StatusMethodNotAllowed)
-				return
-			}
+	// Add custom middleware
+	router.Use(s.corsMiddleware)
 
-			if requireAuth && s.config.API.Enabled {
-				apiKey := r.Header.Get("X-API-Key")
-				if apiKey == "" {
-					apiKey = r.URL.Query().Get("key")
-				}
+	// API routes
+	router.Route("/api", func(r chi.Router) {
+		// JSON content type for all API routes (except images)
+		r.Use(middleware.SetHeader("Content-Type", "application/json; charset=utf-8"))
 
-				if !s.isValidAPIKey(apiKey) {
-					s.sendError(w, "Niet geautoriseerd: Ongeldige of ontbrekende API-sleutel", http.StatusUnauthorized)
-					return
-				}
-			}
+		// Health check - no auth required
+		r.Get("/health", s.handleHealth)
 
-			handler(w, r)
-		}
-	}
+		// Protected routes - auth required
+		r.Group(func(r chi.Router) {
+			r.Use(s.authMiddleware)
 
-	mux.HandleFunc("/api/health", wrap(http.MethodGet, s.handleHealth, false))
-	mux.HandleFunc("/api/artists", wrap(http.MethodGet, s.handleArtists, true))
-	mux.HandleFunc("/api/artists/upload", wrap(http.MethodPost, s.handleArtistUpload, true))
-	mux.HandleFunc("/api/artists/bulk-delete", wrap(http.MethodDelete, s.handleArtistBulkDelete, true))
+			// Artists subroute
+			r.Route("/artists", func(r chi.Router) {
+				r.Get("/", s.handleArtists)
+				r.Delete("/bulk-delete", s.handleArtistBulkDelete)
 
-	mux.HandleFunc("/api/tracks", wrap(http.MethodGet, s.handleTracks, true))
-	mux.HandleFunc("/api/tracks/upload", wrap(http.MethodPost, s.handleTrackUpload, true))
-	mux.HandleFunc("/api/tracks/bulk-delete", wrap(http.MethodDelete, s.handleTrackBulkDelete, true))
+				r.Route("/{id}", func(r chi.Router) {
+					r.Get("/", s.handleArtistByID)
+					r.Route("/image", func(r chi.Router) {
+						r.Get("/", s.handleGetArtistImage)
+						r.Post("/", s.handlePostArtistImage)
+						r.Delete("/", s.handleDeleteArtistImage)
+					})
+				})
+			})
 
-	mux.HandleFunc("/api/playlist", wrap(http.MethodGet, s.handlePlaylist, true))
+			// Tracks subroute
+			r.Route("/tracks", func(r chi.Router) {
+				r.Get("/", s.handleTracks)
+				r.Post("/upload", s.handleTrackUpload)
+				r.Delete("/bulk-delete", s.handleTrackBulkDelete)
+
+				r.Route("/{id}", func(r chi.Router) {
+					r.Get("/", s.handleTrackByID)
+					r.Route("/image", func(r chi.Router) {
+						r.Get("/", s.handleTrackImage)
+						r.Delete("/", s.handleDeleteTrackImage)
+					})
+				})
+			})
+
+			// Playlist
+			r.Get("/playlist", s.handlePlaylist)
+		})
+	})
 
 	fmt.Printf("API Server gestart op poort %s\n", port)
-	return http.ListenAndServe(":"+port, mux)
+	return http.ListenAndServe(":"+port, router)
+}
+
+// authMiddleware provides API key authentication
+func (s *AeronAPI) authMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !s.config.API.Enabled {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		// Get API key from header or query parameter
+		apiKey := r.Header.Get("X-API-Key")
+		if apiKey == "" {
+			apiKey = r.URL.Query().Get("key")
+		}
+
+		if !s.isValidAPIKey(apiKey) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			_ = json.NewEncoder(w).Encode(APIResponse{
+				Success: false,
+				Error:   "Niet geautoriseerd: Ongeldige of ontbrekende API-sleutel",
+			})
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
+// Helper functions for JSON responses
+func (s *AeronAPI) sendJSON(w http.ResponseWriter, statusCode int, data interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(statusCode)
+	_ = json.NewEncoder(w).Encode(data)
+}
+
+func (s *AeronAPI) sendSuccess(w http.ResponseWriter, data interface{}) {
+	s.sendJSON(w, http.StatusOK, APIResponse{
+		Success: true,
+		Data:    data,
+	})
+}
+
+func (s *AeronAPI) sendError(w http.ResponseWriter, message string, code int) {
+	s.sendJSON(w, code, APIResponse{
+		Success: false,
+		Error:   message,
+	})
+}
+
+// corsMiddleware adds CORS headers for API access
+func (s *AeronAPI) corsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Origin, Content-Type, Accept, X-API-Key, X-Confirm-Bulk-Delete")
+
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (s *AeronAPI) handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -104,7 +193,6 @@ func (s *AeronAPI) stats(w http.ResponseWriter, r *http.Request, scope string) {
 		Total:         stats.Total,
 		WithImages:    stats.WithImages,
 		WithoutImages: stats.WithoutImages,
-		Orphaned:      stats.Orphaned,
 	}
 
 	s.sendSuccess(w, response)
@@ -112,6 +200,23 @@ func (s *AeronAPI) stats(w http.ResponseWriter, r *http.Request, scope string) {
 
 func (s *AeronAPI) handleArtists(w http.ResponseWriter, r *http.Request) {
 	s.stats(w, r, ScopeArtist)
+}
+
+func (s *AeronAPI) handleArtistByID(w http.ResponseWriter, r *http.Request) {
+	artistID := chi.URLParam(r, "id")
+	if artistID == "" {
+		s.sendError(w, "Artiest ID verplicht", http.StatusBadRequest)
+		return
+	}
+
+	artist, err := s.service.GetArtistByID(artistID)
+	if err != nil {
+		statusCode := s.errorCode(err)
+		s.sendError(w, err.Error(), statusCode)
+		return
+	}
+
+	s.sendSuccess(w, artist)
 }
 
 // upload handles image upload requests for any scope
@@ -193,12 +298,25 @@ func (s *AeronAPI) uploadResponse(result *ImageUploadResult, scope string) map[s
 	return response
 }
 
-func (s *AeronAPI) handleArtistUpload(w http.ResponseWriter, r *http.Request) {
-	s.upload(w, r, ScopeArtist)
-}
-
 func (s *AeronAPI) handleTracks(w http.ResponseWriter, r *http.Request) {
 	s.stats(w, r, ScopeTrack)
+}
+
+func (s *AeronAPI) handleTrackByID(w http.ResponseWriter, r *http.Request) {
+	trackID := chi.URLParam(r, "id")
+	if trackID == "" {
+		s.sendError(w, "Track ID verplicht", http.StatusBadRequest)
+		return
+	}
+
+	track, err := s.service.GetTrackByID(trackID)
+	if err != nil {
+		statusCode := s.errorCode(err)
+		s.sendError(w, err.Error(), statusCode)
+		return
+	}
+
+	s.sendSuccess(w, track)
 }
 
 func (s *AeronAPI) handleTrackUpload(w http.ResponseWriter, r *http.Request) {
@@ -240,67 +358,179 @@ func (s *AeronAPI) handleTrackBulkDelete(w http.ResponseWriter, r *http.Request)
 	s.bulkDelete(w, r, ScopeTrack)
 }
 
-func (s *AeronAPI) sendSuccess(w http.ResponseWriter, data interface{}) {
-	response := APIResponse{
-		Success: true,
-		Data:    data,
+func (s *AeronAPI) handleGetArtistImage(w http.ResponseWriter, r *http.Request) {
+	artistID := chi.URLParam(r, "id")
+	if artistID == "" {
+		s.sendError(w, "Artiest ID verplicht", http.StatusBadRequest)
+		return
 	}
-	_ = json.NewEncoder(w).Encode(response)
+
+	imageData, err := s.service.GetArtistImage(artistID)
+	if err != nil {
+		statusCode := s.errorCode(err)
+		s.sendError(w, err.Error(), statusCode)
+		return
+	}
+
+	// Override content type for image response
+	w.Header().Del("Content-Type") // Remove JSON header set by middleware
+	w.Header().Set("Content-Type", detectImageContentType(imageData))
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(imageData)))
+
+	// Write image data directly
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(imageData)
 }
 
-func (s *AeronAPI) sendError(w http.ResponseWriter, message string, code int) {
-	w.WriteHeader(code)
-	response := APIResponse{
-		Success: false,
-		Error:   message,
+func (s *AeronAPI) handlePostArtistImage(w http.ResponseWriter, r *http.Request) {
+	artistID := chi.URLParam(r, "id")
+	if artistID == "" {
+		s.sendError(w, "Artiest ID verplicht", http.StatusBadRequest)
+		return
 	}
-	_ = json.NewEncoder(w).Encode(response)
+
+	var req ImageUploadRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.sendError(w, "Ongeldige aanvraag body", http.StatusBadRequest)
+		return
+	}
+
+	// For image endpoint, we only use ID - ignore any name field
+	params := &ImageUploadParams{
+		Scope: ScopeArtist,
+		ID:    artistID,
+		URL:   req.URL,
+	}
+
+	if req.Image != "" {
+		imageData, err := decodeBase64(req.Image)
+		if err != nil {
+			s.sendError(w, "Ongeldige base64 afbeelding", http.StatusBadRequest)
+			return
+		}
+		params.ImageData = imageData
+	}
+
+	result, err := s.service.UploadImage(params)
+	if err != nil {
+		statusCode := s.errorCode(err)
+		s.sendError(w, err.Error(), statusCode)
+		return
+	}
+
+	response := s.uploadResponse(result, ScopeArtist)
+	s.sendSuccess(w, response)
+}
+
+func (s *AeronAPI) handleTrackImage(w http.ResponseWriter, r *http.Request) {
+	trackID := chi.URLParam(r, "id")
+	if trackID == "" {
+		s.sendError(w, "Track ID verplicht", http.StatusBadRequest)
+		return
+	}
+
+	imageData, err := s.service.GetTrackImage(trackID)
+	if err != nil {
+		statusCode := s.errorCode(err)
+		s.sendError(w, err.Error(), statusCode)
+		return
+	}
+
+	// Override content type for image response
+	w.Header().Del("Content-Type") // Remove JSON header set by middleware
+	w.Header().Set("Content-Type", detectImageContentType(imageData))
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(imageData)))
+
+	// Write image data directly
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(imageData)
+}
+
+func (s *AeronAPI) handleDeleteArtistImage(w http.ResponseWriter, r *http.Request) {
+	artistID := chi.URLParam(r, "id")
+	if artistID == "" {
+		s.sendError(w, "Artiest ID verplicht", http.StatusBadRequest)
+		return
+	}
+
+	err := s.service.DeleteArtistImage(artistID)
+	if err != nil {
+		statusCode := s.errorCode(err)
+		s.sendError(w, err.Error(), statusCode)
+		return
+	}
+
+	s.sendSuccess(w, map[string]string{
+		"message":   "Artiest afbeelding succesvol verwijderd",
+		"artist_id": artistID,
+	})
+}
+
+func (s *AeronAPI) handleDeleteTrackImage(w http.ResponseWriter, r *http.Request) {
+	trackID := chi.URLParam(r, "id")
+	if trackID == "" {
+		s.sendError(w, "Track ID verplicht", http.StatusBadRequest)
+		return
+	}
+
+	err := s.service.DeleteTrackImage(trackID)
+	if err != nil {
+		statusCode := s.errorCode(err)
+		s.sendError(w, err.Error(), statusCode)
+		return
+	}
+
+	s.sendSuccess(w, map[string]string{
+		"message":  "Track afbeelding succesvol verwijderd",
+		"track_id": trackID,
+	})
 }
 
 func (s *AeronAPI) handlePlaylist(w http.ResponseWriter, r *http.Request) {
-	// Parse query parameters
+	// Parse query parameters manually (lighter than validation)
 	opts := defaultPlaylistOptions()
+	query := r.URL.Query()
 
 	// Date parameter
-	if date := r.URL.Query().Get("date"); date != "" {
+	if date := query.Get("date"); date != "" {
 		opts.Date = date
 	}
 
 	// Time range
-	if from := r.URL.Query().Get("from"); from != "" {
+	if from := query.Get("from"); from != "" {
 		opts.StartTime = from
 	}
-	if to := r.URL.Query().Get("to"); to != "" {
+	if to := query.Get("to"); to != "" {
 		opts.EndTime = to
 	}
 
 	// Limit and offset
-	if limit := r.URL.Query().Get("limit"); limit != "" {
+	if limit := query.Get("limit"); limit != "" {
 		if l, err := strconv.Atoi(limit); err == nil && l > 0 {
 			opts.Limit = l
 		}
 	}
-	if offset := r.URL.Query().Get("offset"); offset != "" {
+	if offset := query.Get("offset"); offset != "" {
 		if o, err := strconv.Atoi(offset); err == nil && o >= 0 {
 			opts.Offset = o
 		}
 	}
 
 	// Track image filter
-	if trackImage := r.URL.Query().Get("track_image"); trackImage != "" {
+	if trackImage := query.Get("track_image"); trackImage != "" {
 		opts.TrackImage = parseBoolParam(trackImage)
 	}
 
 	// Artist image filter
-	if artistImage := r.URL.Query().Get("artist_image"); artistImage != "" {
+	if artistImage := query.Get("artist_image"); artistImage != "" {
 		opts.ArtistImage = parseBoolParam(artistImage)
 	}
 
 	// Sort options
-	if sort := r.URL.Query().Get("sort"); sort != "" {
+	if sort := query.Get("sort"); sort != "" {
 		opts.SortBy = sort
 	}
-	if r.URL.Query().Get("desc") == "true" {
+	if query.Get("desc") == "true" {
 		opts.SortDesc = true
 	}
 
@@ -324,6 +554,11 @@ func (s *AeronAPI) isValidAPIKey(key string) bool {
 		}
 	}
 	return false
+}
+
+// detectImageContentType detects the content type from image data using Go's built-in detection
+func detectImageContentType(data []byte) string {
+	return http.DetectContentType(data)
 }
 
 // parseBoolParam parses a boolean query parameter

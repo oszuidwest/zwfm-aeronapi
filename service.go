@@ -1,20 +1,21 @@
 package main
 
 import (
-	"database/sql"
 	"encoding/base64"
 	"fmt"
 	"io"
 	"strings"
+
+	"github.com/jmoiron/sqlx"
 )
 
-type ImageService struct {
-	db     *sql.DB
+type AeronService struct {
+	db     *sqlx.DB
 	config *Config
 }
 
-func NewImageService(db *sql.DB, config *Config) *ImageService {
-	return &ImageService{
+func NewAeronService(db *sqlx.DB, config *Config) *AeronService {
+	return &AeronService{
 		db:     db,
 		config: config,
 	}
@@ -52,7 +53,7 @@ func ValidateScope(scope string) error {
 	return nil
 }
 
-func (s *ImageService) ValidateUploadParams(params *ImageUploadParams) error {
+func (s *AeronService) ValidateUploadParams(params *ImageUploadParams) error {
 	if err := ValidateScope(params.Scope); err != nil {
 		return err
 	}
@@ -74,7 +75,7 @@ func (s *ImageService) ValidateUploadParams(params *ImageUploadParams) error {
 	return nil
 }
 
-func (s *ImageService) UploadImage(params *ImageUploadParams) (*ImageUploadResult, error) {
+func (s *AeronService) UploadImage(params *ImageUploadParams) (*ImageUploadResult, error) {
 	if err := s.ValidateUploadParams(params); err != nil {
 		return nil, err
 	}
@@ -143,7 +144,6 @@ type ImageStats struct {
 	Total         int
 	WithImages    int
 	WithoutImages int
-	Orphaned      int
 }
 
 type DeleteResult struct {
@@ -151,7 +151,7 @@ type DeleteResult struct {
 	Deleted int64
 }
 
-func (s *ImageService) DeleteAllImages(scope string) (*DeleteResult, error) {
+func (s *AeronService) DeleteAllImages(scope string) (*DeleteResult, error) {
 	if err := ValidateScope(scope); err != nil {
 		return nil, err
 	}
@@ -201,7 +201,7 @@ func decodeBase64(data string) ([]byte, error) {
 	return io.ReadAll(base64.NewDecoder(base64.StdEncoding, strings.NewReader(data)))
 }
 
-func (s *ImageService) GetStatistics(scope string) (*ImageStats, error) {
+func (s *AeronService) GetStatistics(scope string) (*ImageStats, error) {
 	if err := ValidateScope(scope); err != nil {
 		return nil, err
 	}
@@ -226,25 +226,37 @@ func (s *ImageService) GetStatistics(scope string) (*ImageStats, error) {
 
 	total := withImages + withoutImages
 
-	// Get orphaned count
-	var orphaned int
-	if scope == ScopeArtist {
-		orphaned, err = countOrphanedArtists(s.db, s.config.Database.Schema)
-	} else {
-		orphaned, err = countOrphanedTracks(s.db, s.config.Database.Schema)
-	}
-	if err != nil {
-		return nil, err
-	}
-
 	return &ImageStats{
 		Total:         total,
 		WithImages:    withImages,
 		WithoutImages: withoutImages,
-		Orphaned:      orphaned,
 	}, nil
 }
 
-func (s *ImageService) GetPlaylist(opts PlaylistOptions) ([]PlaylistItem, error) {
+func (s *AeronService) GetPlaylist(opts PlaylistOptions) ([]PlaylistItem, error) {
 	return getPlaylist(s.db, s.config.Database.Schema, opts)
+}
+
+func (s *AeronService) GetArtistByID(artistID string) (*ArtistDetails, error) {
+	return getArtistByID(s.db, s.config.Database.Schema, artistID)
+}
+
+func (s *AeronService) GetTrackByID(trackID string) (*TrackDetails, error) {
+	return getTrackByID(s.db, s.config.Database.Schema, trackID)
+}
+
+func (s *AeronService) GetArtistImage(artistID string) ([]byte, error) {
+	return getArtistImage(s.db, s.config.Database.Schema, artistID)
+}
+
+func (s *AeronService) GetTrackImage(trackID string) ([]byte, error) {
+	return getTrackImage(s.db, s.config.Database.Schema, trackID)
+}
+
+func (s *AeronService) DeleteArtistImage(artistID string) error {
+	return deleteArtistImage(s.db, s.config.Database.Schema, artistID)
+}
+
+func (s *AeronService) DeleteTrackImage(trackID string) error {
+	return deleteTrackImage(s.db, s.config.Database.Schema, trackID)
 }

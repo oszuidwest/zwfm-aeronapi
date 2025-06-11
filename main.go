@@ -1,11 +1,11 @@
 package main
 
 import (
-	"database/sql"
 	"flag"
 	"fmt"
 	"log"
 
+	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
 )
 
@@ -37,7 +37,7 @@ func main() {
 	}
 
 	// Connect to database
-	db, err := sql.Open("postgres", config.DatabaseURL())
+	db, err := sqlx.Open("postgres", config.DatabaseURL())
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -48,7 +48,7 @@ func main() {
 	}
 
 	// Create service and start API server
-	service := NewImageService(db, config)
+	service := NewAeronService(db, config)
 	apiServer := NewAeronAPI(service, config)
 
 	fmt.Println("Aeron Image Manager")

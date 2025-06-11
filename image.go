@@ -11,6 +11,7 @@ import (
 	"slices"
 
 	"github.com/gen2brain/jpegli"
+	"golang.org/x/image/draw"
 )
 
 const kilobyte = 1024
@@ -162,6 +163,7 @@ func (opt *ImageOptimizer) processImage(img image.Image, originalData []byte, ou
 func (opt *ImageOptimizer) resizeImage(img image.Image, maxWidth, maxHeight int) image.Image {
 	width, height := getImageDimensions(img)
 
+	// Calculate scale factor to fit within bounds while maintaining aspect ratio
 	scaleX := float64(maxWidth) / float64(width)
 	scaleY := float64(maxHeight) / float64(height)
 	scale := scaleX
@@ -169,6 +171,7 @@ func (opt *ImageOptimizer) resizeImage(img image.Image, maxWidth, maxHeight int)
 		scale = scaleY
 	}
 
+	// If image is already smaller, don't upscale
 	if scale >= 1 {
 		return img
 	}
@@ -176,15 +179,11 @@ func (opt *ImageOptimizer) resizeImage(img image.Image, maxWidth, maxHeight int)
 	newWidth := int(float64(width) * scale)
 	newHeight := int(float64(height) * scale)
 
+	// Create destination image
 	dst := image.NewRGBA(image.Rect(0, 0, newWidth, newHeight))
 
-	for y := 0; y < newHeight; y++ {
-		for x := 0; x < newWidth; x++ {
-			srcX := int(float64(x) / scale)
-			srcY := int(float64(y) / scale)
-			dst.Set(x, y, img.At(srcX, srcY))
-		}
-	}
+	// Use CatmullRom for high-quality resizing (slower but best quality)
+	draw.CatmullRom.Scale(dst, dst.Bounds(), img, img.Bounds(), draw.Over, nil)
 
 	return dst
 }
