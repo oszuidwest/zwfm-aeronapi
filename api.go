@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 )
 
 type AeronAPI struct {
@@ -77,9 +78,9 @@ func (s *AeronAPI) Start(port string) error {
 	mux.HandleFunc("/api/tracks/upload", wrap(http.MethodPost, s.handleTrackUpload, true))
 	mux.HandleFunc("/api/tracks/bulk-delete", wrap(http.MethodDelete, s.handleTrackBulkDelete, true))
 
-	mux.HandleFunc("/api/playlist/today", wrap(http.MethodGet, s.handleTodayPlaylist, true))
+	mux.HandleFunc("/api/playlist", wrap(http.MethodGet, s.handlePlaylist, true))
 
-	fmt.Printf("%sAPI Server gestart op poort %s%s\n", Green, port, Reset)
+	fmt.Printf("API Server gestart op poort %s\n", port)
 	return http.ListenAndServe(":"+port, mux)
 }
 
@@ -152,7 +153,8 @@ func (s *AeronAPI) upload(w http.ResponseWriter, r *http.Request, scope string) 
 func (s *AeronAPI) errorCode(err error) int {
 	errorMsg := err.Error()
 	if errorMsg == "moet naam of id specificeren" ||
-		errorMsg == "kan niet zowel naam als id specificeren" {
+		errorMsg == "kan niet zowel naam als id specificeren" ||
+		strings.Contains(errorMsg, ErrSuffixNotExists) {
 		return http.StatusBadRequest
 	}
 	return http.StatusInternalServerError
@@ -189,13 +191,13 @@ func (s *AeronAPI) handleTrackUpload(w http.ResponseWriter, r *http.Request) {
 	s.upload(w, r, ScopeTrack)
 }
 
-// nuke handles image deletion requests for any scope
+// bulkDelete handles image deletion requests for any scope
 func (s *AeronAPI) bulkDelete(w http.ResponseWriter, r *http.Request, scope string) {
-	const confirmationHeader = "X-Confirm-Nuke"
-	const confirmationValue = "VERWIJDER ALLES"
+	const confirmHeader = "X-Confirm-Bulk-Delete"
+	const confirmValue = "VERWIJDER ALLES"
 
-	if r.Header.Get(confirmationHeader) != confirmationValue {
-		s.sendError(w, "Missing confirmation header: "+confirmationHeader, http.StatusBadRequest)
+	if r.Header.Get(confirmHeader) != confirmValue {
+		s.sendError(w, "Missing confirmation header: "+confirmHeader, http.StatusBadRequest)
 		return
 	}
 
@@ -205,9 +207,9 @@ func (s *AeronAPI) bulkDelete(w http.ResponseWriter, r *http.Request, scope stri
 		return
 	}
 
-	itemType := "artiest"
+	itemType := ItemTypeArtist
 	if scope == ScopeTrack {
-		itemType = "track"
+		itemType = ItemTypeTrack
 	}
 
 	s.sendSuccess(w, map[string]interface{}{
@@ -241,7 +243,7 @@ func (s *AeronAPI) sendError(w http.ResponseWriter, message string, code int) {
 	_ = json.NewEncoder(w).Encode(response)
 }
 
-func (s *AeronAPI) handleTodayPlaylist(w http.ResponseWriter, r *http.Request) {
+func (s *AeronAPI) handlePlaylist(w http.ResponseWriter, r *http.Request) {
 	// Parse query parameters
 	opts := defaultPlaylistOptions()
 
@@ -270,16 +272,14 @@ func (s *AeronAPI) handleTodayPlaylist(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Image filter
-	if images := r.URL.Query().Get("images"); images != "" {
-		switch images {
-		case "yes", "true":
-			hasImages := true
-			opts.WithImages = &hasImages
-		case "no", "false":
-			hasImages := false
-			opts.WithImages = &hasImages
-		}
+	// Track image filter
+	if trackImage := r.URL.Query().Get("track_image"); trackImage != "" {
+		opts.TrackImage = parseBoolParam(trackImage)
+	}
+
+	// Artist image filter
+	if artistImage := r.URL.Query().Get("artist_image"); artistImage != "" {
+		opts.ArtistImage = parseBoolParam(artistImage)
 	}
 
 	// Sort options
@@ -310,4 +310,17 @@ func (s *AeronAPI) isValidAPIKey(key string) bool {
 		}
 	}
 	return false
+}
+
+// parseBoolParam parses a boolean query parameter
+func parseBoolParam(value string) *bool {
+	switch value {
+	case "yes", "true", "1":
+		val := true
+		return &val
+	case "no", "false", "0":
+		val := false
+		return &val
+	}
+	return nil
 }

@@ -251,7 +251,7 @@ jobs:
           # First update playlist dates to today
           docker exec aeron-test-db psql -U aeron -d aeron_db -c "UPDATE aeron.playlistitem SET startdatetime = CURRENT_DATE + (startdatetime::time)" >/dev/null
 
-          RESPONSE=$(curl -s -H 'X-API-Key: test-api-key-12345' http://localhost:8888/api/playlist/today)
+          RESPONSE=$(curl -s -H 'X-API-Key: test-api-key-12345' http://localhost:8888/api/playlist)
           SUCCESS=$(echo "$RESPONSE" | jq '.success')
           ITEM_COUNT=$(echo "$RESPONSE" | jq '.data | length')
 
@@ -261,7 +261,7 @@ jobs:
             echo "✓ Playlist endpoint returned items"
             # Verify first item has required fields
             FIRST_ITEM=$(echo "$RESPONSE" | jq '.data[0]')
-            if echo "$FIRST_ITEM" | jq -e 'has("songid") and has("songname") and has("artistid") and has("artistname") and has("start_time") and has("has_image")' > /dev/null; then
+            if echo "$FIRST_ITEM" | jq -e 'has("songid") and has("songname") and has("artistid") and has("artistname") and has("start_time") and has("has_track_image") and has("has_artist_image")' > /dev/null; then
               echo "✓ Playlist items have correct structure"
             else
               echo "✗ Playlist items missing required fields"

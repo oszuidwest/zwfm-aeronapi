@@ -8,12 +8,18 @@ import (
 	_ "github.com/lib/pq"
 )
 
-// Helper function for closing rows with error handling
-func closeRows(rows *sql.Rows) {
-	if rows != nil {
-		_ = rows.Close()
-	}
-}
+// Database constants - only used in this file
+const (
+	// Column names
+	columnPicture  = "picture"
+	columnArtistID = "artistid"
+	columnTitleID  = "titleid"
+	columnArtist   = "artist"
+
+	// Table names
+	tableArtist = "artist"
+	tableTrack  = "track"
+)
 
 type Artist struct {
 	ID       string
@@ -29,12 +35,13 @@ type Track struct {
 }
 
 type PlaylistItem struct {
-	SongID     string `json:"songid"`
-	SongName   string `json:"songname"`
-	ArtistID   string `json:"artistid"`
-	ArtistName string `json:"artistname"`
-	StartTime  string `json:"start_time"`
-	HasImage   bool   `json:"has_image"`
+	SongID         string `json:"songid"`
+	SongName       string `json:"songname"`
+	ArtistID       string `json:"artistid"`
+	ArtistName     string `json:"artistname"`
+	StartTime      string `json:"start_time"`
+	HasTrackImage  bool   `json:"has_track_image"`
+	HasArtistImage bool   `json:"has_artist_image"`
 }
 
 // PlaylistOptions configures playlist queries
@@ -44,11 +51,13 @@ type PlaylistOptions struct {
 	EndTime     string // Filter until time (HH:MM)
 	ItemTypes   []int  // Item types to include (default: [1])
 	ExportTypes []int  // Export types to exclude (default: [0])
-	WithImages  *bool  // Filter by image presence (nil = all)
 	Limit       int    // Max items to return (0 = all)
 	Offset      int    // Pagination offset
 	SortBy      string // Sort field (default: "starttime")
 	SortDesc    bool   // Sort descending
+	// Image filters
+	TrackImage  *bool // Filter by track image: true (has), false (no), nil (all)
+	ArtistImage *bool // Filter by artist image: true (has), false (no), nil (all)
 }
 
 // DefaultPlaylistOptions returns default playlist options
@@ -63,9 +72,9 @@ func defaultPlaylistOptions() PlaylistOptions {
 func countItems(db *sql.DB, schema, table string, hasImage bool) (int, error) {
 	var condition string
 	if hasImage {
-		condition = "WHERE picture IS NOT NULL"
+		condition = fmt.Sprintf("WHERE %s IS NOT NULL", columnPicture)
 	} else {
-		condition = "WHERE picture IS NULL"
+		condition = fmt.Sprintf("WHERE %s IS NULL", columnPicture)
 	}
 
 	query := fmt.Sprintf("SELECT COUNT(*) FROM %s.%s %s", schema, table, condition)
@@ -79,91 +88,99 @@ func countItems(db *sql.DB, schema, table string, hasImage bool) (int, error) {
 	return count, nil
 }
 
-func lookupArtist(db *sql.DB, schema, artistName, artistID string) (*Artist, error) {
+// genericLookup handles common database lookup logic
+// genericLookup handles common database lookup logic
+func genericLookup(db *sql.DB, schema, table, idColumn, nameColumn, idValue, nameValue string) (string, string, bool, error) {
 	var query string
 	var searchValue string
 	var scanID, scanName string
 	var hasImage bool
 
-	if artistID != "" {
-		query = fmt.Sprintf(`SELECT artistid, artist, CASE WHEN picture IS NOT NULL THEN true ELSE false END as has_image 
-		                     FROM %s.artist WHERE artistid = $1`, schema)
-		searchValue = artistID
+	if idValue != "" {
+		query = fmt.Sprintf(`SELECT %s, %s, CASE WHEN %s IS NOT NULL THEN true ELSE false END as has_image 
+		                     FROM %s.%s WHERE %s = $1`, idColumn, nameColumn, columnPicture, schema, table, idColumn)
+		searchValue = idValue
 	} else {
-		query = fmt.Sprintf(`SELECT artistid, artist, CASE WHEN picture IS NOT NULL THEN true ELSE false END as has_image 
-		                     FROM %s.artist WHERE artist = $1`, schema)
-		searchValue = artistName
+		query = fmt.Sprintf(`SELECT %s, %s, CASE WHEN %s IS NOT NULL THEN true ELSE false END as has_image 
+		                     FROM %s.%s WHERE %s = $1`, idColumn, nameColumn, columnPicture, schema, table, nameColumn)
+		searchValue = nameValue
 	}
 
 	err := db.QueryRow(query, searchValue).Scan(&scanID, &scanName, &hasImage)
+	if err != nil {
+		return "", "", false, err
+	}
+
+	return scanID, scanName, hasImage, nil
+}
+
+func lookupArtist(db *sql.DB, schema, artistName, artistID string) (*Artist, error) {
+	id, name, hasImage, err := genericLookup(db, schema, tableArtist, columnArtistID, columnArtist, artistID, artistName)
 
 	if err == sql.ErrNoRows {
 		if artistID != "" {
-			return nil, fmt.Errorf("artiest ID '%s' bestaat niet", artistID)
+			return nil, fmt.Errorf("artiest ID '%s' %s", artistID, ErrSuffixNotExists)
 		}
-		return nil, fmt.Errorf("artiest '%s' bestaat niet", artistName)
+		return nil, fmt.Errorf("artiest '%s' %s", artistName, ErrSuffixNotExists)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("database fout: %w", err)
 	}
 
 	return &Artist{
-		ID:       scanID,
-		Name:     scanName,
+		ID:       id,
+		Name:     name,
 		HasImage: hasImage,
 	}, nil
 }
 
+// genericUpdateImage handles common image update logic
+func genericUpdateImage(db *sql.DB, schema, table, idColumn, idValue string, imageData []byte) error {
+	query := fmt.Sprintf(`UPDATE %s.%s SET %s = $1 WHERE %s = $2`, schema, table, columnPicture, idColumn)
+	_, err := db.Exec(query, imageData, idValue)
+	return err
+}
+
 func updateArtistImage(db *sql.DB, schema, artistID string, imageData []byte) error {
-	query := fmt.Sprintf(`UPDATE %s.artist SET picture = $1 WHERE artistid = $2`, schema)
-	_, err := db.Exec(query, imageData, artistID)
-	if err != nil {
-		return fmt.Errorf("update artiest mislukt: %w", err)
+	if err := genericUpdateImage(db, schema, tableArtist, columnArtistID, artistID, imageData); err != nil {
+		return fmt.Errorf("update artiest %s: %w", ErrSuffixFailed, err)
 	}
 	return nil
 }
 
 func lookupTrack(db *sql.DB, schema, trackTitle, trackID string) (*Track, error) {
-	var query string
-	var searchValue string
-	var scanID, scanTitle, scanArtist string
-	var hasImage bool
-
-	if trackID != "" {
-		query = fmt.Sprintf(`SELECT titleid, tracktitle, artist, CASE WHEN picture IS NOT NULL THEN true ELSE false END as has_image 
-		                     FROM %s.track WHERE titleid = $1`, schema)
-		searchValue = trackID
-	} else {
-		query = fmt.Sprintf(`SELECT titleid, tracktitle, artist, CASE WHEN picture IS NOT NULL THEN true ELSE false END as has_image 
-		                     FROM %s.track WHERE tracktitle = $1`, schema)
-		searchValue = trackTitle
-	}
-
-	err := db.QueryRow(query, searchValue).Scan(&scanID, &scanTitle, &scanArtist, &hasImage)
+	// First do the main lookup
+	id, title, hasImage, err := genericLookup(db, schema, tableTrack, columnTitleID, "tracktitle", trackID, trackTitle)
 
 	if err == sql.ErrNoRows {
 		if trackID != "" {
-			return nil, fmt.Errorf("track ID '%s' bestaat niet", trackID)
+			return nil, fmt.Errorf("track ID '%s' %s", trackID, ErrSuffixNotExists)
 		}
-		return nil, fmt.Errorf("track '%s' bestaat niet", trackTitle)
+		return nil, fmt.Errorf("track '%s' %s", trackTitle, ErrSuffixNotExists)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("database fout: %w", err)
 	}
 
+	// Need to get artist separately for tracks
+	var artist string
+	query := fmt.Sprintf("SELECT %s FROM %s.%s WHERE %s = $1", columnArtist, schema, tableTrack, columnTitleID)
+	err = db.QueryRow(query, id).Scan(&artist)
+	if err != nil {
+		return nil, fmt.Errorf("artiest ophalen %s: %w", ErrSuffixFailed, err)
+	}
+
 	return &Track{
-		ID:       scanID,
-		Title:    scanTitle,
-		Artist:   scanArtist,
+		ID:       id,
+		Title:    title,
+		Artist:   artist,
 		HasImage: hasImage,
 	}, nil
 }
 
 func updateTrackImage(db *sql.DB, schema, trackID string, imageData []byte) error {
-	query := fmt.Sprintf(`UPDATE %s.track SET picture = $1 WHERE titleid = $2`, schema)
-	_, err := db.Exec(query, imageData, trackID)
-	if err != nil {
-		return fmt.Errorf("update track mislukt: %w", err)
+	if err := genericUpdateImage(db, schema, tableTrack, columnTitleID, trackID, imageData); err != nil {
+		return fmt.Errorf("update track %s: %w", ErrSuffixFailed, err)
 	}
 	return nil
 }
@@ -237,12 +254,21 @@ func buildPlaylistQuery(schema string, opts PlaylistOptions) string {
 		conditions = append(conditions, fmt.Sprintf("COALESCE(t.exporttype, 1) NOT IN (%s)", strings.Join(types, ",")))
 	}
 
-	// Image filter
-	if opts.WithImages != nil {
-		if *opts.WithImages {
+	// Track image filter
+	if opts.TrackImage != nil {
+		if *opts.TrackImage {
 			conditions = append(conditions, "t.picture IS NOT NULL")
 		} else {
 			conditions = append(conditions, "t.picture IS NULL")
+		}
+	}
+
+	// Artist image filter
+	if opts.ArtistImage != nil {
+		if *opts.ArtistImage {
+			conditions = append(conditions, "a.picture IS NOT NULL")
+		} else {
+			conditions = append(conditions, "a.picture IS NULL")
 		}
 	}
 
@@ -268,12 +294,14 @@ func buildPlaylistQuery(schema string, opts PlaylistOptions) string {
 			COALESCE(t.artistid, '00000000-0000-0000-0000-000000000000') as artistid,
 			COALESCE(t.artist, '') as artistname,
 			TO_CHAR(pi.startdatetime, 'HH24:MI:SS') as start_time,
-			CASE WHEN t.picture IS NOT NULL THEN true ELSE false END as has_image
+			CASE WHEN t.picture IS NOT NULL THEN true ELSE false END as has_track_image,
+			CASE WHEN a.picture IS NOT NULL THEN true ELSE false END as has_artist_image
 		FROM %s.playlistitem pi
 		LEFT JOIN %s.track t ON pi.titleid = t.titleid
+		LEFT JOIN %s.artist a ON t.artistid = a.artistid
 		WHERE %s
 		ORDER BY %s
-	`, schema, schema, whereClause, orderBy)
+	`, schema, schema, schema, whereClause, orderBy)
 
 	// Add limit/offset
 	if opts.Limit > 0 {
@@ -290,7 +318,7 @@ func buildPlaylistQuery(schema string, opts PlaylistOptions) string {
 func scanPlaylistRow(rows *sql.Rows) (PlaylistItem, error) {
 	var item PlaylistItem
 	err := rows.Scan(&item.SongID, &item.SongName, &item.ArtistID,
-		&item.ArtistName, &item.StartTime, &item.HasImage)
+		&item.ArtistName, &item.StartTime, &item.HasTrackImage, &item.HasArtistImage)
 	return item, err
 }
 
@@ -300,7 +328,7 @@ func executePlaylistQuery(db *sql.DB, query string) ([]PlaylistItem, error) {
 	if err != nil {
 		return nil, fmt.Errorf("playlist ophalen mislukt: %w", err)
 	}
-	defer closeRows(rows)
+	defer func() { _ = rows.Close() }()
 
 	var items []PlaylistItem
 	for rows.Next() {
@@ -312,11 +340,6 @@ func executePlaylistQuery(db *sql.DB, query string) ([]PlaylistItem, error) {
 	}
 
 	return items, rows.Err()
-}
-
-func getTodayPlaylist(db *sql.DB, schema string) ([]PlaylistItem, error) {
-	opts := defaultPlaylistOptions()
-	return getPlaylist(db, schema, opts)
 }
 
 func getPlaylist(db *sql.DB, schema string, opts PlaylistOptions) ([]PlaylistItem, error) {

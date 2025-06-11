@@ -38,19 +38,12 @@ type ImageUploadResult struct {
 }
 
 var (
-	ErrInvalidScope     = fmt.Errorf("ongeldig type: gebruik 'artist' of 'track'")
-	ErrNoNameOrID       = fmt.Errorf("naam of ID verplicht")
-	ErrBothNameAndID    = fmt.Errorf("gebruik naam of ID, niet beide")
+	ErrInvalidScope     = fmt.Errorf("ongeldig type: gebruik '%s' of '%s'", ScopeArtist, ScopeTrack)
+	ErrNoNameOrID       = fmt.Errorf("moet naam of id specificeren")
+	ErrBothNameAndID    = fmt.Errorf("kan niet zowel naam als id specificeren")
 	ErrNoImageSource    = fmt.Errorf("afbeelding verplicht")
 	ErrBothImageSources = fmt.Errorf("gebruik URL of upload, niet beide")
 )
-
-func scopeDesc(scope string) string {
-	if scope == ScopeArtist {
-		return "artiest"
-	}
-	return "track"
-}
 
 func ValidateScope(scope string) error {
 	if scope != ScopeArtist && scope != ScopeTrack {
@@ -113,7 +106,7 @@ func (s *ImageService) UploadImage(params *ImageUploadParams) (*ImageUploadResul
 	if params.URL != "" {
 		imageData, err = downloadImage(params.URL)
 		if err != nil {
-			return nil, fmt.Errorf("download mislukt: %w", err)
+			return nil, fmt.Errorf("download %s: %w", ErrSuffixFailed, err)
 		}
 	} else {
 		imageData = params.ImageData
@@ -122,17 +115,17 @@ func (s *ImageService) UploadImage(params *ImageUploadParams) (*ImageUploadResul
 	// Process image
 	processingResult, err := processImage(imageData, s.config.Image)
 	if err != nil {
-		return nil, fmt.Errorf("verwerking mislukt: %w", err)
+		return nil, fmt.Errorf("verwerking %s: %w", ErrSuffixFailed, err)
 	}
 
 	// Update the database
 	if params.Scope == ScopeArtist {
 		if err := updateArtistImage(s.db, s.config.Database.Schema, itemID, processingResult.Data); err != nil {
-			return nil, fmt.Errorf("opslaan mislukt: %w", err)
+			return nil, fmt.Errorf("opslaan %s: %w", ErrSuffixFailed, err)
 		}
 	} else {
 		if err := updateTrackImage(s.db, s.config.Database.Schema, itemID, processingResult.Data); err != nil {
-			return nil, fmt.Errorf("opslaan mislukt: %w", err)
+			return nil, fmt.Errorf("opslaan %s: %w", ErrSuffixFailed, err)
 		}
 	}
 
@@ -188,7 +181,11 @@ func (s *ImageService) DeleteAllImages(scope string) (*DeleteResult, error) {
 
 	result, err := s.db.Exec(query)
 	if err != nil {
-		return nil, fmt.Errorf("verwijderen %s mislukt: %w", scopeDesc(scope), err)
+		itemType := ItemTypeTrack
+		if scope == ScopeArtist {
+			itemType = ItemTypeArtist
+		}
+		return nil, fmt.Errorf("verwijderen %s mislukt: %w", itemType, err)
 	}
 
 	deleted, _ := result.RowsAffected()
@@ -246,10 +243,6 @@ func (s *ImageService) GetStatistics(scope string) (*ImageStats, error) {
 		WithoutImages: withoutImages,
 		Orphaned:      orphaned,
 	}, nil
-}
-
-func (s *ImageService) GetTodayPlaylist() ([]PlaylistItem, error) {
-	return getTodayPlaylist(s.db, s.config.Database.Schema)
 }
 
 func (s *ImageService) GetPlaylist(opts PlaylistOptions) ([]PlaylistItem, error) {

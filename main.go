@@ -9,25 +9,11 @@ import (
 	_ "github.com/lib/pq"
 )
 
-// ANSI color codes
-const (
-	Reset = "\033[0m"
-	Bold  = "\033[1m"
-	Green = "\033[32m"
-)
-
 // Build information (set via ldflags)
 var (
 	Version   = "dev"
 	Commit    = "unknown"
 	BuildTime = "unknown"
-)
-
-// Constants
-const (
-	ScopeArtist = "artist"
-	ScopeTrack  = "track"
-	Kilobyte    = 1024
 )
 
 func main() {
@@ -65,7 +51,7 @@ func main() {
 	service := NewImageService(db, config)
 	apiServer := NewAeronAPI(service, config)
 
-	fmt.Printf("%sAeron Image Manager%s\n", Bold, Reset)
+	fmt.Println("Aeron Image Manager")
 	fmt.Printf("Version: %s (%s)\n", Version, Commit)
 	fmt.Printf("Database: %s\n", config.Database.Name)
 	fmt.Printf("API Authentication: %s\n", func() string {
@@ -74,7 +60,7 @@ func main() {
 		}
 		return "Disabled"
 	}())
-	fmt.Printf("\n%sStarting API server on port %s...%s\n", Green, *serverPort, Reset)
+	fmt.Printf("\nStarting API server on port %s...\n", *serverPort)
 
 	log.Fatal(apiServer.Start(*serverPort))
 }

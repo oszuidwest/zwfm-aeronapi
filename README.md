@@ -1,19 +1,19 @@
 # Aeron Image Manager API
 
-Een REST API service voor het beheren van artiest- en trackafbeeldingen in het Aeron radio automatiseringssysteem.
+Een REST API-service voor het beheren van artiest- en trackafbeeldingen in het Aeron radio-automatiseringssysteem.
 
 > [!WARNING]
-> Aeron is een product van Broadcast Partners. Deze tool is onofficieel en niet ontwikkeld door of in samenwerking met Broadcast Partners. Gebruik op eigen risico. Maak altijd een backup van je database voor gebruik.
+> Aeron is een product van Broadcast Partners. Deze tool is onofficieel en niet ontwikkeld door of in samenwerking met Broadcast Partners. Gebruik op eigen risico. Maak altijd een back-up van je database voordat je de tool gebruikt.
 
-## Functies
+## Functionaliteiten
 
 - **Afbeeldingbeheer**: Upload en beheer afbeeldingen voor artiesten en tracks via REST API
-- **Automatische Optimalisatie**: Afbeeldingen worden automatisch verkleind en geoptimaliseerd
-- **Dubbele Encoder**: Vergelijkt jpegli met standaard JPEG en selecteert de kleinste bestandsgrootte
-- **Playlist API**: Haal playlist informatie op met flexibele query opties
+- **Automatische optimalisatie**: Afbeeldingen worden automatisch verkleind en geoptimaliseerd
+- **Dubbele encoder**: Vergelijkt jpegli met standaard JPEG en selecteert de kleinste bestandsgrootte
+- **Playlist API**: Haal playlistinformatie op met flexibele query-opties
 - **Statistieken**: Krijg inzicht in afbeeldingdekking voor artiesten en tracks
-- **Bulk Operaties**: Verwijder alle afbeeldingen voor een specifiek type
-- **Authenticatie**: Optionele API key authenticatie
+- **Bulkoperaties**: Verwijder alle afbeeldingen voor een specifiek type
+- **Authenticatie**: Optionele API key-authenticatie
 
 ## Installatie
 
@@ -27,7 +27,7 @@ docker run -d \
   ghcr.io/oszuidwest/aeron-imgman:latest
 ```
 
-### Vanaf Broncode
+### Vanaf broncode
 
 ```bash
 git clone https://github.com/oszuidwest/aeron-imgman.git
@@ -37,9 +37,9 @@ go build -o aeron-imgman .
 ./aeron-imgman -config=config.yaml -port=8080
 ```
 
-### Voorgecompileerde Binaries
+### Voorgecompileerde binaries
 
-Download gecompileerde uitvoerbare bestanden van de [Releases pagina](https://github.com/oszuidwest/aeron-imgman/releases):
+Download gecompileerde uitvoerbare bestanden van de [Releases-pagina](https://github.com/oszuidwest/aeron-imgman/releases):
 
 - **Linux**: amd64, arm64, armv7
 - **Windows**: amd64, arm64  
@@ -47,7 +47,7 @@ Download gecompileerde uitvoerbare bestanden van de [Releases pagina](https://gi
 
 ## Configuratie
 
-Maak een `config.yaml` bestand:
+Maak een `config.yaml`-bestand:
 
 ```yaml
 database:
@@ -72,35 +72,35 @@ api:
     - "nog-een-api-key"
 ```
 
-## API Server Starten
+## API-server starten
 
 ```bash
-# Standaard poort 8080
+# Standaardpoort 8080
 ./aeron-imgman
 
 # Aangepaste poort
 ./aeron-imgman -port=9090
 
-# Met aangepaste config
+# Met aangepaste configuratie
 ./aeron-imgman -config=/pad/naar/config.yaml -port=8080
 
 # Toon versie
 ./aeron-imgman -version
 ```
 
-## API Endpoints
+## API-endpoints
 
-### Health Check
+### Health check
 
 ```http
 GET /api/health
 ```
 
-Geen authenticatie vereist. Retourneert server status en versie.
+Geen authenticatie vereist. Retourneert serverstatus en versie.
 
 ### Artiesten
 
-#### Artiest Statistieken Ophalen
+#### Artieststatistieken ophalen
 ```http
 GET /api/artists
 X-API-Key: jouw-api-key
@@ -119,22 +119,22 @@ Response:
 }
 ```
 
-#### Artiest Afbeelding Uploaden
+#### Artiestafbeelding uploaden
 ```http
 POST /api/artists/upload
 X-API-Key: jouw-api-key
 Content-Type: application/json
 
 {
-  "name": "Artiest Naam",
+  "name": "Artiestnaam",
   "url": "https://example.com/afbeelding.jpg"
 }
 ```
 
-Of met base64 afbeelding:
+Of met base64-afbeelding:
 ```json
 {
-  "name": "Artiest Naam",
+  "name": "Artiestnaam",
   "image": "data:image/jpeg;base64,..."
 }
 ```
@@ -147,71 +147,75 @@ Of met ID:
 }
 ```
 
-#### Alle Artiest Afbeeldingen Verwijderen
+#### Alle artiestafbeeldingen verwijderen
 ```http
 DELETE /api/artists/bulk-delete
 X-API-Key: jouw-api-key
-X-Confirm-Nuke: VERWIJDER ALLES
+X-Confirm-Bulk-Delete: VERWIJDER ALLES
 ```
 
 ### Tracks
 
-#### Track Statistieken Ophalen
+#### Trackstatistieken ophalen
 ```http
 GET /api/tracks
 X-API-Key: jouw-api-key
 ```
 
-#### Track Afbeelding Uploaden
+#### Trackafbeelding uploaden
 ```http
 POST /api/tracks/upload
 X-API-Key: jouw-api-key
 Content-Type: application/json
 
 {
-  "name": "Track Titel",
+  "name": "Tracktitel",
   "url": "https://example.com/afbeelding.jpg"
 }
 ```
 
-#### Alle Track Afbeeldingen Verwijderen
+#### Alle trackafbeeldingen verwijderen
 ```http
 DELETE /api/tracks/bulk-delete
 X-API-Key: jouw-api-key
-X-Confirm-Nuke: VERWIJDER ALLES
+X-Confirm-Bulk-Delete: VERWIJDER ALLES
 ```
 
 ### Playlist
 
-#### Playlist Ophalen
+#### Playlist ophalen
 ```http
-GET /api/playlist/today
+GET /api/playlist
 X-API-Key: jouw-api-key
 ```
 
-Query parameters:
+Query-parameters:
 - `date`: Specifieke datum (JJJJ-MM-DD), standaard: vandaag
-- `from`: Start tijd filter (UU:MM)
-- `to`: Eind tijd filter (UU:MM)
+- `from`: Starttijdfilter (UU:MM)
+- `to`: Eindtijdfilter (UU:MM)
 - `limit`: Maximum aantal items
-- `offset`: Paginering offset
-- `images`: Filter op aanwezigheid afbeelding (yes/no)
+- `offset`: Pagineringsoffset
+- `track_image`: Filter op trackafbeelding (yes/no)
+- `artist_image`: Filter op artiestafbeelding (yes/no)
 - `sort`: Sorteer op veld (time/artist/track)
 - `desc`: Sorteer aflopend (true/false)
 
 Voorbeelden:
 ```http
-# Vanmiddag playlist
-GET /api/playlist/today?from=14:00&to=18:00
+# Vandaag middagplaylist
+GET /api/playlist?from=14:00&to=18:00
 
 # Specifieke datum met paginering
-GET /api/playlist/today?date=2024-01-15&limit=20&offset=40
+GET /api/playlist?date=2024-01-15&limit=20&offset=40
 
-# Alleen items zonder afbeeldingen, gesorteerd op artiest
-GET /api/playlist/today?images=no&sort=artist
+# Alleen items zonder trackafbeeldingen, gesorteerd op artiest
+GET /api/playlist?track_image=no&sort=artist
 
-# Morgenochtend show
-GET /api/playlist/today?date=2024-01-16&from=06:00&to=10:00
+# Items met artiestafbeelding maar zonder trackafbeelding
+GET /api/playlist?artist_image=yes&track_image=no
+
+# Ochtendshow morgen
+GET /api/playlist?date=2024-01-16&from=06:00&to=10:00
 ```
 
 Response:
@@ -225,7 +229,8 @@ Response:
       "artistid": "987e6543-e21b-12d3-a456-426614174000",
       "artistname": "OneRepublic",
       "start_time": "14:35:00",
-      "has_image": true
+      "has_track_image": true,
+      "has_artist_image": false
     }
   ]
 }
@@ -233,7 +238,7 @@ Response:
 
 ## Authenticatie
 
-Authenticatie kan geconfigureerd worden in `config.yaml`:
+Authenticatie kan worden geconfigureerd in `config.yaml`:
 
 ```yaml
 api:
@@ -248,13 +253,13 @@ Gebruik de API key in verzoeken:
 # Via header (aanbevolen)
 curl -H "X-API-Key: jouw-api-key-hier" http://localhost:8080/api/artists
 
-# Via query parameter
+# Via query-parameter
 curl http://localhost:8080/api/artists?key=jouw-api-key-hier
 ```
 
-## Response Formaat
+## Response-formaat
 
-Succes responses:
+Succesvolle responses:
 ```json
 {
   "success": true,
@@ -262,7 +267,7 @@ Succes responses:
 }
 ```
 
-Fout responses:
+Foutresponses:
 ```json
 {
   "success": false,
@@ -270,23 +275,23 @@ Fout responses:
 }
 ```
 
-## Afbeelding Verwerking
+## Afbeeldingverwerking
 
-- **Doel afmetingen**: Configureerbaar (standaard 1280x1280)
+- **Doelafmetingen**: Configureerbaar (standaard 1280×1280)
 - **Kwaliteit**: Configureerbaar (standaard 90)
-- **Slimme encoding**: Vergelijkt automatisch jpegli met standaard JPEG en selecteert kleinste bestand
-- **Output formaat**: Altijd JPEG ongeacht input
+- **Slimme encoding**: Vergelijkt automatisch jpegli met standaard JPEG en selecteert het kleinste bestand
+- **Outputformaat**: Altijd JPEG ongeacht input
 - **Validatie**: Kleinere afbeeldingen worden geweigerd (configureerbaar)
 
-### Encoding Optimalisatie
+### Encoding-optimalisatie
 
 De API gebruikt intelligente compressie:
 
-1. **Dubbele encoding**: Elke afbeelding wordt gecodeerd met zowel jpegli als standaard Go JPEG encoder
+1. **Dubbele encoding**: Elke afbeelding wordt gecodeerd met zowel jpegli als de standaard Go JPEG-encoder
 2. **Automatische selectie**: De encoder die het kleinste bestand produceert wordt automatisch gekozen
 3. **Rapportage**: Toont welke encoder is gebruikt en hoeveel ruimte is bespaard
 
-Voorbeeld response:
+Voorbeeldresponse:
 ```json
 {
   "success": true,
@@ -300,9 +305,9 @@ Voorbeeld response:
 }
 ```
 
-## Database Schema
+## Databaseschema
 
-Vereist PostgreSQL tabellen zoals gebruikt door Aeron:
+Vereist PostgreSQL-tabellen zoals gebruikt door Aeron:
 
 ```sql
 CREATE TABLE {schema}.artist (
@@ -332,7 +337,7 @@ CREATE TABLE {schema}.playlistitem (
 
 ### Vereisten
 - Go 1.24 of hoger
-- PostgreSQL met Aeron database
+- PostgreSQL met Aeron-database
 - ImageMagick
 - jpegli (optioneel, voor verbeterde compressie)
 
@@ -349,4 +354,4 @@ go test ./...
 
 ## Licentie
 
-MIT Licentie - zie LICENSE bestand voor details.
+MIT-licentie - zie het LICENSE-bestand voor details.

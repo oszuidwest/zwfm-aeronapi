@@ -13,6 +13,8 @@ import (
 	"github.com/gen2brain/jpegli"
 )
 
+const kilobyte = 1024
+
 type ImageProcessingResult struct {
 	Data      []byte
 	Format    string
@@ -191,17 +193,17 @@ func encodeToJPEG(img image.Image, config ImageConfig) ([]byte, string, error) {
 	// Determine the best result
 	if jpegliErr == nil && len(jpegliData) > 0 && len(jpegliData) < len(standardData) {
 		// Jpegli produced smaller file
-		winnerInfo := fmt.Sprintf("jpegli (%d KB) vs standaard (%d KB)", len(jpegliData)/Kilobyte, len(standardData)/Kilobyte)
+		winnerInfo := fmt.Sprintf("jpegli (%d KB) vs standaard (%d KB)", len(jpegliData)/kilobyte, len(standardData)/kilobyte)
 		return jpegliData, winnerInfo, nil
 	}
 
 	// Standard JPEG is better or Jpegli failed
 	if jpegliErr != nil {
-		winnerInfo := fmt.Sprintf("standaard (%d KB) - jpegli faalde", len(standardData)/Kilobyte)
+		winnerInfo := fmt.Sprintf("standaard (%d KB) - jpegli faalde", len(standardData)/kilobyte)
 		return standardData, winnerInfo, nil
 	}
 
-	winnerInfo := fmt.Sprintf("standaard (%d KB) vs jpegli (%d KB)", len(standardData)/Kilobyte, len(jpegliData)/Kilobyte)
+	winnerInfo := fmt.Sprintf("standaard (%d KB) vs jpegli (%d KB)", len(standardData)/kilobyte, len(jpegliData)/kilobyte)
 	return standardData, winnerInfo, nil
 }
 
