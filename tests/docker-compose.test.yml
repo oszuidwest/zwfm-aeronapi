@@ -1,4 +1,3 @@
-version: '3.8'
 services:
   postgres-test:
     image: postgres:16-alpine
@@ -8,7 +7,7 @@ services:
       POSTGRES_PASSWORD: aeron123
       POSTGRES_DB: aeron_db
     ports:
-      - "5433:5432" # Different port to avoid conflicts with local dev
+      - "5433:5432"  # Different port to avoid conflicts with local dev
     volumes:
       - ./fixtures/mock_data.sql:/docker-entrypoint-initdb.d/01-mock-data.sql:ro
     healthcheck:

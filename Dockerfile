@@ -54,12 +54,13 @@ RUN chown -R aeron:aeron /app
 # Switch to non-root user
 USER aeron
 
-# Expose API port (optional, only used when running with -server flag)
+# Expose API port
 EXPOSE 8080
 
-# Health check for API mode
+# Health check
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
     CMD wget --no-verbose --tries=1 --spider http://localhost:8080/api/health || exit 1
 
-# Default command (can be overridden)
+# Start API server by default
 ENTRYPOINT ["/app/aeron-imgman"]
+CMD ["-port=8080"]

@@ -34,3 +34,5 @@ jobs:
         run: |
           go build -ldflags="-X main.Version=test -X main.Commit=test -X main.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)" -o aeron-imgman .
           ./aeron-imgman -version
+      - name: Run unit tests
+        run: go test -v -short ./...

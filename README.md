@@ -1,176 +1,308 @@
-# Aeron Image Manager
+# Aeron Image Manager API
 
-Een command-line tool voor het beheer van afbeeldingen in Aeron databases met slimme beeldoptimalisatie.
+Een REST API service voor het beheren van artiest- en trackafbeeldingen in het Aeron radio automatiseringssysteem.
 
-> \[!WARNING]
-> Aeron is een product van Broadcast Partners. Deze tool is niet officieel en is niet ontwikkeld in opdracht van of in samenwerking met Broadcast Partners. Gebruik ervan is volledig op eigen risico. Maak altijd eerst een backup van de database voordat je deze tool gebruikt.
+> [!WARNING]
+> Aeron is een product van Broadcast Partners. Deze tool is onofficieel en niet ontwikkeld door of in samenwerking met Broadcast Partners. Gebruik op eigen risico. Maak altijd een backup van je database voor gebruik.
 
-## Functionaliteit
+## Functies
 
-* Voegt afbeeldingen toe aan artiesten- en trackrecords in PostgreSQL database
-* **Dubbele encoder optimalisatie**: Vergelijkt automatisch Jpegli vs standaard JPEG en kiest de kleinste bestandsgrootte
-* Ondersteunt JPG, JPEG en PNG invoerbestanden
-* Toont statistieken van artiesten of tracks (totaal, met/zonder afbeeldingen, orphaned)
-* Verwijdert afbeeldingen per scope (nuke-functie)
-* Dry-run modus voor het testen van operaties
-* REST API server modus voor integratie met andere applicaties
-* Vereist config.yaml bestand voor alle instellingen
-* Uniforme interface met verplichte -scope parameter
+- **Afbeeldingbeheer**: Upload en beheer afbeeldingen voor artiesten en tracks via REST API
+- **Automatische Optimalisatie**: Afbeeldingen worden automatisch verkleind en geoptimaliseerd
+- **Dubbele Encoder**: Vergelijkt jpegli met standaard JPEG en selecteert de kleinste bestandsgrootte
+- **Playlist API**: Haal playlist informatie op met flexibele query opties
+- **Statistieken**: Krijg inzicht in afbeeldingdekking voor artiesten en tracks
+- **Bulk Operaties**: Verwijder alle afbeeldingen voor een specifiek type
+- **Authenticatie**: Optionele API key authenticatie
 
 ## Installatie
+
+### Met Docker
+
+```bash
+docker run -d \
+  -p 8080:8080 \
+  -v ./config.yaml:/app/config.yaml \
+  --name aeron-imgman \
+  ghcr.io/oszuidwest/aeron-imgman:latest
+```
+
+### Vanaf Broncode
 
 ```bash
 git clone https://github.com/oszuidwest/aeron-imgman.git
 cd aeron-imgman
 go mod tidy
 go build -o aeron-imgman .
+./aeron-imgman -config=config.yaml -port=8080
 ```
 
-### Gecompileerde versies
+### Voorgecompileerde Binaries
 
-Je kunt ook gecompileerde executables downloaden via de [Releases pagina](https://github.com/oszuidwest/aeron-imgman/releases):
+Download gecompileerde uitvoerbare bestanden van de [Releases pagina](https://github.com/oszuidwest/aeron-imgman/releases):
 
 - **Linux**: amd64, arm64, armv7
 - **Windows**: amd64, arm64  
 - **macOS**: Intel (amd64), Apple Silicon (arm64)
 
-Download het juiste bestand voor je platform, maak het uitvoerbaar (`chmod +x`) en gebruik het direct.
+## Configuratie
 
-### Docker
+Maak een `config.yaml` bestand:
 
-De applicatie is ook beschikbaar als Docker image:
+```yaml
+database:
+  host: localhost
+  port: 5432
+  name: aeron_db
+  user: aeron
+  password: jouw_wachtwoord
+  schema: aeron
+  sslmode: disable
 
-```bash
-# Pull de laatste versie
-docker pull ghcr.io/oszuidwest/aeron-imgman:latest
+image:
+  target_width: 1280
+  target_height: 1280
+  quality: 90
+  reject_smaller: true
 
-# Of een specifieke versie
-docker pull ghcr.io/oszuidwest/aeron-imgman:v1.0.0
-
-# Run met lokale config file
-docker run -v $(pwd)/config.yaml:/app/config.yaml ghcr.io/oszuidwest/aeron-imgman:latest -scope=artist -stats
-
-# Start als API server
-docker run -p 8080:8080 -v $(pwd)/config.yaml:/app/config.yaml ghcr.io/oszuidwest/aeron-imgman:latest -server
+api:
+  enabled: true
+  keys:
+    - "jouw-api-key-hier"
+    - "nog-een-api-key"
 ```
 
-## Gebruik
-
-### Basiscommando's
+## API Server Starten
 
 ```bash
-# Artiestafbeelding bijwerken via URL
-./aeron-imgman -scope=artist -name="OneRepublic" -url="https://example.com/image.jpg"
-
-# Trackafbeelding bijwerken via lokaal bestand
-./aeron-imgman -scope=track -name="Counting Stars" -file="/pad/naar/image.jpg"
-
-# Statistieken tonen voor artiesten (totaal, met/zonder afbeeldingen, orphaned)
-./aeron-imgman -scope=artist -stats
-
-# Statistieken tonen voor tracks
-./aeron-imgman -scope=track -stats
-
-
-# Afbeeldingen verwijderen per scope
-./aeron-imgman -scope=artist -nuke
-./aeron-imgman -scope=track -nuke
-
-# Versie-informatie tonen
-./aeron-imgman -version
-
-# Dry-run (voorbeeld zonder wijzigingen)
-./aeron-imgman -scope=artist -name="OneRepublic" -url="image.jpg" -dry-run
-./aeron-imgman -scope=track -nuke -dry-run
-```
-
-### Alle beschikbare opties
-
-```bash
-# Volledige lijst van opties
+# Standaard poort 8080
 ./aeron-imgman
 
-# Opties:
-  -scope string     Verplicht: 'artist' of 'track'
-  -name string      Naam van artiest of track titel
-  -id string        UUID van artiest of track
-  -url string       URL van de afbeelding om te downloaden
-  -file string      Lokaal pad naar afbeelding
-  -config string    Pad naar config bestand (standaard: config.yaml)
-  -dry-run          Toon wat gedaan zou worden zonder bij te werken
-  -stats             Toon statistieken
-  -nuke             Verwijder afbeeldingen van opgegeven scope
-  -server           Start REST API server
-  -port string      Server poort (standaard: 8080)
-  -version          Toon versie-informatie
+# Aangepaste poort
+./aeron-imgman -port=9090
+
+# Met aangepaste config
+./aeron-imgman -config=/pad/naar/config.yaml -port=8080
+
+# Toon versie
+./aeron-imgman -version
 ```
 
-### Nuke modus
+## API Endpoints
 
-De `-nuke` functie verwijdert afbeeldingen uit de database op basis van de opgegeven scope:
+### Health Check
 
-* `-scope=artist -nuke`: Verwijdert alle artiestafbeeldingen
-* `-scope=track -nuke`: Verwijdert alle trackafbeeldingen
+```http
+GET /api/health
+```
 
-Veiligheidsmaatregelen:
-* **Voorvertoning**: Toont eerst hoeveel en welke items geraakt worden
-* **Bevestiging vereist**: Je moet expliciet "VERWIJDER ALLES" typen om door te gaan
-* **Dry-run ondersteuning**: Test de functie zonder veranderingen door te voeren met `-dry-run`
+Geen authenticatie vereist. Retourneert server status en versie.
 
-> **⚠️ WAARSCHUWING**: De nuke-functie is onomkeerbaar. Maak altijd eerst een backup van je database!
+### Artiesten
 
-### Configuratie
+#### Artiest Statistieken Ophalen
+```http
+GET /api/artists
+X-API-Key: jouw-api-key
+```
 
-#### Configuratiebestand gebruiken
+Response:
+```json
+{
+  "success": true,
+  "data": {
+    "total": 80,
+    "with_images": 10,
+    "without_images": 70,
+    "orphaned": 5
+  }
+}
+```
 
+#### Artiest Afbeelding Uploaden
+```http
+POST /api/artists/upload
+X-API-Key: jouw-api-key
+Content-Type: application/json
+
+{
+  "name": "Artiest Naam",
+  "url": "https://example.com/afbeelding.jpg"
+}
+```
+
+Of met base64 afbeelding:
+```json
+{
+  "name": "Artiest Naam",
+  "image": "data:image/jpeg;base64,..."
+}
+```
+
+Of met ID:
+```json
+{
+  "id": "123e4567-e89b-12d3-a456-426614174000",
+  "url": "https://example.com/afbeelding.jpg"
+}
+```
+
+#### Alle Artiest Afbeeldingen Verwijderen
+```http
+DELETE /api/artists/bulk-delete
+X-API-Key: jouw-api-key
+X-Confirm-Nuke: VERWIJDER ALLES
+```
+
+### Tracks
+
+#### Track Statistieken Ophalen
+```http
+GET /api/tracks
+X-API-Key: jouw-api-key
+```
+
+#### Track Afbeelding Uploaden
+```http
+POST /api/tracks/upload
+X-API-Key: jouw-api-key
+Content-Type: application/json
+
+{
+  "name": "Track Titel",
+  "url": "https://example.com/afbeelding.jpg"
+}
+```
+
+#### Alle Track Afbeeldingen Verwijderen
+```http
+DELETE /api/tracks/bulk-delete
+X-API-Key: jouw-api-key
+X-Confirm-Nuke: VERWIJDER ALLES
+```
+
+### Playlist
+
+#### Playlist Ophalen
+```http
+GET /api/playlist/today
+X-API-Key: jouw-api-key
+```
+
+Query parameters:
+- `date`: Specifieke datum (JJJJ-MM-DD), standaard: vandaag
+- `from`: Start tijd filter (UU:MM)
+- `to`: Eind tijd filter (UU:MM)
+- `limit`: Maximum aantal items
+- `offset`: Paginering offset
+- `images`: Filter op aanwezigheid afbeelding (yes/no)
+- `sort`: Sorteer op veld (time/artist/track)
+- `desc`: Sorteer aflopend (true/false)
+
+Voorbeelden:
+```http
+# Vanmiddag playlist
+GET /api/playlist/today?from=14:00&to=18:00
+
+# Specifieke datum met paginering
+GET /api/playlist/today?date=2024-01-15&limit=20&offset=40
+
+# Alleen items zonder afbeeldingen, gesorteerd op artiest
+GET /api/playlist/today?images=no&sort=artist
+
+# Morgenochtend show
+GET /api/playlist/today?date=2024-01-16&from=06:00&to=10:00
+```
+
+Response:
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "songid": "123e4567-e89b-12d3-a456-426614174000",
+      "songname": "Counting Stars",
+      "artistid": "987e6543-e21b-12d3-a456-426614174000",
+      "artistname": "OneRepublic",
+      "start_time": "14:35:00",
+      "has_image": true
+    }
+  ]
+}
+```
+
+## Authenticatie
+
+Authenticatie kan geconfigureerd worden in `config.yaml`:
+
+```yaml
+api:
+  enabled: true  # Schakel authenticatie in
+  keys:
+    - "jouw-api-key-hier"
+    - "nog-een-api-key"
+```
+
+Gebruik de API key in verzoeken:
 ```bash
-# Gebruikt standaard config.yaml in huidige directory
-./aeron-imgman -scope=artist -name="Naam Artiest" -url="image.jpg"
-./aeron-imgman -scope=track -name="Track Titel" -url="image.jpg"
+# Via header (aanbevolen)
+curl -H "X-API-Key: jouw-api-key-hier" http://localhost:8080/api/artists
 
-# Of aangepaste configuratie gebruiken
-./aeron-imgman -config="/pad/naar/config.yaml" -scope=artist -name="Naam Artiest" -url="image.jpg"
+# Via query parameter
+curl http://localhost:8080/api/artists?key=jouw-api-key-hier
 ```
 
-#### Configuratie vereist
+## Response Formaat
 
-**Let op:** Een `config.yaml` bestand is verplicht. De tool heeft geen ingebouwde standaardwaarden meer om verwarring te voorkomen. Alle database- en afbeeldinginstellingen moeten expliciet worden geconfigureerd.
-
-## Afbeeldingverwerking
-
-* Doelafmeting: Configureerbaar via config.yaml (bijvoorbeeld 1280x1280 pixels)
-* Kwaliteit: Configureerbaar via config.yaml (bijvoorbeeld 90)
-* **Slimme encoder vergelijking**: Vergelijkt automatisch Jpegli vs standaard Go JPEG encoder en kiest de kleinste bestandsgrootte
-* Uitvoerformaat: altijd JPEG, ongeacht invoerformaat
-* Schaling: afbeeldingen groter dan doelafmetingen worden verkleind
-* Validatie: kleinere afbeeldingen worden geweigerd (configureerbaar)
-
-### Encoding optimalisatie
-
-De tool gebruikt een slimme aanpak voor bestandscompressie:
-
-1. **Dubbele encoding**: Elke afbeelding wordt geëncodeerd met zowel Jpegli als de standaard Go JPEG encoder
-2. **Automatische selectie**: De encoder met de kleinste bestandsgrootte wordt automatisch gekozen
-3. **Rapportage**: De tool toont welke encoder werd gebruikt en hoeveel ruimte werd bespaard
-4. **Geen kwaliteitsverlies**: Beide encoders gebruiken dezelfde kwaliteitsinstellingen
-
-Voorbeeld output:
-```
-✓ Queen: 2048KB → 187KB (jpegli)
-✓ Coldplay: 1536KB → 201KB (standaard)
+Succes responses:
+```json
+{
+  "success": true,
+  "data": { ... }
+}
 ```
 
-Dit zorgt ervoor dat je altijd de best mogelijke compressie krijgt, ongeacht het type bronafbeelding.
+Fout responses:
+```json
+{
+  "success": false,
+  "error": "Foutmelding"
+}
+```
 
-## Vereisten
+## Afbeelding Verwerking
 
-* Go versie 1.24 of hoger
-* PostgreSQL-database met artiesttabel (Aeron-database)
-* Netwerktoegang voor downloaden van afbeeldingen bij gebruik van webadresssen
+- **Doel afmetingen**: Configureerbaar (standaard 1280x1280)
+- **Kwaliteit**: Configureerbaar (standaard 90)
+- **Slimme encoding**: Vergelijkt automatisch jpegli met standaard JPEG en selecteert kleinste bestand
+- **Output formaat**: Altijd JPEG ongeacht input
+- **Validatie**: Kleinere afbeeldingen worden geweigerd (configureerbaar)
 
-## Databaseschema
+### Encoding Optimalisatie
 
-De tool vereist de volgende PostgreSQL-tabellen zoals gebruikt door Aeron:
+De API gebruikt intelligente compressie:
+
+1. **Dubbele encoding**: Elke afbeelding wordt gecodeerd met zowel jpegli als standaard Go JPEG encoder
+2. **Automatische selectie**: De encoder die het kleinste bestand produceert wordt automatisch gekozen
+3. **Rapportage**: Toont welke encoder is gebruikt en hoeveel ruimte is bespaard
+
+Voorbeeld response:
+```json
+{
+  "success": true,
+  "data": {
+    "artist": "Queen",
+    "original_size": 2097152,
+    "optimized_size": 191488,
+    "savings_percent": 90.87,
+    "encoder": "jpegli"
+  }
+}
+```
+
+## Database Schema
+
+Vereist PostgreSQL tabellen zoals gebruikt door Aeron:
 
 ```sql
 CREATE TABLE {schema}.artist (
@@ -183,125 +315,38 @@ CREATE TABLE {schema}.track (
     titleid UUID PRIMARY KEY,
     tracktitle VARCHAR NOT NULL,
     artist VARCHAR,
+    artistid UUID,
     picture BYTEA,
-    -- andere velden
+    exporttype INTEGER
+);
+
+CREATE TABLE {schema}.playlistitem (
+    id SERIAL PRIMARY KEY,
+    titleid UUID,
+    startdatetime TIMESTAMP,
+    itemtype INTEGER
 );
 ```
 
-## REST API
+## Ontwikkeling
 
-Start de API server:
+### Vereisten
+- Go 1.24 of hoger
+- PostgreSQL met Aeron database
+- ImageMagick
+- jpegli (optioneel, voor verbeterde compressie)
+
+### Bouwen
 ```bash
-./aeron-imgman -server -port=8080
+go mod download
+go build -o aeron-imgman .
 ```
 
-### API Endpoints
-
-#### Health Check
+### Testen
 ```bash
-GET /api/health
+go test ./...
 ```
-
-#### Artists
-```bash
-# Artist statistieken
-GET /api/artists
-Response: {
-  "success": true,
-  "data": {
-    "total": 80,
-    "with_images": 10,
-    "without_images": 70,
-    "orphaned": 5
-  }
-}
-
-
-# Upload image
-POST /api/artists/upload
-{
-  "name": "Artist Name",  # of gebruik "id": "UUID"
-  "url": "https://example.com/image.jpg"  # of "image": "base64_encoded_data"
-}
-
-# Delete all artist images (requires header)
-DELETE /api/artists/nuke
-Header: X-Confirm-Nuke: VERWIJDER ALLES
-```
-
-#### Tracks
-```bash
-# Track statistieken
-GET /api/tracks
-Response: {
-  "success": true,
-  "data": {
-    "total": 120,
-    "with_images": 10,
-    "without_images": 110,
-    "orphaned": 3
-  }
-}
-
-
-# Upload image
-POST /api/tracks/upload
-{
-  "name": "Track Title",  # of gebruik "id": "UUID"
-  "url": "https://example.com/image.jpg"  # of "image": "base64_encoded_data"
-}
-
-# Delete all track images (requires header)
-DELETE /api/tracks/nuke
-Header: X-Confirm-Nuke: VERWIJDER ALLES
-```
-
-### API Authenticatie
-
-De API ondersteunt optionele authenticatie via API keys:
-
-```yaml
-# In config.yaml
-api:
-  enabled: true  # Schakel authenticatie in
-  keys:
-    - "your-api-key-here"
-    - "another-api-key"
-```
-
-Gebruik de API key op één van deze manieren:
-```bash
-# Via header (aanbevolen)
-curl -H "X-API-Key: your-api-key-here" http://localhost:8080/api/artists
-
-# Via query parameter
-curl http://localhost:8080/api/artists?key=your-api-key-here
-```
-
-### API Response Format
-
-Succesvolle responses:
-```json
-{
-  "success": true,
-  "data": { ... },
-  "total": 70,   // Bij list endpoints: totaal aantal items
-  "shown": 50    // Bij list endpoints: aantal getoonde items
-}
-```
-
-Error responses:
-```json
-{
-  "success": false,
-  "error": "Error message"
-}
-```
-
-## Over dit project
-
-Dit project ondersteunt het beheer en optimaliseren van artiestafbeeldingen in Aeron-databases. Het is compatibel met de nieuwste versie van de AerOn Studio radio-automatisering.
 
 ## Licentie
 
-MIT-licentie – zie LICENSE-bestand voor details.
+MIT Licentie - zie LICENSE bestand voor details.

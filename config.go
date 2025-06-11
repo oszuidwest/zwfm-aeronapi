@@ -47,21 +47,21 @@ func loadConfig(configPath string) (*Config, error) {
 		if _, err := os.Stat("config.yaml"); err == nil {
 			configPath = "config.yaml"
 		} else {
-			return nil, fmt.Errorf("geen config bestand gevonden: config.yaml niet aanwezig en geen --config opgegeven")
+			return nil, fmt.Errorf("config.yaml niet gevonden")
 		}
 	}
 
 	data, err := os.ReadFile(configPath)
 	if err != nil {
-		return nil, fmt.Errorf("kon config bestand niet lezen: %w", err)
+		return nil, fmt.Errorf("config lezen mislukt: %w", err)
 	}
 
 	if err := yaml.Unmarshal(data, config); err != nil {
-		return nil, fmt.Errorf("kon config bestand niet parsen: %w", err)
+		return nil, fmt.Errorf("config fout: %w", err)
 	}
 
 	if err := validateConfig(config); err != nil {
-		return nil, fmt.Errorf("configuratie onvolledig: %w", err)
+		return nil, fmt.Errorf("config onvolledig: %w", err)
 	}
 
 	return config, nil
@@ -92,7 +92,7 @@ func validateConfig(config *Config) error {
 	}
 
 	if len(missing) > 0 {
-		return fmt.Errorf("de volgende velden ontbreken of zijn ongeldig in de configuratie: %v", missing)
+		return fmt.Errorf("config mist velden: %v", missing)
 	}
 	return nil
 }

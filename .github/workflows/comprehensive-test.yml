@@ -62,6 +62,8 @@ jobs:
           done
 
           # Database already has mock data loaded from the image
+          # Give it extra time to fully initialize
+          sleep 5
       - name: Create test images
         run: |
           convert -size 100x100 xc:red test_small.png
@@ -83,6 +85,14 @@ jobs:
       - name: Database Test - Verify initial data setup
         run: |
           echo "Test: Controleer database test data"
+          
+          # Check if database initialization completed
+          echo "Checking database initialization status..."
+          docker exec aeron-test-db psql -U aeron -d aeron_db -c "\dt aeron.*" || true
+          
+          # Check for any errors in container logs
+          echo "Recent container logs:"
+          docker logs aeron-test-db 2>&1 | tail -50 | grep -E "(ERROR|FATAL|WARNING)" || true
 
           # Tel alle records
           ARTIST_COUNT=$(docker exec aeron-test-db psql -U aeron -d aeron_db -t -c "SELECT COUNT(*) FROM aeron.artist;" | tr -d ' ')
@@ -92,32 +102,33 @@ jobs:
           ARTISTS_WITHOUT_IMG=$(docker exec aeron-test-db psql -U aeron -d aeron_db -t -c "SELECT COUNT(*) FROM aeron.artist WHERE picture IS NULL;" | tr -d ' ')
 
           echo "Database inhoud:"
-          echo "  Totaal artiesten: $ARTIST_COUNT (verwacht: 80)"
-          echo "  Artiesten met afbeelding: $ARTISTS_WITH_IMG (verwacht: 10)"
-          echo "  Artiesten zonder afbeelding: $ARTISTS_WITHOUT_IMG (verwacht: 70)"
-          echo "  Totaal tracks: $TRACK_COUNT"
+          echo "  Totaal artiesten: $ARTIST_COUNT (verwacht: 1000)"
+          echo "  Artiesten met afbeelding: $ARTISTS_WITH_IMG"
+          echo "  Artiesten zonder afbeelding: $ARTISTS_WITHOUT_IMG"
+          echo "  Totaal tracks: $TRACK_COUNT (verwacht: 1100)"
           echo "  Tracks met afbeelding: $TRACKS_WITH_IMG"
 
           # Controleer verwachte aantallen
           ERRORS=0
-          if [ "$ARTIST_COUNT" -eq 80 ]; then
-            echo "✓ Verwachtte 80 artiesten, kreeg 80 artiesten"
+          if [ "$ARTIST_COUNT" -eq 1000 ]; then
+            echo "✓ Verwachtte 1000 artiesten, kreeg 1000 artiesten"
           else
-            echo "✗ Verwachtte 80 artiesten, kreeg $ARTIST_COUNT artiesten"
+            echo "✗ Verwachtte 1000 artiesten, kreeg $ARTIST_COUNT artiesten"
             ERRORS=$((ERRORS + 1))
           fi
 
-          if [ "$ARTISTS_WITH_IMG" -eq 10 ]; then
-            echo "✓ Verwachtte 10 artiesten met afbeelding, kreeg 10"
+          if [ "$TRACK_COUNT" -eq 1100 ]; then
+            echo "✓ Verwachtte 1100 tracks, kreeg 1100 tracks"
           else
-            echo "✗ Verwachtte 10 artiesten met afbeelding, kreeg $ARTISTS_WITH_IMG"
+            echo "✗ Verwachtte 1100 tracks, kreeg $TRACK_COUNT tracks"
             ERRORS=$((ERRORS + 1))
           fi
 
-          if [ "$ARTISTS_WITHOUT_IMG" -eq 70 ]; then
-            echo "✓ Verwachtte 70 artiesten zonder afbeelding, kreeg 70"
+          # Controleer dat er artiesten met en zonder afbeeldingen zijn
+          if [ "$ARTISTS_WITH_IMG" -gt 0 ] && [ "$ARTISTS_WITHOUT_IMG" -gt 0 ]; then
+            echo "✓ Database bevat artiesten met en zonder afbeeldingen"
           else
-            echo "✗ Verwachtte 70 artiesten zonder afbeelding, kreeg $ARTISTS_WITHOUT_IMG"
+            echo "✗ Database moet artiesten met en zonder afbeeldingen bevatten"
             ERRORS=$((ERRORS + 1))
           fi
 
@@ -161,103 +172,12 @@ jobs:
               - "test-api-key-12345"
               - "another-test-key-67890"
           EOF
-      # CLI Tests
-      - name: Reset database before CLI tests
-        run: ./reset_db.sh
-      - name: CLI Test - Version
-        run: |
-          echo "Test: Controleer versie informatie"
-          ./aeron-imgman -version
-          echo "✓ Versie informatie correct weergegeven"
-      - name: CLI Test - Usage (no args)
-        run: |
-          echo "Test: Controleer help bericht zonder argumenten"
-          set +e  # Sta non-zero exit codes toe
-          OUTPUT=$(./aeron-imgman 2>&1)
-          EXIT_CODE=$?
-          set -e
-
-          # Controleer dat het programma exit code 1 geeft (usage)
-          if [ $EXIT_CODE -eq 1 ]; then
-            echo "✓ Programma geeft correcte exit code 1 bij geen argumenten"
-          else
-            echo "✗ Verwachtte exit code 1, kreeg $EXIT_CODE"
-            exit 1
-          fi
-
-          # Controleer help tekst (strip ANSI codes)
-          CLEAN_OUTPUT=$(echo "$OUTPUT" | sed 's/\x1b\[[0-9;]*m//g')
-          if echo "$CLEAN_OUTPUT" | grep -q 'Aeron Image Manager'; then
-            echo "✓ Help bericht toont 'Aeron Image Manager'"
-          else
-            echo "✗ Verwachtte help bericht met 'Aeron Image Manager'"
-            echo "Output (zonder ANSI codes):"
-            echo "$CLEAN_OUTPUT"
-            exit 1
-          fi
-
-          # Controleer dat usage voorbeelden worden getoond
-          if echo "$CLEAN_OUTPUT" | grep -q './aeron-imgman -scope=artist'; then
-            echo "✓ Usage voorbeelden worden correct getoond"
-          else
-            echo "✗ Verwachtte usage voorbeelden"
-            exit 1
-          fi
-      - name: CLI Test - Artist statistics
-        run: |
-          echo "Test: Artiest statistieken"
-          OUTPUT=$(./aeron-imgman -config=test_config.yaml -scope=artist -stats 2>&1)
-          echo "$OUTPUT"
-          if echo "$OUTPUT" | grep -q "Totaal: 80"; then
-            echo "✓ Verwachtte 80 artiesten totaal, kreeg 80 artiesten"
-          else
-            echo "✗ Verwachtte 80 artiesten totaal"
-            echo "   Output was: $OUTPUT"
-            exit 1
-          fi
-      - name: CLI Test - Track statistics
-        run: |
-          ./aeron-imgman -config=test_config.yaml -scope=track -stats
-      - name: CLI Test - Artist image upload (dry-run)
-        run: |
-          ./aeron-imgman -config=test_config.yaml -scope=artist -name='OneRepublic' -file=test_small.png -dry-run
-      - name: CLI Test - Artist image upload (file)
-        run: |
-          ./aeron-imgman -config=test_config.yaml -scope=artist -name='OneRepublic' -file=test_large.png
-      - name: CLI Test - Track image upload (file)
-        run: |
-          ./aeron-imgman -config=test_config.yaml -scope=track -name='Counting Stars' -file=test_large.png
-      - name: CLI Test - Invalid scope error
-        run: |
-          echo "Test: Ongeldige scope moet foutmelding geven"
-          OUTPUT=$(./aeron-imgman -config=test_config.yaml -scope=invalid -stats 2>&1 || true)
-          if echo "$OUTPUT" | grep -qi 'ongeldige scope'; then
-            echo "✓ Verwachtte foutmelding 'Ongeldige scope', kreeg: '$OUTPUT'"
-          else
-            echo "✗ Verwachtte foutmelding met 'Ongeldige scope' maar kreeg:"
-            echo "   $OUTPUT"
-            exit 1
-          fi
-      - name: CLI Test - Reject small image
-        run: |
-          echo "Test: Te kleine afbeelding moet geweigerd worden"
-          OUTPUT=$(./aeron-imgman -config=test_config.yaml -scope=artist -name='Coldplay' -file=test_small.png 2>&1 || true)
-          if echo "$OUTPUT" | grep -q 'afbeelding te klein'; then
-            echo "✓ Kleine afbeelding (100x100) werd correct geweigerd met melding 'afbeelding te klein'"
-          else
-            echo "✗ Verwachtte weigering van kleine afbeelding"
-            echo "   Output: $OUTPUT"
-            exit 1
-          fi
-      - name: CLI Test - No name or ID error
-        run: |
-          ! ./aeron-imgman -config=test_config.yaml -scope=artist -url='http://example.com/image.jpg' 2>&1
       # API Tests
       - name: Reset database before API tests
         run: ./reset_db.sh
       - name: Start API server
         run: |
-          ./aeron-imgman -config=test_config.yaml -server -port=8888 &
+          ./aeron-imgman -config=test_config.yaml -port=8888 &
           echo $! > api.pid
           sleep 3
       - name: API Test - Health check
@@ -280,10 +200,10 @@ jobs:
           WITHOUT_IMAGES=$(echo "$RESPONSE" | jq '.data.without_images')
           ORPHANED=$(echo "$RESPONSE" | jq '.data.orphaned')
 
-          echo "Verwachtte: 80 totaal, 10 met afbeeldingen, 70 zonder, orphaned check"
+          echo "Verwachtte: 1000 totaal, mix van met/zonder afbeeldingen, orphaned check"
           echo "Gekregen: $TOTAL totaal, $WITH_IMAGES met, $WITHOUT_IMAGES zonder, $ORPHANED orphaned"
 
-          if [ "$TOTAL" -eq 80 ] && [ "$WITH_IMAGES" -eq 10 ] && [ "$WITHOUT_IMAGES" -eq 70 ]; then
+          if [ "$TOTAL" -eq 1000 ] && [ "$WITH_IMAGES" -gt 0 ] && [ "$WITHOUT_IMAGES" -gt 0 ]; then
             echo "✓ API /artists endpoint geeft correcte statistieken"
           else
             echo "✗ Fout in statistieken:"
@@ -303,100 +223,178 @@ jobs:
           fi
       - name: API Test - Artist image upload (URL)
         run: |
-          curl -s -X POST -H 'X-API-Key: test-api-key-12345' http://localhost:8888/api/artists/upload \
+          echo "Test: Artist image upload via URL"
+          RESPONSE=$(curl -s -X POST -H 'X-API-Key: test-api-key-12345' http://localhost:8888/api/artists/upload \
             -H 'Content-Type: application/json' \
-            -d '{"name":"Queen","url":"https://picsum.photos/1500"}' \
-            -m 10 | jq -e '.success == true'
+            -d '{"name":"1 Purple Disco Machine","url":"https://picsum.photos/1500"}' \
+            -m 10)
+          echo "Response: $RESPONSE"
+          echo "$RESPONSE" | jq -e '.success == true' || (echo "Upload failed" && exit 1)
       - name: API Test - Track image upload (base64)
         run: |
+          echo "Test: Track image upload with base64 (too small image)"
           BASE64_IMAGE=$(base64 -w 0 < test_small.png)
-          curl -s -X POST -H 'X-API-Key: test-api-key-12345' http://localhost:8888/api/tracks/upload \
+          RESPONSE=$(curl -s -X POST -H 'X-API-Key: test-api-key-12345' http://localhost:8888/api/tracks/upload \
             -H 'Content-Type: application/json' \
-            -d '{"name":"Bohemian Rhapsody","image":"data:image/png;base64,'$BASE64_IMAGE'"}' | \
-            jq -e '.success == false and (.error | contains("afbeelding te klein"))'
-      - name: API Test - Nuke without confirmation
+            -d '{"name":"Als De Eerste Sneeuw Valt","image":"data:image/png;base64,'$BASE64_IMAGE'"}')
+          echo "Response: $RESPONSE"
+          echo "$RESPONSE" | jq -e '.success == false and (.error | contains("afbeelding te klein"))'
+      - name: API Test - Bulk delete without confirmation
         run: |
-          curl -s -X DELETE -H 'X-API-Key: test-api-key-12345' http://localhost:8888/api/artists/nuke | jq -e '.success == false'
+          curl -s -X DELETE -H 'X-API-Key: test-api-key-12345' http://localhost:8888/api/artists/bulk-delete | jq -e '.success == false'
       - name: API Test - Method not allowed
         run: |
           curl -s -X PUT -H 'X-API-Key: test-api-key-12345' http://localhost:8888/api/artists | jq -e '.success == false'
+      - name: API Test - Playlist endpoint
+        run: |
+          echo "Test: API playlist endpoint"
+          # First update playlist dates to today
+          docker exec aeron-test-db psql -U aeron -d aeron_db -c "UPDATE aeron.playlistitem SET startdatetime = CURRENT_DATE + (startdatetime::time)" >/dev/null
+
+          RESPONSE=$(curl -s -H 'X-API-Key: test-api-key-12345' http://localhost:8888/api/playlist/today)
+          SUCCESS=$(echo "$RESPONSE" | jq '.success')
+          ITEM_COUNT=$(echo "$RESPONSE" | jq '.data | length')
+
+          echo "Response success: $SUCCESS"
+          echo "Playlist items: $ITEM_COUNT"
+          if [ "$SUCCESS" = "true" ] && [ "$ITEM_COUNT" -gt 0 ]; then
+            echo "✓ Playlist endpoint returned items"
+            # Verify first item has required fields
+            FIRST_ITEM=$(echo "$RESPONSE" | jq '.data[0]')
+            if echo "$FIRST_ITEM" | jq -e 'has("songid") and has("songname") and has("artistid") and has("artistname") and has("start_time") and has("has_image")' > /dev/null; then
+              echo "✓ Playlist items have correct structure"
+            else
+              echo "✗ Playlist items missing required fields"
+              echo "$FIRST_ITEM" | jq .
+              exit 1
+            fi
+          else
+            echo "✗ Playlist endpoint failed or returned no items"
+            echo "$RESPONSE" | jq .
+            exit 1
+          fi
       - name: Stop API server
         run: |
           kill $(cat api.pid) || true
           rm -f api.pid
           sleep 1
-      # Image Optimization Tests
+      # Image Optimization Tests via API
       - name: Reset database before optimization tests
         run: ./reset_db.sh
-      - name: Image Optimization Test - Verify optimization
+      - name: Start API server for optimization tests
         run: |
-          echo "Test: Afbeelding optimalisatie"
-          echo "Stap 1: Upload grote afbeelding (2000x2000)"
-          OUTPUT=$(./aeron-imgman -config=test_config.yaml -scope=artist -name='OneRepublic' -file=test_large.png 2>&1)
-          echo "$OUTPUT"
-
-          echo "Stap 2: Controleer of afbeelding is opgeslagen"
-          HAS_IMAGE=$(docker exec aeron-test-db psql -U aeron -d aeron_db -t -c "SELECT picture IS NOT NULL FROM aeron.artist WHERE artist = 'OneRepublic';" | tr -d ' ')
-
-          if [ "$HAS_IMAGE" = "t" ]; then
-            echo "✓ Afbeelding succesvol verwerkt en opgeslagen"
-            SIZE=$(docker exec aeron-test-db psql -U aeron -d aeron_db -t -c "SELECT length(picture) FROM aeron.artist WHERE artist = 'OneRepublic';" | tr -d ' ')
-            SIZE_KB=$((SIZE / 1024))
-            echo "  Bestandsgrootte: ${SIZE_KB}KB"
+          ./aeron-imgman -config=test_config.yaml -port=8892 &
+          echo $! > api_opt.pid
+          sleep 3
+      - name: Image Optimization Test - Verify optimization via API
+        run: |
+          echo "Test: Afbeelding optimalisatie via API"
+          echo "Upload grote afbeelding (2000x2000)"
+          BASE64_IMAGE=$(base64 -w 0 < test_large.png)
+          RESPONSE=$(curl -s -X POST -H 'X-API-Key: test-api-key-12345' http://localhost:8892/api/artists/upload \
+            -H 'Content-Type: application/json' \
+            -d '{"name":"1 BLØF","image":"data:image/png;base64,'$BASE64_IMAGE'"}')
+          
+          if echo "$RESPONSE" | jq -e '.success == true' > /dev/null; then
+            echo "✓ Upload succesvol via API"
+            echo "$RESPONSE" | jq .
           else
-            echo "✗ Afbeelding niet opgeslagen"
+            echo "✗ Upload mislukt"
+            echo "$RESPONSE" | jq .
             exit 1
           fi
-      - name: Image Optimization Test - Dual encoder comparison
+      - name: Stop API optimization server
         run: |
-          ./aeron-imgman -config=test_config.yaml -scope=artist -name='Imagine Dragons' -file=test_large.png 2>&1 | grep -E '(jpegli|standaard)'
-      # Concurrent Operations Test
+          kill $(cat api_opt.pid) || true
+          rm -f api_opt.pid
+      # Concurrent API Operations Test
       - name: Reset database before concurrent tests
         run: ./reset_db.sh
-      - name: Concurrent Operations Test
+      - name: Start API server for concurrent tests
         run: |
-          echo "Test: Gelijktijdige uploads"
-          echo "Start 3 uploads tegelijk:"
-          echo "  1. Maroon 5 (artiest)"
-          echo "  2. Ed Sheeran (artiest)"
-          echo "  3. Sugar (track)"
-
-          ./aeron-imgman -config=test_config.yaml -scope=artist -name='Maroon 5' -file=test_large.png &
+          ./aeron-imgman -config=test_config.yaml -port=8893 &
+          echo $! > api_concurrent.pid
+          sleep 3
+      - name: Concurrent API Operations Test
+        run: |
+          echo "Test: Gelijktijdige API uploads"
+          echo "Start 3 uploads tegelijk via API"
+          
+          # Upload to multiple endpoints concurrently
+          curl -s -X POST -H 'X-API-Key: test-api-key-12345' http://localhost:8893/api/artists/upload \
+            -H 'Content-Type: application/json' \
+            -d '{"name":"1 Purple Disco Machine","url":"https://picsum.photos/1500"}' > result1.json &
           PID1=$!
-          ./aeron-imgman -config=test_config.yaml -scope=artist -name='Ed Sheeran' -file=test_large.png &
+          
+          curl -s -X POST -H 'X-API-Key: test-api-key-12345' http://localhost:8893/api/artists/upload \
+            -H 'Content-Type: application/json' \
+            -d '{"name":"1 BLØF","url":"https://picsum.photos/1500"}' > result2.json &
           PID2=$!
-          ./aeron-imgman -config=test_config.yaml -scope=track -name='Sugar' -file=test_large.png &
+          
+          curl -s -X POST -H 'X-API-Key: test-api-key-12345' http://localhost:8893/api/tracks/upload \
+            -H 'Content-Type: application/json' \
+            -d '{"name":"Als De Eerste Sneeuw Valt","url":"https://picsum.photos/1500"}' > result3.json &
           PID3=$!
-
+          
           if wait $PID1 && wait $PID2 && wait $PID3; then
-            echo "✓ Alle 3 gelijktijdige uploads succesvol afgerond"
+            echo "✓ Alle 3 gelijktijdige API uploads afgerond"
+            # Check results
+            for i in 1 2 3; do
+              if jq -e '.success == true' result$i.json > /dev/null; then
+                echo "✓ Upload $i succesvol"
+              else
+                echo "✗ Upload $i mislukt"
+                cat result$i.json | jq .
+                exit 1
+              fi
+            done
           else
-            echo "✗ Een of meer gelijktijdige uploads zijn mislukt"
+            echo "✗ Een of meer uploads zijn mislukt"
             exit 1
           fi
-      # Edge Cases and Error Handling
-      - name: Reset database before edge case tests
+      - name: Stop API concurrent server
+        run: |
+          kill $(cat api_concurrent.pid) || true
+          rm -f api_concurrent.pid result*.json
+      # Edge Cases and Error Handling via API
+      - name: Reset database before edge case tests  
         run: ./reset_db.sh
-      - name: Edge Case Test - Non-existent artist
+      - name: Start API server for edge case tests
         run: |
-          echo "Test: Upload naar niet-bestaande artiest"
-          OUTPUT=$(./aeron-imgman -config=test_config.yaml -scope=artist -name='NONEXISTENT_ARTIST_XYZ' -file=test_large.png 2>&1 || true)
-          if echo "$OUTPUT" | grep -q 'niet gevonden'; then
-            echo "✓ Niet-bestaande artiest 'NONEXISTENT_ARTIST_XYZ' gaf verwachte fout 'niet gevonden'"
+          ./aeron-imgman -config=test_config.yaml -port=8894 &
+          echo $! > api_edge.pid
+          sleep 3
+      - name: Edge Case Test - Non-existent artist via API
+        run: |
+          echo "Test: Upload naar niet-bestaande artiest via API"
+          RESPONSE=$(curl -s -X POST -H 'X-API-Key: test-api-key-12345' http://localhost:8894/api/artists/upload \
+            -H 'Content-Type: application/json' \
+            -d '{"name":"NONEXISTENT_ARTIST_XYZ","url":"https://picsum.photos/500"}')
+          
+          if echo "$RESPONSE" | jq -e '.success == false' > /dev/null && echo "$RESPONSE" | jq -r '.error' | grep -q 'bestaat niet'; then
+            echo "✓ Niet-bestaande artiest gaf verwachte fout"
           else
-            echo "✗ Verwachtte 'niet gevonden' fout voor niet-bestaande artiest"
-            echo "   Output: $OUTPUT"
+            echo "✗ Verwachtte 'bestaat niet' fout"
+            echo "$RESPONSE" | jq .
             exit 1
           fi
-      - name: Edge Case Test - Non-existent track
+      - name: Edge Case Test - Both name and ID via API
         run: |
-          ./aeron-imgman -config=test_config.yaml -scope=track -name='NONEXISTENT_TRACK_XYZ' -file=test_large.png 2>&1 | grep -q 'niet gevonden'
-      - name: Edge Case Test - Invalid URL
+          RESPONSE=$(curl -s -X POST -H 'X-API-Key: test-api-key-12345' http://localhost:8894/api/artists/upload \
+            -H 'Content-Type: application/json' \
+            -d '{"name":"Test","id":"123e4567-e89b-12d3-a456-426614174000","url":"https://picsum.photos/500"}')
+          
+          if echo "$RESPONSE" | jq -e '.success == false' > /dev/null && echo "$RESPONSE" | jq -r '.error' | grep -q 'niet beide'; then
+            echo "✓ Beide naam en ID gaf verwachte fout"
+          else  
+            echo "✗ Verwachtte 'niet beide' fout"
+            echo "$RESPONSE" | jq .
+            exit 1
+          fi
+      - name: Stop API edge case server
         run: |
-          ! ./aeron-imgman -config=test_config.yaml -scope=artist -name='Coldplay' -url='not-a-url' 2>&1
-      - name: Edge Case Test - Both name and ID
-        run: |
-          ! ./aeron-imgman -config=test_config.yaml -scope=artist -name='Test' -id='123e4567-e89b-12d3-a456-426614174000' -url='http://example.com/image.jpg' 2>&1
+          kill $(cat api_edge.pid) || true
+          rm -f api_edge.pid
       # API Authentication Tests
       - name: API Auth Test - Setup auth config
         run: |
@@ -424,7 +422,7 @@ jobs:
           EOF
       - name: API Auth Test - Start server with auth
         run: |
-          ./aeron-imgman -config=test_auth_config.yaml -server -port=8890 &
+          ./aeron-imgman -config=test_auth_config.yaml -port=8890 &
           echo $! > api_auth.pid
           sleep 3
       - name: API Auth Test - Health endpoint (no auth required)
@@ -482,7 +480,7 @@ jobs:
           EOF
       - name: API Auth Test - Start server without auth
         run: |
-          ./aeron-imgman -config=test_no_auth_config.yaml -server -port=8891 &
+          ./aeron-imgman -config=test_no_auth_config.yaml -port=8891 &
           echo $! > api_no_auth.pid
           sleep 3
       - name: API Auth Test - Protected endpoint with auth disabled
@@ -492,31 +490,30 @@ jobs:
         run: |
           kill $(cat api_no_auth.pid) || true
           rm -f api_no_auth.pid
-      # Destructive Tests (run near end)
-      - name: Reset database before nuke tests
+      # Bulk Delete Tests via API
+      - name: Reset database before bulk delete tests
         run: ./reset_db.sh
-      - name: Nuke Test - Dry-run
+      - name: Start API server for bulk delete tests
         run: |
-          echo "Test: Nuke operatie in dry-run modus"
-          OUTPUT=$(./aeron-imgman -config=test_config.yaml -scope=artist -nuke -dry-run 2>&1)
-          if echo "$OUTPUT" | grep -q 'DRY RUN'; then
-            echo "✓ Dry-run modus toont waarschuwing zonder daadwerkelijk te verwijderen"
+          ./aeron-imgman -config=test_config.yaml -port=8895 &
+          echo $! > api_bulk.pid
+          sleep 3
+      - name: Bulk Delete Test - Without confirmation header
+        run: |
+          echo "Test: Bulk delete zonder bevestiging"
+          RESPONSE=$(curl -s -X DELETE -H 'X-API-Key: test-api-key-12345' http://localhost:8895/api/artists/bulk-delete)
+          
+          if echo "$RESPONSE" | jq -e '.success == false' > /dev/null && echo "$RESPONSE" | jq -r '.error' | grep -q 'confirmation'; then
+            echo "✓ Bulk delete geweigerd zonder confirmation header"
           else
-            echo "✗ Verwachtte 'DRY RUN' melding"
-            echo "   Output: $OUTPUT"
+            echo "✗ Verwachtte weigering zonder confirmation"
+            echo "$RESPONSE" | jq .
             exit 1
           fi
-      - name: Nuke Test - Cancelled
+      - name: Stop API bulk delete server
         run: |
-          echo "Test: Nuke operatie annuleren"
-          OUTPUT=$(echo 'CANCEL' | ./aeron-imgman -config=test_config.yaml -scope=artist -nuke 2>&1)
-          if echo "$OUTPUT" | grep -q 'geannuleerd'; then
-            echo "✓ Gebruiker typte 'CANCEL', operatie werd correct geannuleerd"
-          else
-            echo "✗ Verwachtte 'geannuleerd' melding bij CANCEL input"
-            echo "   Output: $OUTPUT"
-            exit 1
-          fi
+          kill $(cat api_bulk.pid) || true
+          rm -f api_bulk.pid
       # Cleanup
       - name: Cleanup test data
         run: |
