@@ -86,6 +86,28 @@ func (s *ImageService) UploadImage(params *ImageUploadParams) (*ImageUploadResul
 		return nil, err
 	}
 
+	// First check if the artist/track exists before downloading/processing the image
+	var itemName, itemTitle string
+	var itemID string
+
+	if params.Scope == ScopeArtist {
+		artist, err := lookupArtist(s.db, s.config.Database.Schema, params.Name, params.ID)
+		if err != nil {
+			return nil, err
+		}
+		itemName = artist.Name
+		itemID = artist.ID
+	} else {
+		track, err := lookupTrack(s.db, s.config.Database.Schema, params.Name, params.ID)
+		if err != nil {
+			return nil, err
+		}
+		itemName = track.Artist
+		itemTitle = track.Title
+		itemID = track.ID
+	}
+
+	// Now download/get the image data
 	var imageData []byte
 	var err error
 	if params.URL != "" {
@@ -97,44 +119,31 @@ func (s *ImageService) UploadImage(params *ImageUploadParams) (*ImageUploadResul
 		imageData = params.ImageData
 	}
 
+	// Process image
 	processingResult, err := processImage(imageData, s.config.Image)
 	if err != nil {
 		return nil, fmt.Errorf("verwerking mislukt: %w", err)
 	}
 
-	result := &ImageUploadResult{
+	// Update the database
+	if params.Scope == ScopeArtist {
+		if err := updateArtistImage(s.db, s.config.Database.Schema, itemID, processingResult.Data); err != nil {
+			return nil, fmt.Errorf("opslaan mislukt: %w", err)
+		}
+	} else {
+		if err := updateTrackImage(s.db, s.config.Database.Schema, itemID, processingResult.Data); err != nil {
+			return nil, fmt.Errorf("opslaan mislukt: %w", err)
+		}
+	}
+
+	return &ImageUploadResult{
 		OriginalSize:   processingResult.Original.Size,
 		OptimizedSize:  processingResult.Optimized.Size,
 		SavingsPercent: processingResult.Savings,
 		Encoder:        processingResult.Encoder,
-	}
-
-	if params.Scope == ScopeArtist {
-		artist, err := lookupArtist(s.db, s.config.Database.Schema, params.Name, params.ID)
-		if err != nil {
-			return nil, err
-		}
-
-		if err := updateArtistImage(s.db, s.config.Database.Schema, artist.ID, processingResult.Data); err != nil {
-			return nil, fmt.Errorf("opslaan mislukt: %w", err)
-		}
-
-		result.ItemName = artist.Name
-	} else {
-		track, err := lookupTrack(s.db, s.config.Database.Schema, params.Name, params.ID)
-		if err != nil {
-			return nil, err
-		}
-
-		if err := updateTrackImage(s.db, s.config.Database.Schema, track.ID, processingResult.Data); err != nil {
-			return nil, fmt.Errorf("opslaan mislukt: %w", err)
-		}
-
-		result.ItemName = track.Artist
-		result.ItemTitle = track.Title
-	}
-
-	return result, nil
+		ItemName:       itemName,
+		ItemTitle:      itemTitle,
+	}, nil
 }
 
 type ImageStats struct {
