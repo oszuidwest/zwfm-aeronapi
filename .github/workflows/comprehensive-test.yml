@@ -384,10 +384,62 @@ jobs:
             -H 'Content-Type: application/json' \
             -d '{"name":"Test","id":"123e4567-e89b-12d3-a456-426614174000","url":"https://picsum.photos/500"}')
           
-          if echo "$RESPONSE" | jq -e '.success == false' > /dev/null && echo "$RESPONSE" | jq -r '.error' | grep -q 'niet beide'; then
+          if echo "$RESPONSE" | jq -e '.success == false' > /dev/null && echo "$RESPONSE" | jq -r '.error' | grep -q 'kan niet zowel naam als id specificeren'; then
             echo "✓ Beide naam en ID gaf verwachte fout"
           else  
-            echo "✗ Verwachtte 'niet beide' fout"
+            echo "✗ Verwachtte 'kan niet zowel naam als id specificeren' fout"
+            echo "$RESPONSE" | jq .
+            exit 1
+          fi
+      - name: Edge Case Test - No name or ID
+        run: |
+          RESPONSE=$(curl -s -X POST -H 'X-API-Key: test-api-key-12345' http://localhost:8894/api/artists/upload \
+            -H 'Content-Type: application/json' \
+            -d '{"url":"https://picsum.photos/500"}')
+          
+          if echo "$RESPONSE" | jq -e '.success == false' > /dev/null && echo "$RESPONSE" | jq -r '.error' | grep -q 'moet naam of id specificeren'; then
+            echo "✓ Geen naam of ID gaf verwachte fout"
+          else  
+            echo "✗ Verwachtte 'moet naam of id specificeren' fout"
+            echo "$RESPONSE" | jq .
+            exit 1
+          fi
+      - name: Edge Case Test - No image source
+        run: |
+          RESPONSE=$(curl -s -X POST -H 'X-API-Key: test-api-key-12345' http://localhost:8894/api/artists/upload \
+            -H 'Content-Type: application/json' \
+            -d '{"name":"Test Artist"}')
+          
+          if echo "$RESPONSE" | jq -e '.success == false' > /dev/null && echo "$RESPONSE" | jq -r '.error' | grep -q 'afbeelding verplicht'; then
+            echo "✓ Geen afbeelding gaf verwachte fout"
+          else  
+            echo "✗ Verwachtte 'afbeelding verplicht' fout"
+            echo "$RESPONSE" | jq .
+            exit 1
+          fi
+      - name: Edge Case Test - Both URL and image
+        run: |
+          RESPONSE=$(curl -s -X POST -H 'X-API-Key: test-api-key-12345' http://localhost:8894/api/artists/upload \
+            -H 'Content-Type: application/json' \
+            -d '{"name":"Test Artist","url":"https://picsum.photos/500","image":"data:image/jpeg;base64,/9j/4AAQ"}')
+          
+          if echo "$RESPONSE" | jq -e '.success == false' > /dev/null && echo "$RESPONSE" | jq -r '.error' | grep -q 'gebruik URL of upload, niet beide'; then
+            echo "✓ Beide URL en image gaf verwachte fout"
+          else  
+            echo "✗ Verwachtte 'gebruik URL of upload, niet beide' fout"
+            echo "$RESPONSE" | jq .
+            exit 1
+          fi
+      - name: Edge Case Test - Invalid scope
+        run: |
+          RESPONSE=$(curl -s -X POST -H 'X-API-Key: test-api-key-12345' http://localhost:8894/api/invalid/upload \
+            -H 'Content-Type: application/json' \
+            -d '{"name":"Test","url":"https://picsum.photos/500"}')
+          
+          if echo "$RESPONSE" | jq -e '.success == false' > /dev/null; then
+            echo "✓ Ongeldig endpoint gaf fout"
+          else  
+            echo "✗ Verwachtte fout voor ongeldig endpoint"
             echo "$RESPONSE" | jq .
             exit 1
           fi
@@ -503,10 +555,10 @@ jobs:
           echo "Test: Bulk delete zonder bevestiging"
           RESPONSE=$(curl -s -X DELETE -H 'X-API-Key: test-api-key-12345' http://localhost:8895/api/artists/bulk-delete)
           
-          if echo "$RESPONSE" | jq -e '.success == false' > /dev/null && echo "$RESPONSE" | jq -r '.error' | grep -q 'confirmation'; then
+          if echo "$RESPONSE" | jq -e '.success == false' > /dev/null && echo "$RESPONSE" | jq -r '.error' | grep -q 'Ontbrekende bevestigingsheader'; then
             echo "✓ Bulk delete geweigerd zonder confirmation header"
           else
-            echo "✗ Verwachtte weigering zonder confirmation"
+            echo "✗ Verwachtte 'Ontbrekende bevestigingsheader' fout"
             echo "$RESPONSE" | jq .
             exit 1
           fi

@@ -49,7 +49,7 @@ func (s *AeronAPI) Start(port string) error {
 
 			fmt.Printf("[%s] %s\n", r.Method, r.URL.Path)
 			if r.Method != method {
-				s.sendError(w, "Method not allowed", http.StatusMethodNotAllowed)
+				s.sendError(w, "Methode niet toegestaan", http.StatusMethodNotAllowed)
 				return
 			}
 
@@ -60,7 +60,7 @@ func (s *AeronAPI) Start(port string) error {
 				}
 
 				if !s.isValidAPIKey(apiKey) {
-					s.sendError(w, "Unauthorized: Invalid or missing API key", http.StatusUnauthorized)
+					s.sendError(w, "Niet geautoriseerd: Ongeldige of ontbrekende API-sleutel", http.StatusUnauthorized)
 					return
 				}
 			}
@@ -118,7 +118,7 @@ func (s *AeronAPI) handleArtists(w http.ResponseWriter, r *http.Request) {
 func (s *AeronAPI) upload(w http.ResponseWriter, r *http.Request, scope string) {
 	var req ImageUploadRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		s.sendError(w, "Invalid request body", http.StatusBadRequest)
+		s.sendError(w, "Ongeldige aanvraag body", http.StatusBadRequest)
 		return
 	}
 
@@ -132,7 +132,7 @@ func (s *AeronAPI) upload(w http.ResponseWriter, r *http.Request, scope string) 
 	if req.Image != "" {
 		imageData, err := decodeBase64(req.Image)
 		if err != nil {
-			s.sendError(w, "Invalid base64 image", http.StatusBadRequest)
+			s.sendError(w, "Ongeldige base64 afbeelding", http.StatusBadRequest)
 			return
 		}
 		params.ImageData = imageData
@@ -152,11 +152,25 @@ func (s *AeronAPI) upload(w http.ResponseWriter, r *http.Request, scope string) 
 // errorCode returns the appropriate HTTP status code for an error
 func (s *AeronAPI) errorCode(err error) int {
 	errorMsg := err.Error()
+
+	// 404 Not Found errors
+	if strings.Contains(errorMsg, ErrSuffixNotExists) {
+		return http.StatusNotFound
+	}
+
+	// 400 Bad Request errors
 	if errorMsg == "moet naam of id specificeren" ||
 		errorMsg == "kan niet zowel naam als id specificeren" ||
-		strings.Contains(errorMsg, ErrSuffixNotExists) {
+		errorMsg == "afbeelding verplicht" ||
+		errorMsg == "gebruik URL of upload, niet beide" ||
+		strings.Contains(errorMsg, "ongeldig type") ||
+		strings.Contains(errorMsg, "te klein") ||
+		strings.Contains(errorMsg, "niet ondersteund") ||
+		strings.Contains(errorMsg, "ongeldige") {
 		return http.StatusBadRequest
 	}
+
+	// 500 Internal Server Error for everything else
 	return http.StatusInternalServerError
 }
 
@@ -197,7 +211,7 @@ func (s *AeronAPI) bulkDelete(w http.ResponseWriter, r *http.Request, scope stri
 	const confirmValue = "VERWIJDER ALLES"
 
 	if r.Header.Get(confirmHeader) != confirmValue {
-		s.sendError(w, "Missing confirmation header: "+confirmHeader, http.StatusBadRequest)
+		s.sendError(w, "Ontbrekende bevestigingsheader: "+confirmHeader, http.StatusBadRequest)
 		return
 	}
 
