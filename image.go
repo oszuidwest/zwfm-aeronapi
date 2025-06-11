@@ -15,6 +15,17 @@ import (
 
 const kilobyte = 1024
 
+// formatSizeKB formats bytes as KB for display
+func formatSizeKB(bytes int) string {
+	return fmt.Sprintf("%d KB", bytes/kilobyte)
+}
+
+// getImageDimensions returns the width and height of an image
+func getImageDimensions(img image.Image) (width, height int) {
+	bounds := img.Bounds()
+	return bounds.Dx(), bounds.Dy()
+}
+
 type ImageProcessingResult struct {
 	Data      []byte
 	Format    string
@@ -130,8 +141,7 @@ func (opt *ImageOptimizer) convertPNGToJPEG(data []byte) ([]byte, string, string
 
 func (opt *ImageOptimizer) processImage(img image.Image, originalData []byte, outputFormat string) ([]byte, string, string, error) {
 	// Resize if image exceeds target dimensions to reduce memory usage
-	bounds := img.Bounds()
-	width, height := bounds.Dx(), bounds.Dy()
+	width, height := getImageDimensions(img)
 	if width > opt.Config.TargetWidth || height > opt.Config.TargetHeight {
 		img = opt.resizeImage(img, opt.Config.TargetWidth, opt.Config.TargetHeight)
 	}
@@ -150,8 +160,7 @@ func (opt *ImageOptimizer) processImage(img image.Image, originalData []byte, ou
 }
 
 func (opt *ImageOptimizer) resizeImage(img image.Image, maxWidth, maxHeight int) image.Image {
-	bounds := img.Bounds()
-	width, height := bounds.Dx(), bounds.Dy()
+	width, height := getImageDimensions(img)
 
 	scaleX := float64(maxWidth) / float64(width)
 	scaleY := float64(maxHeight) / float64(height)
@@ -193,17 +202,17 @@ func encodeToJPEG(img image.Image, config ImageConfig) ([]byte, string, error) {
 	// Determine the best result
 	if jpegliErr == nil && len(jpegliData) > 0 && len(jpegliData) < len(standardData) {
 		// Jpegli produced smaller file
-		winnerInfo := fmt.Sprintf("jpegli (%d KB) vs standaard (%d KB)", len(jpegliData)/kilobyte, len(standardData)/kilobyte)
+		winnerInfo := fmt.Sprintf("jpegli (%s) vs standaard (%s)", formatSizeKB(len(jpegliData)), formatSizeKB(len(standardData)))
 		return jpegliData, winnerInfo, nil
 	}
 
 	// Standard JPEG is better or Jpegli failed
 	if jpegliErr != nil {
-		winnerInfo := fmt.Sprintf("standaard (%d KB) - jpegli faalde", len(standardData)/kilobyte)
+		winnerInfo := fmt.Sprintf("standaard (%s) - jpegli faalde", formatSizeKB(len(standardData)))
 		return standardData, winnerInfo, nil
 	}
 
-	winnerInfo := fmt.Sprintf("standaard (%d KB) vs jpegli (%d KB)", len(standardData)/kilobyte, len(jpegliData)/kilobyte)
+	winnerInfo := fmt.Sprintf("standaard (%s) vs jpegli (%s)", formatSizeKB(len(standardData)), formatSizeKB(len(jpegliData)))
 	return standardData, winnerInfo, nil
 }
 
