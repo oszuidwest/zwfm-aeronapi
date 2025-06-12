@@ -58,18 +58,15 @@ jobs:
           cache: true
       - name: Download dependencies
         run: go mod download
-      - name: Set version from tag or input
+      - name: Detect version
         id: version
         run: |
-          if [ "${{ github.event_name }}" = "push" ] && [ "${{ github.ref_type }}" = "tag" ]; then
-            VERSION=${{ github.ref_name }}
-          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            VERSION=${{ github.event.inputs.version }}
-          else
-            VERSION="v0.0.0-$(git rev-parse --short HEAD)"
-          fi
+          # Determine version from tag or input
+          VERSION="${{ github.event.inputs.version || github.ref_name }}"
+          
+          # Set outputs
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
-          echo "Version: ${VERSION}"
+          echo "is_prerelease=$([[ "$VERSION" =~ -(edge|alpha|beta|rc|pre|dev) ]] || [[ "$VERSION" == "edge" ]] && echo true || echo false)" >> $GITHUB_OUTPUT
       - name: Build binary
         env:
           GOOS: ${{ matrix.goos }}
@@ -108,17 +105,15 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-      - name: Set version from tag or input
+      - name: Detect version
         id: version
         run: |
-          if [ "${{ github.event_name }}" = "push" ] && [ "${{ github.ref_type }}" = "tag" ]; then
-            VERSION=${{ github.ref_name }}
-          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            VERSION=${{ github.event.inputs.version }}
-          else
-            VERSION="v0.0.0-$(git rev-parse --short HEAD)"
-          fi
+          # Determine version from tag or input
+          VERSION="${{ github.event.inputs.version || github.ref_name }}"
+          
+          # Set outputs
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "is_prerelease=$([[ "$VERSION" =~ -(edge|alpha|beta|rc|pre|dev) ]] || [[ "$VERSION" == "edge" ]] && echo true || echo false)" >> $GITHUB_OUTPUT
       - name: Download binary artifacts
         uses: actions/download-artifact@v4
         with:
@@ -130,8 +125,20 @@ jobs:
           ls -la ./artifacts/
       - name: Generate release notes
         run: |
-          cat > RELEASE_NOTES.md << 'EOF'
+          if [ "${{ steps.version.outputs.is_prerelease }}" = "true" ]; then
+            cat > RELEASE_NOTES.md << 'EOF'
+          > [!WARNING]
+          > Dit is een pre-release versie. Deze versie kan instabiel zijn en is bedoeld voor testing.
+          
           ## Downloads
+          EOF
+          else
+            cat > RELEASE_NOTES.md << 'EOF'
+          ## Downloads
+          EOF
+          fi
+          
+          cat >> RELEASE_NOTES.md << 'EOF'
 
           Download het juiste bestand voor je platform:
 
@@ -172,6 +179,6 @@ jobs:
           body_path: RELEASE_NOTES.md
           files: ./artifacts/*
           draft: false
-          prerelease: false
+          prerelease: ${{ steps.version.outputs.is_prerelease == 'true' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
