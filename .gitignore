@@ -49,3 +49,4 @@ artifacts/
 CLAUDE.md
 /docker
 .yamlfmt
+/dump
