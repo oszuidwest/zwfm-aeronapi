@@ -20,6 +20,8 @@ jobs:
   build:
     needs: comprehensive-test
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     strategy:
       matrix:
         include:
