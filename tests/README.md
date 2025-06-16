@@ -1,6 +1,6 @@
-# Aeron Image Manager Tests
+# ZWFM Aeron API Tests
 
-This directory contains test fixtures and data for the Aeron Image Manager project.
+This directory contains test fixtures and data for the ZWFM Aeron API project.
 
 ## Structure
 
@@ -32,8 +32,8 @@ This starts a PostgreSQL container on port 5433 with mock data.
 ### 2. Run the application manually
 
 ```bash
-go build -o aeron-imgman .
-./aeron-imgman -config=tests/fixtures/test_config.yaml -list
+go build -o zwfm-aeronapi .
+./zwfm-aeronapi -config=tests/fixtures/test_config.yaml -list
 ```
 
 ## Test Data

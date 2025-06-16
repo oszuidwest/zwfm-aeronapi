@@ -1,8 +1,9 @@
 # Binaries
-aeron-imgman
-aeron-imgman.exe
-aeron-imgbatch
-aeron-imgbatch.exe
+zwfm-aeronapi
+zwfm-aeronapi.exe
+
+# Don't ignore the installer
+!install.ps1
 
 # Go build artifacts
 *.exe
@@ -32,6 +33,7 @@ go.work
 Thumbs.db
 
 # Local config files (keep examples)
+config.yaml
 local-config.yaml
 *.local.yaml
 .yamlfmt
@@ -42,11 +44,9 @@ test_report.md
 test_*.png
 
 # Build artifacts and releases
-aeron-imgman-*
-aeron-imgbatch-*
+zwfm-aeronapi-*
 release-assets/
 artifacts/
-CLAUDE.md
 /docker
-.yamlfmt
 /dump
+CLAUDE.md

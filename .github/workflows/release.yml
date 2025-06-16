@@ -11,7 +11,7 @@ on:
       - 'v*'
 env:
   GO_VERSION: '1.24'
-  APP_NAME: 'aeron-imgman'
+  APP_NAME: 'zwfm-aeronapi'
 jobs:
   # Run comprehensive tests first
   comprehensive-test:
@@ -143,33 +143,33 @@ jobs:
           Download het juiste bestand voor je platform:
 
           ### Linux
-          - `aeron-imgman-linux-amd64` - 64-bit Intel/AMD
-          - `aeron-imgman-linux-arm64` - 64-bit ARM (Raspberry Pi 4/5, AWS Graviton)
-          - `aeron-imgman-linux-arm7` - 32-bit ARM (Raspberry Pi 2/3)
+          - `zwfm-aeronapi-linux-amd64` - 64-bit Intel/AMD
+          - `zwfm-aeronapi-linux-arm64` - 64-bit ARM (Raspberry Pi 4/5, AWS Graviton)
+          - `zwfm-aeronapi-linux-arm7` - 32-bit ARM (Raspberry Pi 2/3)
 
           ### Windows
-          - `aeron-imgman-windows-amd64.exe` - 64-bit Intel/AMD
-          - `aeron-imgman-windows-arm64.exe` - 64-bit ARM
+          - `zwfm-aeronapi-windows-amd64.exe` - 64-bit Intel/AMD
+          - `zwfm-aeronapi-windows-arm64.exe` - 64-bit ARM
 
           ### macOS
-          - `aeron-imgman-darwin-amd64` - Intel Macs
-          - `aeron-imgman-darwin-arm64` - Apple Silicon (M1/2/3/4/etc...)
+          - `zwfm-aeronapi-darwin-amd64` - Intel Macs
+          - `zwfm-aeronapi-darwin-arm64` - Apple Silicon (M1/2/3/4/etc...)
 
           ## Installatie
 
           1. Download het juiste bestand voor je platform
-          2. Maak het uitvoerbaar (Linux/macOS): `chmod +x aeron-imgman-*`
+          2. Maak het uitvoerbaar (Linux/macOS): `chmod +x zwfm-aeronapi-*`
           3. Verplaats naar een directory in je PATH (optioneel)
 
           ## Docker
 
           ```bash
-          docker pull ghcr.io/oszuidwest/aeron-imgman:${{ steps.version.outputs.version }}
+          docker pull ghcr.io/oszuidwest/zwfm-aeronapi:${{ steps.version.outputs.version }}
           ```
 
           ## Documentatie
 
-          Voor configuratie en gebruiksvoorbeelden, zie de [README](https://github.com/oszuidwest/aeron-imgman#readme).
+          Voor configuratie en gebruiksvoorbeelden, zie de [README](https://github.com/oszuidwest/zwfm-aeronapi#readme).
           EOF
       - name: Create Release
         uses: softprops/action-gh-release@v2

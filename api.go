@@ -2,10 +2,9 @@ package main
 
 import (
 	"encoding/json"
-	"fmt"
+	"log/slog"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -17,15 +16,7 @@ type AeronAPI struct {
 	config  *Config
 }
 
-type APIResponse struct {
-	Success bool        `json:"success"`
-	Data    interface{} `json:"data,omitempty"`
-	Error   string      `json:"error,omitempty"`
-}
-
 type ImageUploadRequest struct {
-	Name  string `json:"name"`
-	ID    string `json:"id"`
 	URL   string `json:"url"`
 	Image string `json:"image"`
 }
@@ -48,11 +39,10 @@ func (s *AeronAPI) Start(port string) error {
 
 	// Add Chi built-in middleware
 	router.Use(middleware.RequestID)
-	router.Use(middleware.Logger)
 	router.Use(middleware.Recoverer)
 	router.Use(middleware.RealIP)
-	router.Use(middleware.Compress(5))               // Replaces our gzip middleware
-	router.Use(middleware.Timeout(30 * time.Second)) // Replaces our timeout middleware
+	router.Use(middleware.Compress(5))
+	router.Use(middleware.Timeout(30 * time.Second))
 
 	// Add custom middleware
 	router.Use(s.corsMiddleware)
@@ -69,44 +59,34 @@ func (s *AeronAPI) Start(port string) error {
 		r.Group(func(r chi.Router) {
 			r.Use(s.authMiddleware)
 
-			// Artists subroute
-			r.Route("/artists", func(r chi.Router) {
-				r.Get("/", s.handleArtists)
-				r.Delete("/bulk-delete", s.handleArtistBulkDelete)
-
-				r.Route("/{id}", func(r chi.Router) {
-					r.Get("/", s.handleArtistByID)
-					r.Route("/image", func(r chi.Router) {
-						r.Get("/", s.handleGetArtistImage)
-						r.Post("/", s.handlePostArtistImage)
-						r.Delete("/", s.handleDeleteArtistImage)
-					})
-				})
-			})
-
-			// Tracks subroute
-			r.Route("/tracks", func(r chi.Router) {
-				r.Get("/", s.handleTracks)
-				r.Post("/upload", s.handleTrackUpload)
-				r.Delete("/bulk-delete", s.handleTrackBulkDelete)
-
-				r.Route("/{id}", func(r chi.Router) {
-					r.Get("/", s.handleTrackByID)
-					r.Route("/image", func(r chi.Router) {
-						r.Get("/", s.handleTrackImage)
-						r.Post("/", s.handleTrackImageUpload)
-						r.Delete("/", s.handleDeleteTrackImage)
-					})
-				})
-			})
+			// Generic entity routes for both artists and tracks
+			s.setupEntityRoutes(r, "/artists", ScopeArtist)
+			s.setupEntityRoutes(r, "/tracks", ScopeTrack)
 
 			// Playlist
 			r.Get("/playlist", s.handlePlaylist)
 		})
 	})
 
-	fmt.Printf("API Server gestart op poort %s\n", port)
+	// API server is now listening
 	return http.ListenAndServe(":"+port, router)
+}
+
+// setupEntityRoutes configures routes for an entity type (artist/track)
+func (s *AeronAPI) setupEntityRoutes(r chi.Router, path string, scope string) {
+	r.Route(path, func(r chi.Router) {
+		r.Get("/", s.handleStats(scope))
+		r.Delete("/bulk-delete", s.handleBulkDelete(scope))
+
+		r.Route("/{id}", func(r chi.Router) {
+			r.Get("/", s.handleEntityByID(scope))
+			r.Route("/image", func(r chi.Router) {
+				r.Get("/", s.handleGetImage(scope))
+				r.Post("/", s.handleImageUpload(scope))
+				r.Delete("/", s.handleDeleteImage(scope))
+			})
+		})
+	})
 }
 
 // authMiddleware provides API key authentication
@@ -124,37 +104,15 @@ func (s *AeronAPI) authMiddleware(next http.Handler) http.Handler {
 		}
 
 		if !s.isValidAPIKey(apiKey) {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusUnauthorized)
-			_ = json.NewEncoder(w).Encode(APIResponse{
-				Success: false,
-				Error:   "Niet geautoriseerd: Ongeldige of ontbrekende API-sleutel",
-			})
+			slog.Warn("Authenticatie mislukt",
+				"reason", "ongeldige_api_key",
+				"path", r.URL.Path)
+
+			respondError(w, http.StatusUnauthorized, "Niet geautoriseerd: ongeldige of ontbrekende API-sleutel")
 			return
 		}
 
 		next.ServeHTTP(w, r)
-	})
-}
-
-// Helper functions for JSON responses
-func (s *AeronAPI) sendJSON(w http.ResponseWriter, statusCode int, data interface{}) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(statusCode)
-	_ = json.NewEncoder(w).Encode(data)
-}
-
-func (s *AeronAPI) sendSuccess(w http.ResponseWriter, data interface{}) {
-	s.sendJSON(w, http.StatusOK, APIResponse{
-		Success: true,
-		Data:    data,
-	})
-}
-
-func (s *AeronAPI) sendError(w http.ResponseWriter, message string, code int) {
-	s.sendJSON(w, code, APIResponse{
-		Success: false,
-		Error:   message,
 	})
 }
 
@@ -175,110 +133,59 @@ func (s *AeronAPI) corsMiddleware(next http.Handler) http.Handler {
 }
 
 func (s *AeronAPI) handleHealth(w http.ResponseWriter, r *http.Request) {
-	s.sendSuccess(w, map[string]string{
+	respondJSON(w, http.StatusOK, map[string]string{
 		"status":   "healthy",
 		"version":  Version,
 		"database": s.service.config.Database.Name,
 	})
 }
 
-// stats handles statistics requests for any scope
-func (s *AeronAPI) stats(w http.ResponseWriter, r *http.Request, scope string) {
-	stats, err := s.service.GetStatistics(scope)
-	if err != nil {
-		s.sendError(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	response := ImageStatsResponse{
-		Total:         stats.Total,
-		WithImages:    stats.WithImages,
-		WithoutImages: stats.WithoutImages,
-	}
-
-	s.sendSuccess(w, response)
-}
-
-func (s *AeronAPI) handleArtists(w http.ResponseWriter, r *http.Request) {
-	s.stats(w, r, ScopeArtist)
-}
-
-func (s *AeronAPI) handleArtistByID(w http.ResponseWriter, r *http.Request) {
-	artistID := chi.URLParam(r, "id")
-	if artistID == "" {
-		s.sendError(w, "Artiest ID verplicht", http.StatusBadRequest)
-		return
-	}
-
-	artist, err := s.service.GetArtistByID(artistID)
-	if err != nil {
-		statusCode := s.errorCode(err)
-		s.sendError(w, err.Error(), statusCode)
-		return
-	}
-
-	s.sendSuccess(w, artist)
-}
-
-// upload handles image upload requests for any scope
-func (s *AeronAPI) upload(w http.ResponseWriter, r *http.Request, scope string) {
-	var req ImageUploadRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		s.sendError(w, "Ongeldige aanvraag body", http.StatusBadRequest)
-		return
-	}
-
-	params := &ImageUploadParams{
-		Scope: scope,
-		Name:  req.Name,
-		ID:    req.ID,
-		URL:   req.URL,
-	}
-
-	if req.Image != "" {
-		imageData, err := decodeBase64(req.Image)
+// handleStats returns a handler for statistics requests
+func (s *AeronAPI) handleStats(scope string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		stats, err := s.service.GetStatistics(scope)
 		if err != nil {
-			s.sendError(w, "Ongeldige base64 afbeelding", http.StatusBadRequest)
+			respondError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		params.ImageData = imageData
-	}
 
-	result, err := s.service.UploadImage(params)
-	if err != nil {
-		statusCode := s.errorCode(err)
-		s.sendError(w, err.Error(), statusCode)
-		return
-	}
+		response := ImageStatsResponse{
+			Total:         stats.Total,
+			WithImages:    stats.WithImages,
+			WithoutImages: stats.WithoutImages,
+		}
 
-	response := s.uploadResponse(result, scope)
-	s.sendSuccess(w, response)
+		respondJSON(w, http.StatusOK, response)
+	}
 }
 
-// errorCode returns the appropriate HTTP status code for an error
-func (s *AeronAPI) errorCode(err error) int {
-	errorMsg := err.Error()
+// handleEntityByID returns a handler for retrieving entity details
+func (s *AeronAPI) handleEntityByID(scope string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		entityID := chi.URLParam(r, "id")
+		entityType := GetEntityType(scope)
 
-	// 404 Not Found errors
-	if strings.Contains(errorMsg, ErrSuffixNotExists) ||
-		strings.Contains(errorMsg, "heeft geen afbeelding") {
-		return http.StatusNotFound
+		if err := ValidateEntityID(entityID, entityType); err != nil {
+			respondError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+
+		var data interface{}
+		var err error
+		if scope == ScopeArtist {
+			data, err = getArtistByID(s.service.db, s.config.Database.Schema, entityID)
+		} else {
+			data, err = getTrackByID(s.service.db, s.config.Database.Schema, entityID)
+		}
+
+		if err != nil {
+			statusCode := errorCode(err)
+			respondError(w, statusCode, err.Error())
+			return
+		}
+
+		respondJSON(w, http.StatusOK, data)
 	}
-
-	// 400 Bad Request errors
-	if errorMsg == "moet naam of id specificeren" ||
-		errorMsg == "kan niet zowel naam als id specificeren" ||
-		errorMsg == "afbeelding verplicht" ||
-		errorMsg == "gebruik URL of upload, niet beide" ||
-		strings.Contains(errorMsg, "ongeldig type") ||
-		strings.Contains(errorMsg, "te klein") ||
-		strings.Contains(errorMsg, "niet ondersteund") ||
-		strings.Contains(errorMsg, "ongeldige") {
-		return http.StatusBadRequest
-	}
-
-	// 500 Internal Server Error for everything else
-	return http.StatusInternalServerError
 }
 
 // uploadResponse creates the response object for upload results
@@ -300,207 +207,156 @@ func (s *AeronAPI) uploadResponse(result *ImageUploadResult, scope string) map[s
 	return response
 }
 
-func (s *AeronAPI) handleTracks(w http.ResponseWriter, r *http.Request) {
-	s.stats(w, r, ScopeTrack)
-}
+// handleBulkDelete returns a handler for bulk image deletion
+func (s *AeronAPI) handleBulkDelete(scope string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		const confirmHeader = "X-Confirm-Bulk-Delete"
+		const confirmValue = "VERWIJDER ALLES"
 
-func (s *AeronAPI) handleTrackByID(w http.ResponseWriter, r *http.Request) {
-	trackID := chi.URLParam(r, "id")
-	if trackID == "" {
-		s.sendError(w, "Track ID verplicht", http.StatusBadRequest)
-		return
-	}
-
-	track, err := s.service.GetTrackByID(trackID)
-	if err != nil {
-		statusCode := s.errorCode(err)
-		s.sendError(w, err.Error(), statusCode)
-		return
-	}
-
-	s.sendSuccess(w, track)
-}
-
-func (s *AeronAPI) handleTrackUpload(w http.ResponseWriter, r *http.Request) {
-	s.upload(w, r, ScopeTrack)
-}
-
-// bulkDelete handles image deletion requests for any scope
-func (s *AeronAPI) bulkDelete(w http.ResponseWriter, r *http.Request, scope string) {
-	const confirmHeader = "X-Confirm-Bulk-Delete"
-	const confirmValue = "VERWIJDER ALLES"
-
-	if r.Header.Get(confirmHeader) != confirmValue {
-		s.sendError(w, "Ontbrekende bevestigingsheader: "+confirmHeader, http.StatusBadRequest)
-		return
-	}
-
-	result, err := s.service.DeleteAllImages(scope)
-	if err != nil {
-		s.sendError(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	itemType := ItemTypeArtist
-	if scope == ScopeTrack {
-		itemType = ItemTypeTrack
-	}
-
-	s.sendSuccess(w, map[string]interface{}{
-		"deleted": result.Deleted,
-		"message": fmt.Sprintf("%d %s afbeeldingen verwijderd", result.Deleted, itemType),
-	})
-}
-
-func (s *AeronAPI) handleArtistBulkDelete(w http.ResponseWriter, r *http.Request) {
-	s.bulkDelete(w, r, ScopeArtist)
-}
-
-func (s *AeronAPI) handleTrackBulkDelete(w http.ResponseWriter, r *http.Request) {
-	s.bulkDelete(w, r, ScopeTrack)
-}
-
-// handleGetImage is a generic handler for retrieving artist and track images
-func (s *AeronAPI) handleGetImage(w http.ResponseWriter, r *http.Request, scope string) {
-	entityID := chi.URLParam(r, "id")
-	if entityID == "" {
-		entityType := "Artiest"
-		if scope == ScopeTrack {
-			entityType = "Track"
-		}
-		s.sendError(w, entityType+" ID verplicht", http.StatusBadRequest)
-		return
-	}
-
-	var imageData []byte
-	var err error
-	if scope == ScopeArtist {
-		imageData, err = s.service.GetArtistImage(entityID)
-	} else {
-		imageData, err = s.service.GetTrackImage(entityID)
-	}
-
-	if err != nil {
-		statusCode := s.errorCode(err)
-		s.sendError(w, err.Error(), statusCode)
-		return
-	}
-
-	// Override content type for image response
-	w.Header().Del("Content-Type") // Remove JSON header set by middleware
-	w.Header().Set("Content-Type", detectImageContentType(imageData))
-	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(imageData)))
-
-	// Write image data directly
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(imageData)
-}
-
-func (s *AeronAPI) handleGetArtistImage(w http.ResponseWriter, r *http.Request) {
-	s.handleGetImage(w, r, ScopeArtist)
-}
-
-// handleImageUpload is a generic handler for both artist and track image uploads
-func (s *AeronAPI) handleImageUpload(w http.ResponseWriter, r *http.Request, scope string) {
-	entityID := chi.URLParam(r, "id")
-	if entityID == "" {
-		entityType := "Artiest"
-		if scope == ScopeTrack {
-			entityType = "Track"
-		}
-		s.sendError(w, entityType+" ID verplicht", http.StatusBadRequest)
-		return
-	}
-
-	var req ImageUploadRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		s.sendError(w, "Ongeldige aanvraag body", http.StatusBadRequest)
-		return
-	}
-
-	// For image endpoint, we only use ID - ignore any name field
-	params := &ImageUploadParams{
-		Scope: scope,
-		ID:    entityID,
-		URL:   req.URL,
-	}
-
-	if req.Image != "" {
-		imageData, err := decodeBase64(req.Image)
-		if err != nil {
-			s.sendError(w, "Ongeldige base64 afbeelding", http.StatusBadRequest)
+		if r.Header.Get(confirmHeader) != confirmValue {
+			respondError(w, http.StatusBadRequest, "Ontbrekende bevestigingsheader: "+confirmHeader)
 			return
 		}
-		params.ImageData = imageData
-	}
 
-	result, err := s.service.UploadImage(params)
-	if err != nil {
-		statusCode := s.errorCode(err)
-		s.sendError(w, err.Error(), statusCode)
-		return
-	}
-
-	response := s.uploadResponse(result, scope)
-	s.sendSuccess(w, response)
-}
-
-func (s *AeronAPI) handlePostArtistImage(w http.ResponseWriter, r *http.Request) {
-	s.handleImageUpload(w, r, ScopeArtist)
-}
-
-func (s *AeronAPI) handleTrackImageUpload(w http.ResponseWriter, r *http.Request) {
-	s.handleImageUpload(w, r, ScopeTrack)
-}
-
-func (s *AeronAPI) handleTrackImage(w http.ResponseWriter, r *http.Request) {
-	s.handleGetImage(w, r, ScopeTrack)
-}
-
-// handleDeleteImage is a generic handler for deleting artist and track images
-func (s *AeronAPI) handleDeleteImage(w http.ResponseWriter, r *http.Request, scope string) {
-	entityID := chi.URLParam(r, "id")
-	if entityID == "" {
-		entityType := "Artiest"
-		if scope == ScopeTrack {
-			entityType = "Track"
+		result, err := s.service.DeleteAllImages(scope)
+		if err != nil {
+			respondError(w, http.StatusInternalServerError, err.Error())
+			return
 		}
-		s.sendError(w, entityType+" ID verplicht", http.StatusBadRequest)
-		return
-	}
 
-	var err error
-	if scope == ScopeArtist {
-		err = s.service.DeleteArtistImage(entityID)
-	} else {
-		err = s.service.DeleteTrackImage(entityID)
-	}
+		itemType := ItemTypeArtist
+		if scope == ScopeTrack {
+			itemType = ItemTypeTrack
+		}
 
-	if err != nil {
-		statusCode := s.errorCode(err)
-		s.sendError(w, err.Error(), statusCode)
-		return
+		message := strconv.FormatInt(result.Deleted, 10) + " " + itemType + "-afbeeldingen verwijderd"
+		respondJSON(w, http.StatusOK, map[string]interface{}{
+			"deleted": result.Deleted,
+			"message": message,
+		})
 	}
-
-	entityType := "Artiest"
-	idField := "artist_id"
-	if scope == ScopeTrack {
-		entityType = "Track"
-		idField = "track_id"
-	}
-
-	s.sendSuccess(w, map[string]string{
-		"message": entityType + " afbeelding succesvol verwijderd",
-		idField:   entityID,
-	})
 }
 
-func (s *AeronAPI) handleDeleteArtistImage(w http.ResponseWriter, r *http.Request) {
-	s.handleDeleteImage(w, r, ScopeArtist)
+// handleGetImage returns a handler for retrieving images
+func (s *AeronAPI) handleGetImage(scope string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		entityID := chi.URLParam(r, "id")
+		entityType := GetEntityType(scope)
+
+		if err := ValidateEntityID(entityID, entityType); err != nil {
+			respondError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+
+		table := tableArtist
+		if scope == ScopeTrack {
+			table = tableTrack
+		}
+		imageData, err := getEntityImage(s.service.db, s.config.Database.Schema, table, entityID)
+
+		if err != nil {
+			statusCode := errorCode(err)
+			respondError(w, statusCode, err.Error())
+			return
+		}
+
+		// Override content type for image response
+		w.Header().Del("Content-Type") // Remove JSON header set by middleware
+		w.Header().Set("Content-Type", detectImageContentType(imageData))
+		w.Header().Set("Content-Length", strconv.Itoa(len(imageData)))
+
+		// Write image data directly
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(imageData)
+	}
 }
 
-func (s *AeronAPI) handleDeleteTrackImage(w http.ResponseWriter, r *http.Request) {
-	s.handleDeleteImage(w, r, ScopeTrack)
+// handleImageUpload returns a handler for image uploads
+func (s *AeronAPI) handleImageUpload(scope string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		entityID := chi.URLParam(r, "id")
+		entityType := GetEntityType(scope)
+
+		if err := ValidateEntityID(entityID, entityType); err != nil {
+			respondError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+
+		var req ImageUploadRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			respondError(w, http.StatusBadRequest, "Ongeldige aanvraaginhoud")
+			return
+		}
+
+		// For image endpoint, we only use ID - ignore any name field
+		params := &ImageUploadParams{
+			Scope: scope,
+			ID:    entityID,
+			URL:   req.URL,
+		}
+
+		if req.Image != "" {
+			imageData, err := decodeBase64(req.Image)
+			if err != nil {
+				respondError(w, http.StatusBadRequest, "Ongeldige base64-afbeelding")
+				return
+			}
+			params.ImageData = imageData
+		}
+
+		result, err := s.service.UploadImage(params)
+		if err != nil {
+			statusCode := errorCode(err)
+			respondError(w, statusCode, err.Error())
+			return
+		}
+
+		response := s.uploadResponse(result, scope)
+		respondJSON(w, http.StatusOK, response)
+	}
+}
+
+// handleDeleteImage returns a handler for deleting images
+func (s *AeronAPI) handleDeleteImage(scope string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		entityID := chi.URLParam(r, "id")
+		entityType := GetEntityType(scope)
+
+		if err := ValidateEntityID(entityID, entityType); err != nil {
+			respondError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+
+		table := tableArtist
+		logMsg := "Artiest afbeelding verwijderen mislukt"
+		logField := "artist_id"
+		if scope == ScopeTrack {
+			table = tableTrack
+			logMsg = "Track afbeelding verwijderen mislukt"
+			logField = "track_id"
+		}
+
+		err := deleteEntityImage(s.service.db, s.config.Database.Schema, table, entityID)
+		if err != nil {
+			slog.Error(logMsg, logField, entityID, "error", err)
+		}
+
+		if err != nil {
+			statusCode := errorCode(err)
+			respondError(w, statusCode, err.Error())
+			return
+		}
+
+		idField := "artist_id"
+		if scope == ScopeTrack {
+			idField = "track_id"
+		}
+
+		respondJSON(w, http.StatusOK, map[string]string{
+			"message": entityType + "-afbeelding succesvol verwijderd",
+			idField:   entityID,
+		})
+	}
 }
 
 func (s *AeronAPI) handlePlaylist(w http.ResponseWriter, r *http.Request) {
@@ -551,13 +407,13 @@ func (s *AeronAPI) handlePlaylist(w http.ResponseWriter, r *http.Request) {
 		opts.SortDesc = true
 	}
 
-	playlist, err := s.service.GetPlaylist(opts)
+	playlist, err := getPlaylist(s.service.db, s.config.Database.Schema, opts)
 	if err != nil {
-		s.sendError(w, err.Error(), http.StatusInternalServerError)
+		respondError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	s.sendSuccess(w, playlist)
+	respondJSON(w, http.StatusOK, playlist)
 }
 
 func (s *AeronAPI) isValidAPIKey(key string) bool {

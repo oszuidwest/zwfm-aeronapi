@@ -27,7 +27,7 @@ ARG BUILD_TIME
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build \
     -ldflags="-w -s -extldflags '-static' -X main.Version=${VERSION} -X main.Commit=${COMMIT} -X main.BuildTime=${BUILD_TIME}" \
     -a -installsuffix cgo \
-    -o aeron-imgman .
+    -o zwfm-aeronapi .
 
 # Runtime stage
 FROM alpine:latest
@@ -43,7 +43,7 @@ RUN addgroup -g 1000 aeron && \
 WORKDIR /app
 
 # Copy binary from builder
-COPY --from=builder /app/aeron-imgman /app/aeron-imgman
+COPY --from=builder /app/zwfm-aeronapi /app/zwfm-aeronapi
 
 # Copy config file (if exists)
 COPY --chown=aeron:aeron config.yaml* /app/
@@ -62,5 +62,5 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
     CMD wget --no-verbose --tries=1 --spider http://localhost:8080/api/health || exit 1
 
 # Start API server by default
-ENTRYPOINT ["/app/aeron-imgman"]
+ENTRYPOINT ["/app/zwfm-aeronapi"]
 CMD ["-port=8080"]

@@ -9,50 +9,6 @@ import (
 	_ "github.com/lib/pq"
 )
 
-// Database constants - only used in this file
-const (
-	// Column names
-	columnPicture  = "picture"
-	columnArtistID = "artistid"
-	columnTitleID  = "titleid"
-	columnArtist   = "artist"
-
-	// Table names
-	tableArtist = "artist"
-	tableTrack  = "track"
-)
-
-// Entity configuration for reusable patterns
-type EntityConfig struct {
-	Table    string
-	IDColumn string
-	IDName   string // for error messages
-}
-
-var (
-	artistEntity = EntityConfig{Table: tableArtist, IDColumn: columnArtistID, IDName: "artiest"}
-	trackEntity  = EntityConfig{Table: tableTrack, IDColumn: columnTitleID, IDName: "track"}
-)
-
-// Query templates using sqlx Named syntax
-const (
-	lookupArtistByIDQuery = `
-		SELECT artistid, artist, CASE WHEN picture IS NOT NULL THEN true ELSE false END as has_image 
-		FROM %s.artist WHERE artistid = $1`
-
-	lookupArtistByNameQuery = `
-		SELECT artistid, artist, CASE WHEN picture IS NOT NULL THEN true ELSE false END as has_image 
-		FROM %s.artist WHERE artist = $1`
-
-	lookupTrackByIDQuery = `
-		SELECT titleid, tracktitle, artist, CASE WHEN picture IS NOT NULL THEN true ELSE false END as has_image 
-		FROM %s.track WHERE titleid = $1`
-
-	lookupTrackByNameQuery = `
-		SELECT titleid, tracktitle, artist, CASE WHEN picture IS NOT NULL THEN true ELSE false END as has_image 
-		FROM %s.track WHERE tracktitle = $1`
-)
-
 type Artist struct {
 	ID       string `db:"artistid"`
 	Name     string `db:"artist"`
@@ -149,124 +105,59 @@ func countItems(db *sqlx.DB, schema, table string, hasImage bool) (int, error) {
 	var count int
 	err := db.Get(&count, query)
 	if err != nil {
-		return 0, fmt.Errorf("telfout %s: %w", table, err)
+		return 0, fmt.Errorf("tellen van %s mislukt: %w", table, err)
 	}
 
 	return count, nil
 }
 
-// Lookup artist using sqlx struct mapping
-func lookupArtistByNameOrID(db *sqlx.DB, schema, artistName, artistID string) (*Artist, error) {
-	var artist Artist
-	var err error
+// updateEntityImage updates image data for either artist or track
+func updateEntityImage(db *sqlx.DB, schema, table, id string, imageData []byte) error {
+	var query string
+	var entityType string
 
-	if artistID != "" {
-		query := fmt.Sprintf(lookupArtistByIDQuery, schema)
-		err = db.Get(&artist, query, artistID)
+	if table == tableArtist {
+		query = fmt.Sprintf("UPDATE %s.artist SET picture = $1 WHERE artistid = $2", schema)
+		entityType = "artiest"
 	} else {
-		query := fmt.Sprintf(lookupArtistByNameQuery, schema)
-		err = db.Get(&artist, query, artistName)
+		query = fmt.Sprintf("UPDATE %s.track SET picture = $1 WHERE titleid = $2", schema)
+		entityType = "track"
 	}
 
-	if err == sql.ErrNoRows {
-		if artistID != "" {
-			return nil, fmt.Errorf("artiest ID '%s' %s", artistID, ErrSuffixNotExists)
-		}
-		return nil, fmt.Errorf("artiest '%s' %s", artistName, ErrSuffixNotExists)
-	}
+	_, err := db.Exec(query, imageData, id)
 	if err != nil {
-		return nil, fmt.Errorf("database fout: %w", err)
-	}
-
-	return &artist, nil
-}
-
-func lookupTrackByNameOrID(db *sqlx.DB, schema, trackTitle, trackID string) (*Track, error) {
-	var track Track
-	var err error
-
-	if trackID != "" {
-		query := fmt.Sprintf(lookupTrackByIDQuery, schema)
-		err = db.Get(&track, query, trackID)
-	} else {
-		query := fmt.Sprintf(lookupTrackByNameQuery, schema)
-		err = db.Get(&track, query, trackTitle)
-	}
-
-	if err == sql.ErrNoRows {
-		if trackID != "" {
-			return nil, fmt.Errorf("track ID '%s' %s", trackID, ErrSuffixNotExists)
-		}
-		return nil, fmt.Errorf("track '%s' %s", trackTitle, ErrSuffixNotExists)
-	}
-	if err != nil {
-		return nil, fmt.Errorf("database fout: %w", err)
-	}
-
-	return &track, nil
-}
-
-func lookupArtist(db *sqlx.DB, schema, artistName, artistID string) (*Artist, error) {
-	return lookupArtistByNameOrID(db, schema, artistName, artistID)
-}
-
-// Unified image operations using direct queries
-func updateEntityImage(db *sqlx.DB, schema string, entity EntityConfig, entityID string, imageData []byte) error {
-	query := fmt.Sprintf("UPDATE %s.%s SET picture = $1 WHERE %s = $2", schema, entity.Table, entity.IDColumn)
-	_, err := db.Exec(query, imageData, entityID)
-	return err
-}
-
-func updateArtistImage(db *sqlx.DB, schema, artistID string, imageData []byte) error {
-	if err := updateEntityImage(db, schema, artistEntity, artistID, imageData); err != nil {
-		return fmt.Errorf("update artiest %s: %w", ErrSuffixFailed, err)
+		return fmt.Errorf("bijwerken van %s %s: %w", entityType, ErrSuffixFailed, err)
 	}
 	return nil
 }
 
-func lookupTrack(db *sqlx.DB, schema, trackTitle, trackID string) (*Track, error) {
-	return lookupTrackByNameOrID(db, schema, trackTitle, trackID)
-}
+// deleteEntityImage removes image data for either artist or track
+func deleteEntityImage(db *sqlx.DB, schema, table, id string) error {
+	var query string
+	var entityType string
 
-func updateTrackImage(db *sqlx.DB, schema, trackID string, imageData []byte) error {
-	if err := updateEntityImage(db, schema, trackEntity, trackID, imageData); err != nil {
-		return fmt.Errorf("update track %s: %w", ErrSuffixFailed, err)
+	if table == tableArtist {
+		query = fmt.Sprintf("UPDATE %s.artist SET picture = NULL WHERE artistid = $1", schema)
+		entityType = "artiestafbeelding"
+	} else {
+		query = fmt.Sprintf("UPDATE %s.track SET picture = NULL WHERE titleid = $1", schema)
+		entityType = "trackafbeelding"
 	}
-	return nil
-}
 
-// Unified delete operations using direct queries
-func deleteEntityImage(db *sqlx.DB, schema string, entity EntityConfig, entityID string) error {
-	query := fmt.Sprintf("UPDATE %s.%s SET picture = NULL WHERE %s = $1", schema, entity.Table, entity.IDColumn)
-
-	result, err := db.Exec(query, entityID)
+	result, err := db.Exec(query, id)
 	if err != nil {
-		return err
+		return fmt.Errorf("verwijderen van %s %s: %w", entityType, ErrSuffixFailed, err)
 	}
 
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {
-		return err
+		return fmt.Errorf("verwijderen van %s %s: %w", entityType, ErrSuffixFailed, err)
 	}
 
 	if rowsAffected == 0 {
-		return fmt.Errorf("geen rij gevonden met ID %s", entityID)
+		return fmt.Errorf("verwijderen van %s %s: geen record gevonden met ID %s", entityType, ErrSuffixFailed, id)
 	}
 
-	return nil
-}
-
-func deleteArtistImage(db *sqlx.DB, schema, artistID string) error {
-	if err := deleteEntityImage(db, schema, artistEntity, artistID); err != nil {
-		return fmt.Errorf("delete artiest afbeelding %s: %w", ErrSuffixFailed, err)
-	}
-	return nil
-}
-
-func deleteTrackImage(db *sqlx.DB, schema, trackID string) error {
-	if err := deleteEntityImage(db, schema, trackEntity, trackID); err != nil {
-		return fmt.Errorf("delete track afbeelding %s: %w", ErrSuffixFailed, err)
-	}
 	return nil
 }
 
@@ -374,7 +265,7 @@ func executePlaylistQuery(db *sqlx.DB, query string) ([]PlaylistItem, error) {
 	var items []PlaylistItem
 	err := db.Select(&items, query)
 	if err != nil {
-		return nil, fmt.Errorf("playlist ophalen mislukt: %w", err)
+		return nil, fmt.Errorf("ophalen van playlist mislukt: %w", err)
 	}
 
 	return items, nil
@@ -408,7 +299,7 @@ func getArtistByID(db *sqlx.DB, schema, artistID string) (*ArtistDetails, error)
 		return nil, fmt.Errorf("artiest ID '%s' %s", artistID, ErrSuffixNotExists)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("database fout: %w", err)
+		return nil, fmt.Errorf("databasefout: %w", err)
 	}
 
 	return &artist, nil
@@ -449,37 +340,37 @@ func getTrackByID(db *sqlx.DB, schema, trackID string) (*TrackDetails, error) {
 		return nil, fmt.Errorf("track ID '%s' %s", trackID, ErrSuffixNotExists)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("database fout: %w", err)
+		return nil, fmt.Errorf("databasefout: %w", err)
 	}
 
 	return &track, nil
 }
 
-// Unified image retrieval using direct queries
-func getEntityImage(db *sqlx.DB, schema, entityID string, entity EntityConfig) ([]byte, error) {
-	query := fmt.Sprintf("SELECT picture FROM %s.%s WHERE %s = $1", schema, entity.Table, entity.IDColumn)
+// getEntityImage retrieves image data for either artist or track
+func getEntityImage(db *sqlx.DB, schema, table, id string) ([]byte, error) {
+	var query string
+	var entityType string
+
+	if table == tableArtist {
+		query = fmt.Sprintf("SELECT picture FROM %s.artist WHERE artistid = $1", schema)
+		entityType = "artiest"
+	} else {
+		query = fmt.Sprintf("SELECT picture FROM %s.track WHERE titleid = $1", schema)
+		entityType = "track"
+	}
 
 	var imageData []byte
-	err := db.Get(&imageData, query, entityID)
+	err := db.Get(&imageData, query, id)
 
 	if err == sql.ErrNoRows {
-		return nil, fmt.Errorf("%s ID '%s' %s", entity.IDName, entityID, ErrSuffixNotExists)
+		return nil, fmt.Errorf("%s-ID '%s' %s", entityType, id, ErrSuffixNotExists)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("database fout: %w", err)
+		return nil, fmt.Errorf("databasefout: %w", err)
 	}
 	if imageData == nil {
-		return nil, fmt.Errorf("%s heeft geen afbeelding", entity.IDName)
+		return nil, fmt.Errorf("%s heeft geen afbeelding", entityType)
 	}
 
 	return imageData, nil
-}
-
-// Convenience wrappers using the smart function
-func getArtistImage(db *sqlx.DB, schema, artistID string) ([]byte, error) {
-	return getEntityImage(db, schema, artistID, artistEntity)
-}
-
-func getTrackImage(db *sqlx.DB, schema, trackID string) ([]byte, error) {
-	return getEntityImage(db, schema, trackID, trackEntity)
 }

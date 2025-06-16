@@ -16,17 +16,6 @@ import (
 
 const kilobyte = 1024
 
-// formatSizeKB formats bytes as KB for display
-func formatSizeKB(bytes int) string {
-	return fmt.Sprintf("%d KB", bytes/kilobyte)
-}
-
-// getImageDimensions returns the width and height of an image
-func getImageDimensions(img image.Image) (width, height int) {
-	bounds := img.Bounds()
-	return bounds.Dx(), bounds.Dy()
-}
-
 type ImageProcessingResult struct {
 	Data      []byte
 	Format    string
@@ -63,12 +52,12 @@ func downloadImage(url string) ([]byte, error) {
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("download mislukt: HTTP %d", resp.StatusCode)
+		return nil, fmt.Errorf("downloaden mislukt: HTTP %d", resp.StatusCode)
 	}
 
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("leesfout: %w", err)
+		return nil, fmt.Errorf("fout bij lezen: %w", err)
 	}
 
 	if err := validateImageData(data); err != nil {
@@ -80,7 +69,7 @@ func downloadImage(url string) ([]byte, error) {
 
 func validateImageData(data []byte) error {
 	if len(data) == 0 {
-		return fmt.Errorf("lege afbeelding")
+		return fmt.Errorf("afbeelding is leeg")
 	}
 
 	_, _, err := image.DecodeConfig(bytes.NewReader(data))
@@ -93,7 +82,7 @@ func validateImageData(data []byte) error {
 
 func validateImageFormat(format string) error {
 	if !slices.Contains(SupportedFormats, format) {
-		return fmt.Errorf("formaat %s niet ondersteund (gebruik: %v)", format, SupportedFormats)
+		return fmt.Errorf("bestandsformaat %s wordt niet ondersteund (gebruik: %v)", format, SupportedFormats)
 	}
 	return nil
 }
@@ -125,7 +114,7 @@ func (opt *ImageOptimizer) OptimizeImage(data []byte) ([]byte, string, string, e
 func (opt *ImageOptimizer) optimizeJPEG(data []byte) ([]byte, string, string, error) {
 	img, err := jpeg.Decode(bytes.NewReader(data))
 	if err != nil {
-		return nil, "", "", fmt.Errorf("JPEG decode fout: %w", err)
+		return nil, "", "", fmt.Errorf("fout bij decoderen van JPEG: %w", err)
 	}
 
 	return opt.processImage(img, data, "jpeg")
@@ -134,7 +123,7 @@ func (opt *ImageOptimizer) optimizeJPEG(data []byte) ([]byte, string, string, er
 func (opt *ImageOptimizer) convertPNGToJPEG(data []byte) ([]byte, string, string, error) {
 	img, err := png.Decode(bytes.NewReader(data))
 	if err != nil {
-		return nil, "", "", fmt.Errorf("PNG decode fout: %w", err)
+		return nil, "", "", fmt.Errorf("fout bij decoderen van PNG: %w", err)
 	}
 
 	return opt.processImage(img, data, "jpeg")
@@ -142,7 +131,9 @@ func (opt *ImageOptimizer) convertPNGToJPEG(data []byte) ([]byte, string, string
 
 func (opt *ImageOptimizer) processImage(img image.Image, originalData []byte, outputFormat string) ([]byte, string, string, error) {
 	// Resize if image exceeds target dimensions to reduce memory usage
-	width, height := getImageDimensions(img)
+	bounds := img.Bounds()
+	width, height := bounds.Dx(), bounds.Dy()
+
 	if width > opt.Config.TargetWidth || height > opt.Config.TargetHeight {
 		img = opt.resizeImage(img, opt.Config.TargetWidth, opt.Config.TargetHeight)
 	}
@@ -161,7 +152,8 @@ func (opt *ImageOptimizer) processImage(img image.Image, originalData []byte, ou
 }
 
 func (opt *ImageOptimizer) resizeImage(img image.Image, maxWidth, maxHeight int) image.Image {
-	width, height := getImageDimensions(img)
+	bounds := img.Bounds()
+	width, height := bounds.Dx(), bounds.Dy()
 
 	// Calculate scale factor to fit within bounds while maintaining aspect ratio
 	scaleX := float64(maxWidth) / float64(width)
@@ -192,7 +184,7 @@ func encodeToJPEG(img image.Image, config ImageConfig) ([]byte, string, error) {
 	// Try standard JPEG encoder first
 	standardData, err := encodeStandardJPEG(img, config.Quality)
 	if err != nil {
-		return nil, "", fmt.Errorf("JPEG encoding mislukt: %w", err)
+		return nil, "", fmt.Errorf("JPEG-codering mislukt: %w", err)
 	}
 
 	// Try Jpegli encoder for potentially better compression
@@ -201,17 +193,17 @@ func encodeToJPEG(img image.Image, config ImageConfig) ([]byte, string, error) {
 	// Determine the best result
 	if jpegliErr == nil && len(jpegliData) > 0 && len(jpegliData) < len(standardData) {
 		// Jpegli produced smaller file
-		winnerInfo := fmt.Sprintf("jpegli (%s) vs standaard (%s)", formatSizeKB(len(jpegliData)), formatSizeKB(len(standardData)))
+		winnerInfo := fmt.Sprintf("jpegli (%d KB) versus standaard (%d KB)", len(jpegliData)/kilobyte, len(standardData)/kilobyte)
 		return jpegliData, winnerInfo, nil
 	}
 
 	// Standard JPEG is better or Jpegli failed
 	if jpegliErr != nil {
-		winnerInfo := fmt.Sprintf("standaard (%s) - jpegli faalde", formatSizeKB(len(standardData)))
+		winnerInfo := fmt.Sprintf("standaard (%d KB) - jpegli mislukt", len(standardData)/kilobyte)
 		return standardData, winnerInfo, nil
 	}
 
-	winnerInfo := fmt.Sprintf("standaard (%s) vs jpegli (%s)", formatSizeKB(len(standardData)), formatSizeKB(len(jpegliData)))
+	winnerInfo := fmt.Sprintf("standaard (%d KB) versus jpegli (%d KB)", len(standardData)/kilobyte, len(jpegliData)/kilobyte)
 	return standardData, winnerInfo, nil
 }
 
@@ -263,7 +255,7 @@ func validateImage(info *ImageInfo, config ImageConfig) error {
 func extractImageInfo(imageData []byte) (*ImageInfo, error) {
 	format, width, height, err := getImageInfo(imageData)
 	if err != nil {
-		return nil, fmt.Errorf("info ophalen mislukt: %w", err)
+		return nil, fmt.Errorf("ophalen van afbeeldingsinformatie mislukt: %w", err)
 	}
 
 	return &ImageInfo{
@@ -276,7 +268,7 @@ func extractImageInfo(imageData []byte) (*ImageInfo, error) {
 
 func validateImageDimensions(info *ImageInfo, config ImageConfig) error {
 	if config.RejectSmaller && (info.Width < config.TargetWidth || info.Height < config.TargetHeight) {
-		return fmt.Errorf("afbeelding te klein: %dx%d (minimaal %dx%d vereist)",
+		return fmt.Errorf("afbeelding is te klein: %dx%d (minimaal %dx%d vereist)",
 			info.Width, info.Height, config.TargetWidth, config.TargetHeight)
 	}
 	return nil
@@ -290,7 +282,7 @@ func createSkippedResult(imageData []byte, originalInfo *ImageInfo) *ImageProces
 	return &ImageProcessingResult{
 		Data:      imageData,
 		Format:    originalInfo.Format,
-		Encoder:   "origineel (geen optimalisatie)",
+		Encoder:   "origineel (geen optimalisatie nodig)",
 		Original:  *originalInfo,
 		Optimized: *originalInfo,
 		Savings:   0,
@@ -301,7 +293,7 @@ func optimizeImageData(imageData []byte, originalInfo *ImageInfo, config ImageCo
 	optimizer := NewImageOptimizer(config)
 	optimizedData, optFormat, optEncoder, err := optimizer.OptimizeImage(imageData)
 	if err != nil {
-		return nil, fmt.Errorf("optimalisatie mislukt: %w", err)
+		return nil, fmt.Errorf("optimaliseren mislukt: %w", err)
 	}
 
 	optimizedInfo, err := extractImageInfo(optimizedData)
@@ -319,14 +311,14 @@ func optimizeImageData(imageData []byte, originalInfo *ImageInfo, config ImageCo
 		return &ImageProcessingResult{
 			Data:      imageData,
 			Format:    originalInfo.Format,
-			Encoder:   "origineel (kleiner dan geoptimaliseerd)",
+			Encoder:   "origineel (kleiner dan geoptimaliseerde versie)",
 			Original:  *originalInfo,
 			Optimized: *originalInfo,
 			Savings:   0,
 		}, nil
 	}
 
-	savings := calculateSavings(originalInfo.Size, optimizedInfo.Size)
+	savings := float64(originalInfo.Size-optimizedInfo.Size) / float64(originalInfo.Size) * 100
 
 	return &ImageProcessingResult{
 		Data:      optimizedData,
@@ -336,9 +328,4 @@ func optimizeImageData(imageData []byte, originalInfo *ImageInfo, config ImageCo
 		Optimized: *optimizedInfo,
 		Savings:   savings,
 	}, nil
-}
-
-func calculateSavings(originalSize, optimizedSize int) float64 {
-	savings := originalSize - optimizedSize
-	return float64(savings) / float64(originalSize) * 100
 }

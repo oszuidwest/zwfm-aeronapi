@@ -56,8 +56,8 @@ jobs:
       # ==========================================
       - name: Build application
         run: |
-          go build -ldflags="-X main.Version=test -X main.Commit=${{ github.sha }} -X main.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)" -o aeron-imgman .
-          ./aeron-imgman -version
+          go build -ldflags="-X main.Version=test -X main.Commit=${{ github.sha }} -X main.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)" -o zwfm-aeronapi .
+          ./zwfm-aeronapi -version
 
       # ==========================================
       # DATABASE SETUP
@@ -205,7 +205,7 @@ jobs:
 
       - name: Start API server
         run: |
-          ./aeron-imgman -config=test_config.yaml -port=8888 &
+          ./zwfm-aeronapi -config=test_config.yaml -port=8888 &
           echo $! > api.pid
           sleep 3
 
@@ -308,7 +308,7 @@ jobs:
 
       - name: Start API server for artist tests
         run: |
-          ./aeron-imgman -config=test_config.yaml -port=8888 &
+          ./zwfm-aeronapi -config=test_config.yaml -port=8888 &
           echo $! > api.pid
           sleep 3
 
@@ -449,7 +449,7 @@ jobs:
 
       - name: Start API server for track tests
         run: |
-          ./aeron-imgman -config=test_config.yaml -port=8888 &
+          ./zwfm-aeronapi -config=test_config.yaml -port=8888 &
           echo $! > api.pid
           sleep 3
 
@@ -568,7 +568,7 @@ jobs:
 
       - name: Start API server for optimization tests
         run: |
-          ./aeron-imgman -config=test_config.yaml -port=8892 &
+          ./zwfm-aeronapi -config=test_config.yaml -port=8892 &
           echo $! > api_opt.pid
           sleep 3
 
@@ -607,7 +607,7 @@ jobs:
 
       - name: Start API server for concurrent tests
         run: |
-          ./aeron-imgman -config=test_config.yaml -port=8893 &
+          ./zwfm-aeronapi -config=test_config.yaml -port=8893 &
           echo $! > api_concurrent.pid
           sleep 3
 
@@ -670,7 +670,7 @@ jobs:
 
       - name: Start API server for edge case tests
         run: |
-          ./aeron-imgman -config=test_config.yaml -port=8894 &
+          ./zwfm-aeronapi -config=test_config.yaml -port=8894 &
           echo $! > api_edge.pid
           sleep 3
 
@@ -793,7 +793,7 @@ jobs:
 
       - name: API Auth Test - Start server with auth
         run: |
-          ./aeron-imgman -config=test_auth_config.yaml -port=8890 &
+          ./zwfm-aeronapi -config=test_auth_config.yaml -port=8890 &
           echo $! > api_auth.pid
           sleep 3
 
@@ -863,7 +863,7 @@ jobs:
 
       - name: API Auth Test - Start server without auth
         run: |
-          ./aeron-imgman -config=test_no_auth_config.yaml -port=8891 &
+          ./zwfm-aeronapi -config=test_no_auth_config.yaml -port=8891 &
           echo $! > api_no_auth.pid
           sleep 3
 
@@ -888,7 +888,7 @@ jobs:
 
       - name: Start API server for bulk delete tests
         run: |
-          ./aeron-imgman -config=test_config.yaml -port=8895 &
+          ./zwfm-aeronapi -config=test_config.yaml -port=8895 &
           echo $! > api_bulk.pid
           sleep 3
 

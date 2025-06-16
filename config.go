@@ -35,11 +35,6 @@ type Config struct {
 	API      APIConfig      `yaml:"api"`
 }
 
-func (c *Config) DatabaseURL() string {
-	return fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=%s",
-		c.Database.User, c.Database.Password, c.Database.Host, c.Database.Port, c.Database.Name, c.Database.SSLMode)
-}
-
 func loadConfig(configPath string) (*Config, error) {
 	config := &Config{}
 
@@ -47,52 +42,65 @@ func loadConfig(configPath string) (*Config, error) {
 		if _, err := os.Stat("config.yaml"); err == nil {
 			configPath = "config.yaml"
 		} else {
-			return nil, fmt.Errorf("config.yaml niet gevonden")
+			return nil, fmt.Errorf("configuratiebestand config.yaml niet gevonden")
 		}
 	}
 
 	data, err := os.ReadFile(configPath)
 	if err != nil {
-		return nil, fmt.Errorf("config lezen mislukt: %w", err)
+		return nil, fmt.Errorf("lezen van configuratiebestand mislukt: %w", err)
 	}
 
 	if err := yaml.Unmarshal(data, config); err != nil {
-		return nil, fmt.Errorf("config fout: %w", err)
+		return nil, fmt.Errorf("fout in configuratiebestand: %w", err)
 	}
 
 	if err := validateConfig(config); err != nil {
-		return nil, fmt.Errorf("config onvolledig: %w", err)
+		return nil, fmt.Errorf("configuratie is onvolledig: %w", err)
 	}
 
 	return config, nil
 }
 
 func validateConfig(config *Config) error {
-	validators := []struct {
-		name  string
-		check func() bool
-	}{
-		{"database.host", func() bool { return config.Database.Host != "" }},
-		{"database.port", func() bool { return config.Database.Port != "" }},
-		{"database.name", func() bool { return config.Database.Name != "" }},
-		{"database.user", func() bool { return config.Database.User != "" }},
-		{"database.password", func() bool { return config.Database.Password != "" }},
-		{"database.schema", func() bool { return config.Database.Schema != "" }},
-		{"database.sslmode", func() bool { return config.Database.SSLMode != "" }},
-		{"image.target_width", func() bool { return config.Image.TargetWidth > 0 }},
-		{"image.target_height", func() bool { return config.Image.TargetHeight > 0 }},
-		{"image.quality (1-100)", func() bool { return config.Image.Quality > 0 && config.Image.Quality <= 100 }},
+	var missing []string
+
+	// Database validation
+	if config.Database.Host == "" {
+		missing = append(missing, "database.host")
+	}
+	if config.Database.Port == "" {
+		missing = append(missing, "database.port")
+	}
+	if config.Database.Name == "" {
+		missing = append(missing, "database.name")
+	}
+	if config.Database.User == "" {
+		missing = append(missing, "database.user")
+	}
+	if config.Database.Password == "" {
+		missing = append(missing, "database.password")
+	}
+	if config.Database.Schema == "" {
+		missing = append(missing, "database.schema")
+	}
+	if config.Database.SSLMode == "" {
+		missing = append(missing, "database.sslmode")
 	}
 
-	var missing []string
-	for _, v := range validators {
-		if !v.check() {
-			missing = append(missing, v.name)
-		}
+	// Image validation
+	if config.Image.TargetWidth <= 0 {
+		missing = append(missing, "image.target_width")
+	}
+	if config.Image.TargetHeight <= 0 {
+		missing = append(missing, "image.target_height")
+	}
+	if config.Image.Quality <= 0 || config.Image.Quality > 100 {
+		missing = append(missing, "image.quality (1-100)")
 	}
 
 	if len(missing) > 0 {
-		return fmt.Errorf("config mist velden: %v", missing)
+		return fmt.Errorf("configuratie mist de volgende velden: %v", missing)
 	}
 	return nil
 }

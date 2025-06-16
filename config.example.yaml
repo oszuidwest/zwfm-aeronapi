@@ -1,0 +1,27 @@
+# Voorbeeld configuratie voor ZWFM Aeron API
+# Kopieer dit bestand naar config.yaml en pas de waardes aan
+
+# Database configuratie
+database:
+  host: localhost      # Database server (localhost voor lokale installatie)
+  port: 5432          # PostgreSQL poort (standaard: 5432)
+  name: aeron_db      # Database naam
+  user: aeron_user    # Database gebruiker
+  password: WIJZIG_DIT_WACHTWOORD  # Database wachtwoord
+  schema: aeron       # Database schema (standaard: aeron)
+  sslmode: disable    # SSL modus: disable, require, verify-ca, verify-full
+
+# Afbeelding verwerking
+image:
+  target_width: 640    # Breedte waarnaar afbeeldingen geschaald worden
+  target_height: 640   # Hoogte waarnaar afbeeldingen geschaald worden
+  quality: 90          # JPEG kwaliteit (1-100, hoger = betere kwaliteit, grotere bestanden)
+  reject_smaller: true # Als true, behoud origineel als geoptimaliseerde versie groter is
+
+# API authenticatie
+api:
+  enabled: false       # Schakel API authenticatie in/uit
+  keys:               # API sleutels voor toegang (alleen nodig als enabled: true)
+    # - "genereer-een-veilige-api-key-hier"
+    # - "nog-een-api-key-voor-andere-client"
+

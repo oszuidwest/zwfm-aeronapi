@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
+	"log/slog"
 	"strings"
 
 	"github.com/jmoiron/sqlx"
@@ -23,7 +24,6 @@ func NewAeronService(db *sqlx.DB, config *Config) *AeronService {
 
 type ImageUploadParams struct {
 	Scope     string
-	Name      string
 	ID        string
 	URL       string
 	ImageData []byte
@@ -38,67 +38,31 @@ type ImageUploadResult struct {
 	Encoder        string
 }
 
-var (
-	ErrInvalidScope     = fmt.Errorf("ongeldig type: gebruik '%s' of '%s'", ScopeArtist, ScopeTrack)
-	ErrNoNameOrID       = fmt.Errorf("moet naam of id specificeren")
-	ErrBothNameAndID    = fmt.Errorf("kan niet zowel naam als id specificeren")
-	ErrNoImageSource    = fmt.Errorf("afbeelding verplicht")
-	ErrBothImageSources = fmt.Errorf("gebruik URL of upload, niet beide")
-)
-
-func ValidateScope(scope string) error {
-	if scope != ScopeArtist && scope != ScopeTrack {
-		return ErrInvalidScope
-	}
-	return nil
-}
-
-func (s *AeronService) ValidateUploadParams(params *ImageUploadParams) error {
-	if err := ValidateScope(params.Scope); err != nil {
-		return err
-	}
-
-	if params.Name == "" && params.ID == "" {
-		return ErrNoNameOrID
-	}
-	if params.Name != "" && params.ID != "" {
-		return ErrBothNameAndID
-	}
-
-	if params.URL == "" && len(params.ImageData) == 0 {
-		return ErrNoImageSource
-	}
-	if params.URL != "" && len(params.ImageData) > 0 {
-		return ErrBothImageSources
-	}
-
-	return nil
-}
-
 func (s *AeronService) UploadImage(params *ImageUploadParams) (*ImageUploadResult, error) {
-	if err := s.ValidateUploadParams(params); err != nil {
+	if err := ValidateImageUploadParams(params); err != nil {
 		return nil, err
 	}
 
 	// First check if the artist/track exists before downloading/processing the image
 	var itemName, itemTitle string
-	var itemID string
+
+	// Processing image upload
 
 	if params.Scope == ScopeArtist {
-		artist, err := lookupArtist(s.db, s.config.Database.Schema, params.Name, params.ID)
+		artist, err := getArtistByID(s.db, s.config.Database.Schema, params.ID)
 		if err != nil {
+			slog.Error("Artiest ophalen mislukt", "artist_id", params.ID, "error", err)
 			return nil, err
 		}
 		itemName = artist.Name
-		itemID = artist.ID
 	} else {
-		track, err := lookupTrack(s.db, s.config.Database.Schema, params.Name, params.ID)
+		track, err := getTrackByID(s.db, s.config.Database.Schema, params.ID)
 		if err != nil {
+			slog.Error("Track ophalen mislukt", "track_id", params.ID, "error", err)
 			return nil, err
 		}
 		itemName = track.Artist
 		itemTitle = track.Title
-		itemID = track.ID
 	}
 
 	// Now download/get the image data
@@ -107,7 +71,8 @@ func (s *AeronService) UploadImage(params *ImageUploadParams) (*ImageUploadResul
 	if params.URL != "" {
 		imageData, err = downloadImage(params.URL)
 		if err != nil {
-			return nil, fmt.Errorf("download %s: %w", ErrSuffixFailed, err)
+			slog.Error("Afbeelding download mislukt", "url", params.URL, "error", err)
+			return nil, fmt.Errorf("downloaden %s: %w", ErrSuffixFailed, err)
 		}
 	} else {
 		imageData = params.ImageData
@@ -116,18 +81,23 @@ func (s *AeronService) UploadImage(params *ImageUploadParams) (*ImageUploadResul
 	// Process image
 	processingResult, err := processImage(imageData, s.config.Image)
 	if err != nil {
-		return nil, fmt.Errorf("verwerking %s: %w", ErrSuffixFailed, err)
+		slog.Error("Afbeelding verwerking mislukt", "error", err)
+		return nil, fmt.Errorf("verwerken %s: %w", ErrSuffixFailed, err)
 	}
 
 	// Update the database
 	if params.Scope == ScopeArtist {
-		if err := updateArtistImage(s.db, s.config.Database.Schema, itemID, processingResult.Data); err != nil {
+		if err := updateEntityImage(s.db, s.config.Database.Schema, tableArtist, params.ID, processingResult.Data); err != nil {
+			slog.Error("Artiest afbeelding opslaan mislukt", "artist_id", params.ID, "error", err)
 			return nil, fmt.Errorf("opslaan %s: %w", ErrSuffixFailed, err)
 		}
+		// Artist image saved successfully
 	} else {
-		if err := updateTrackImage(s.db, s.config.Database.Schema, itemID, processingResult.Data); err != nil {
+		if err := updateEntityImage(s.db, s.config.Database.Schema, tableTrack, params.ID, processingResult.Data); err != nil {
+			slog.Error("Track afbeelding opslaan mislukt", "track_id", params.ID, "error", err)
 			return nil, fmt.Errorf("opslaan %s: %w", ErrSuffixFailed, err)
 		}
+		// Track image saved successfully
 	}
 
 	return &ImageUploadResult{
@@ -163,8 +133,11 @@ func (s *AeronService) DeleteAllImages(scope string) (*DeleteResult, error) {
 		table = "track"
 	}
 
+	// Starting bulk delete operation
+
 	count, err := countItems(s.db, s.config.Database.Schema, table, true)
 	if err != nil {
+		slog.Error("Tellen items met afbeeldingen mislukt", "scope", scope, "error", err)
 		return nil, err
 	}
 
@@ -185,7 +158,8 @@ func (s *AeronService) DeleteAllImages(scope string) (*DeleteResult, error) {
 		if scope == ScopeArtist {
 			itemType = ItemTypeArtist
 		}
-		return nil, fmt.Errorf("verwijderen %s mislukt: %w", itemType, err)
+		slog.Error("Bulk delete query mislukt", "scope", scope, "query", query, "error", err)
+		return nil, fmt.Errorf("verwijderen van %s-afbeeldingen mislukt: %w", itemType, err)
 	}
 
 	deleted, _ := result.RowsAffected()
@@ -216,11 +190,13 @@ func (s *AeronService) GetStatistics(scope string) (*ImageStats, error) {
 	// Get counts
 	withImages, err := countItems(s.db, s.config.Database.Schema, table, true)
 	if err != nil {
+		slog.Error("Tellen items met afbeeldingen mislukt", "scope", scope, "error", err)
 		return nil, fmt.Errorf("tellen mislukt: %w", err)
 	}
 
 	withoutImages, err := countItems(s.db, s.config.Database.Schema, table, false)
 	if err != nil {
+		slog.Error("Tellen items zonder afbeeldingen mislukt", "scope", scope, "error", err)
 		return nil, fmt.Errorf("tellen mislukt: %w", err)
 	}
 
@@ -231,32 +207,4 @@ func (s *AeronService) GetStatistics(scope string) (*ImageStats, error) {
 		WithImages:    withImages,
 		WithoutImages: withoutImages,
 	}, nil
-}
-
-func (s *AeronService) GetPlaylist(opts PlaylistOptions) ([]PlaylistItem, error) {
-	return getPlaylist(s.db, s.config.Database.Schema, opts)
-}
-
-func (s *AeronService) GetArtistByID(artistID string) (*ArtistDetails, error) {
-	return getArtistByID(s.db, s.config.Database.Schema, artistID)
-}
-
-func (s *AeronService) GetTrackByID(trackID string) (*TrackDetails, error) {
-	return getTrackByID(s.db, s.config.Database.Schema, trackID)
-}
-
-func (s *AeronService) GetArtistImage(artistID string) ([]byte, error) {
-	return getArtistImage(s.db, s.config.Database.Schema, artistID)
-}
-
-func (s *AeronService) GetTrackImage(trackID string) ([]byte, error) {
-	return getTrackImage(s.db, s.config.Database.Schema, trackID)
-}
-
-func (s *AeronService) DeleteArtistImage(artistID string) error {
-	return deleteArtistImage(s.db, s.config.Database.Schema, artistID)
-}
-
-func (s *AeronService) DeleteTrackImage(trackID string) error {
-	return deleteTrackImage(s.db, s.config.Database.Schema, trackID)
 }

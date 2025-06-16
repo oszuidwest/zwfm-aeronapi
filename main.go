@@ -3,7 +3,8 @@ package main
 import (
 	"flag"
 	"fmt"
-	"log"
+	"log/slog"
+	"os"
 
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
@@ -33,34 +34,44 @@ func main() {
 	// Load configuration
 	config, err := loadConfig(*configFile)
 	if err != nil {
-		log.Fatal(err)
+		fmt.Fprintf(os.Stderr, "Configuratiefout: %v\n", err)
+		os.Exit(1)
 	}
+
+	// Initialize simple logger to stdout
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, nil)))
 
 	// Connect to database
-	db, err := sqlx.Open("postgres", config.DatabaseURL())
+	dbURL := fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=%s",
+		config.Database.User, config.Database.Password, config.Database.Host,
+		config.Database.Port, config.Database.Name, config.Database.SSLMode)
+	db, err := sqlx.Open("postgres", dbURL)
 	if err != nil {
-		log.Fatal(err)
+		slog.Error("Database verbinding mislukt", "error", err)
+		os.Exit(1)
 	}
-	defer func() { _ = db.Close() }()
+	defer func() {
+		if err := db.Close(); err != nil {
+			slog.Error("Fout bij sluiten database", "error", err)
+		}
+	}()
 
 	if err := db.Ping(); err != nil {
-		log.Fatal(err)
+		slog.Error("Database ping mislukt", "error", err)
+		os.Exit(1)
 	}
+
+	// Database connected successfully
 
 	// Create service and start API server
 	service := NewAeronService(db, config)
 	apiServer := NewAeronAPI(service, config)
 
-	fmt.Println("Aeron Image Manager")
-	fmt.Printf("Version: %s (%s)\n", Version, Commit)
-	fmt.Printf("Database: %s\n", config.Database.Name)
-	fmt.Printf("API Authentication: %s\n", func() string {
-		if config.API.Enabled {
-			return fmt.Sprintf("Enabled (%d keys)", len(config.API.Keys))
-		}
-		return "Disabled"
-	}())
-	fmt.Printf("\nStarting API server on port %s...\n", *serverPort)
+	// Start API server
+	slog.Info("API-server gestart op poort", "poort", *serverPort)
 
-	log.Fatal(apiServer.Start(*serverPort))
+	if err := apiServer.Start(*serverPort); err != nil {
+		slog.Error("API server gestopt met fout", "error", err)
+		os.Exit(1)
+	}
 }

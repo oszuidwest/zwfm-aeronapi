@@ -1,4 +1,4 @@
-module github.com/oszuidwest/aeron-imgman
+module github.com/oszuidwest/zwfm-aeronapi
 
 go 1.24
 
