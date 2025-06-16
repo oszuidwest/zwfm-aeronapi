@@ -24,6 +24,9 @@ const (
 	tableTrack  = "track"
 )
 
+// Supported image formats - used across multiple files
+var SupportedFormats = []string{"jpeg", "jpg", "png"}
+
 // GetEntityType returns the Dutch entity type string for a given scope
 func GetEntityType(scope string) string {
 	if scope == ScopeTrack {

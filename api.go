@@ -44,9 +44,6 @@ func (s *AeronAPI) Start(port string) error {
 	router.Use(middleware.Compress(5))
 	router.Use(middleware.Timeout(30 * time.Second))
 
-	// Add custom middleware
-	router.Use(s.corsMiddleware)
-
 	// API routes
 	router.Route("/api", func(r chi.Router) {
 		// JSON content type for all API routes (except images)
@@ -97,34 +94,17 @@ func (s *AeronAPI) authMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		// Get API key from header or query parameter
+		// Get API key
 		apiKey := r.Header.Get("X-API-Key")
-		if apiKey == "" {
-			apiKey = r.URL.Query().Get("key")
-		}
 
 		if !s.isValidAPIKey(apiKey) {
 			slog.Warn("Authenticatie mislukt",
 				"reason", "ongeldige_api_key",
-				"path", r.URL.Path)
+				"path", r.URL.Path,
+				"method", r.Method,
+				"remote_addr", r.RemoteAddr)
 
 			respondError(w, http.StatusUnauthorized, "Niet geautoriseerd: ongeldige of ontbrekende API-sleutel")
-			return
-		}
-
-		next.ServeHTTP(w, r)
-	})
-}
-
-// corsMiddleware adds CORS headers for API access
-func (s *AeronAPI) corsMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Origin, Content-Type, Accept, X-API-Key, X-Confirm-Bulk-Delete")
-
-		if r.Method == "OPTIONS" {
-			w.WriteHeader(http.StatusNoContent)
 			return
 		}
 

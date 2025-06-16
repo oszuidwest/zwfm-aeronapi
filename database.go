@@ -161,41 +161,67 @@ func deleteEntityImage(db *sqlx.DB, schema, table, id string) error {
 	return nil
 }
 
-// buildPlaylistQuery creates SQL for playlist queries
-func buildPlaylistQuery(schema string, opts PlaylistOptions) string {
+// isValidSchemaName validates schema name to prevent SQL injection
+func isValidSchemaName(schema string) bool {
+	if schema == "" {
+		return false
+	}
+	for _, r := range schema {
+		if (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') && r != '_' {
+			return false
+		}
+	}
+	return true
+}
+
+// buildPlaylistQuery creates SQL for playlist queries with parameters
+func buildPlaylistQuery(schema string, opts PlaylistOptions) (string, []interface{}) {
 	var conditions []string
+	var params []interface{}
+	paramCount := 0
+
+	// Helper function to get next parameter placeholder
+	nextParam := func() string {
+		paramCount++
+		return fmt.Sprintf("$%d", paramCount)
+	}
 
 	// Date filter
 	if opts.Date != "" {
-		conditions = append(conditions, fmt.Sprintf("DATE(pi.startdatetime) = '%s'", opts.Date))
+		conditions = append(conditions, fmt.Sprintf("DATE(pi.startdatetime) = %s", nextParam()))
+		params = append(params, opts.Date)
 	} else {
 		conditions = append(conditions, "DATE(pi.startdatetime) = CURRENT_DATE")
 	}
 
 	// Time range filter
 	if opts.StartTime != "" {
-		conditions = append(conditions, fmt.Sprintf("TO_CHAR(pi.startdatetime, 'HH24:MI') >= '%s'", opts.StartTime))
+		conditions = append(conditions, fmt.Sprintf("TO_CHAR(pi.startdatetime, 'HH24:MI') >= %s", nextParam()))
+		params = append(params, opts.StartTime)
 	}
 	if opts.EndTime != "" {
-		conditions = append(conditions, fmt.Sprintf("TO_CHAR(pi.startdatetime, 'HH24:MI') <= '%s'", opts.EndTime))
+		conditions = append(conditions, fmt.Sprintf("TO_CHAR(pi.startdatetime, 'HH24:MI') <= %s", nextParam()))
+		params = append(params, opts.EndTime)
 	}
 
 	// Item type filter
 	if len(opts.ItemTypes) > 0 {
-		types := make([]string, len(opts.ItemTypes))
+		placeholders := make([]string, len(opts.ItemTypes))
 		for i, t := range opts.ItemTypes {
-			types[i] = fmt.Sprintf("%d", t)
+			placeholders[i] = nextParam()
+			params = append(params, t)
 		}
-		conditions = append(conditions, fmt.Sprintf("pi.itemtype IN (%s)", strings.Join(types, ",")))
+		conditions = append(conditions, fmt.Sprintf("pi.itemtype IN (%s)", strings.Join(placeholders, ",")))
 	}
 
 	// Export type filter
 	if len(opts.ExportTypes) > 0 {
-		types := make([]string, len(opts.ExportTypes))
+		placeholders := make([]string, len(opts.ExportTypes))
 		for i, t := range opts.ExportTypes {
-			types[i] = fmt.Sprintf("%d", t)
+			placeholders[i] = nextParam()
+			params = append(params, t)
 		}
-		conditions = append(conditions, fmt.Sprintf("COALESCE(t.exporttype, 1) NOT IN (%s)", strings.Join(types, ",")))
+		conditions = append(conditions, fmt.Sprintf("COALESCE(t.exporttype, 1) NOT IN (%s)", strings.Join(placeholders, ",")))
 	}
 
 	// Track image filter
@@ -219,16 +245,25 @@ func buildPlaylistQuery(schema string, opts PlaylistOptions) string {
 	// Build WHERE clause
 	whereClause := strings.Join(conditions, " AND ")
 
-	// Sort order
+	// Sort order - validate to prevent injection
 	orderBy := "pi.startdatetime"
 	switch opts.SortBy {
 	case "artist":
 		orderBy = "t.artist"
 	case "track":
 		orderBy = "t.tracktitle"
+	case "start_time":
+		orderBy = "pi.startdatetime"
+		// Only allow whitelisted sort columns
 	}
 	if opts.SortDesc {
 		orderBy += " DESC"
+	}
+
+	// Validate schema name to prevent SQL injection
+	// Schema names can't be parameterized in PostgreSQL, so we validate instead
+	if !isValidSchemaName(schema) {
+		schema = "aeron" // fallback to default
 	}
 
 	query := fmt.Sprintf(`
@@ -249,21 +284,23 @@ func buildPlaylistQuery(schema string, opts PlaylistOptions) string {
 		ORDER BY %s
 	`, schema, schema, schema, whereClause, orderBy)
 
-	// Add limit/offset
+	// Add limit/offset with parameters
 	if opts.Limit > 0 {
-		query += fmt.Sprintf(" LIMIT %d", opts.Limit)
+		query += fmt.Sprintf(" LIMIT %s", nextParam())
+		params = append(params, opts.Limit)
 		if opts.Offset > 0 {
-			query += fmt.Sprintf(" OFFSET %d", opts.Offset)
+			query += fmt.Sprintf(" OFFSET %s", nextParam())
+			params = append(params, opts.Offset)
 		}
 	}
 
-	return query
+	return query, params
 }
 
-// executePlaylistQuery runs query and returns items
-func executePlaylistQuery(db *sqlx.DB, query string) ([]PlaylistItem, error) {
+// executePlaylistQuery runs query with parameters and returns items
+func executePlaylistQuery(db *sqlx.DB, query string, params []interface{}) ([]PlaylistItem, error) {
 	var items []PlaylistItem
-	err := db.Select(&items, query)
+	err := db.Select(&items, query, params...)
 	if err != nil {
 		return nil, fmt.Errorf("ophalen van playlist mislukt: %w", err)
 	}
@@ -272,8 +309,8 @@ func executePlaylistQuery(db *sqlx.DB, query string) ([]PlaylistItem, error) {
 }
 
 func getPlaylist(db *sqlx.DB, schema string, opts PlaylistOptions) ([]PlaylistItem, error) {
-	query := buildPlaylistQuery(schema, opts)
-	return executePlaylistQuery(db, query)
+	query, params := buildPlaylistQuery(schema, opts)
+	return executePlaylistQuery(db, query, params)
 }
 
 const getArtistDetailsQuery = `

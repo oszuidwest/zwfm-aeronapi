@@ -384,11 +384,8 @@ api:
 
 Gebruik de API-sleutel in verzoeken:
 ```bash
-# Via header (aanbevolen)
+# Via header
 curl -H "X-API-Key: jouw-api-key-hier" http://localhost:8080/api/artists
-
-# Via query-parameter
-curl http://localhost:8080/api/artists?key=jouw-api-key-hier
 ```
 
 ## Responsformaat

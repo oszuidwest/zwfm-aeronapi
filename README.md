@@ -3,7 +3,7 @@
 Een **onofficiële** REST-API voor het Aeron-radioautomatiseringssysteem, specifiek ontwikkeld voor het **toevoegen en beheren van afbeeldingen** bij tracks en artiesten.
 
 > [!WARNING]
-> Aeron is een product van Broadcast Partners. Deze API is **volledig onofficieel** en niet ontwikkeld door of in samenwerking met Broadcast Partners. Gebruik is op eigen risico. Maak altijd een back-up van je database voordat je deze tool gebruikt.
+> Aeron is een product van Broadcast Partners. Deze API is volledig onofficieel en niet ontwikkeld door of in samenwerking met Broadcast Partners. Gebruik is op eigen risico. Maak altijd een back-up van je database voordat je deze tool gebruikt.
 
 ## Waarom deze API?
 
@@ -38,17 +38,11 @@ docker run -d -p 8080:8080 --name zwfm-aeronapi ghcr.io/oszuidwest/zwfm-aeronapi
 docker run -d -p 8080:8080 -v $(pwd)/config.yaml:/config.yaml --name zwfm-aeronapi ghcr.io/oszuidwest/zwfm-aeronapi:latest
 ```
 
-### 🪟 Windows (PowerShell als Administrator)
-```powershell
-# Installeer (downloadt automatisch laatste versie)
-irm https://raw.githubusercontent.com/oszuidwest/zwfm-aeronapi/main/install.ps1 | iex
-
-# Upgrade naar laatste versie
-.\install.ps1 -Upgrade
-
-# Verwijder
-.\install.ps1 -Remove
-```
+### 🪟 Windows
+1. Download het `.exe` bestand van de [laatste release](https://github.com/oszuidwest/zwfm-aeronapi/releases/latest)
+2. Plaats het in een map (bijvoorbeeld `C:\Program Files\zwfm-aeronapi`)
+3. Maak een `config.yaml` bestand in dezelfde map
+4. Start via command prompt: `zwfm-aeronapi.exe`
 
 ## Installatie
 

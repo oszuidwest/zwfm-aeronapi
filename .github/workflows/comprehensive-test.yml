@@ -1,4 +1,6 @@
 name: Comprehensive Test
+permissions:
+  contents: read
 on:
   workflow_call:
   workflow_dispatch:
@@ -330,7 +332,7 @@ jobs:
       - name: API Test - Get single artist (non-existent)
         run: |
           echo "Test: Niet-bestaande artist moet 404 geven"
-          RESPONSE=$(curl -s -w "\n%{http_code}" -H 'X-API-Key: test-api-key-12345' "http://localhost:8888/api/artists/00000000-0000-0000-0000-000000000001")
+          RESPONSE=$(curl -s -w "\n%{http_code}" -H 'X-API-Key: test-api-key-12345' "http://localhost:8888/api/artists/00000000-0000-4000-8000-000000000001")
           HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
 
           if [ "$HTTP_CODE" = "404" ]; then
@@ -471,7 +473,7 @@ jobs:
       - name: API Test - Get single track (non-existent)
         run: |
           echo "Test: Niet-bestaande track moet 404 geven"
-          RESPONSE=$(curl -s -w "\n%{http_code}" -H 'X-API-Key: test-api-key-12345' "http://localhost:8888/api/tracks/00000000-0000-0000-0000-000000000001")
+          RESPONSE=$(curl -s -w "\n%{http_code}" -H 'X-API-Key: test-api-key-12345' "http://localhost:8888/api/tracks/00000000-0000-4000-8000-000000000001")
           HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
 
           if [ "$HTTP_CODE" = "404" ]; then
@@ -677,7 +679,7 @@ jobs:
       - name: Edge Case Test - Non-existent artist upload
         run: |
           echo "Test: Upload naar niet-bestaande artist"
-          FAKE_ID="00000000-0000-0000-0000-000000000001"
+          FAKE_ID="00000000-0000-4000-8000-000000000001"
           RESPONSE=$(curl -s -X POST -H 'X-API-Key: test-api-key-12345' "http://localhost:8894/api/artists/${FAKE_ID}/image" \
             -H 'Content-Type: application/json' \
             -d '{"url":"https://picsum.photos/500"}')
@@ -701,11 +703,11 @@ jobs:
             -H 'Content-Type: application/json' \
             -d '{"url":"https://picsum.photos/500"}')
 
-          # PostgreSQL UUID validatie geeft database fout (500)
-          if [ "$HTTP_CODE" = "500" ]; then
-            echo "✓ Ongeldig UUID formaat gaf verwachte database fout (HTTP 500)"
+          # UUID validatie gebeurt in de applicatie voordat het de database bereikt
+          if [ "$HTTP_CODE" = "400" ]; then
+            echo "✓ Ongeldig UUID formaat gaf verwachte validatiefout (HTTP 400)"
           else
-            echo "✗ Verwacht: 500, gekregen: $HTTP_CODE"
+            echo "✗ Verwacht: 400, gekregen: $HTTP_CODE"
             exit 1
           fi
 
@@ -717,10 +719,10 @@ jobs:
             -H 'Content-Type: application/json' \
             -d '{}')
 
-          if echo "$RESPONSE" | jq -e '.success == false' > /dev/null && echo "$RESPONSE" | jq -r '.error' | grep -q 'afbeelding verplicht'; then
+          if echo "$RESPONSE" | jq -e '.success == false' > /dev/null && echo "$RESPONSE" | jq -r '.error' | grep -q 'afbeelding is verplicht'; then
             echo "✓ Geen afbeelding gaf verwachte fout"
           else
-            echo "✗ Verwachtte 'afbeelding verplicht' fout"
+            echo "✗ Verwachtte 'afbeelding is verplicht' fout"
             echo "$RESPONSE" | jq .
             exit 1
           fi
@@ -733,10 +735,10 @@ jobs:
             -H 'Content-Type: application/json' \
             -d '{"url":"https://picsum.photos/500","image":"data:image/jpeg;base64,/9j/4AAQ"}')
 
-          if echo "$RESPONSE" | jq -e '.success == false' > /dev/null && echo "$RESPONSE" | jq -r '.error' | grep -q 'gebruik URL of upload, niet beide'; then
+          if echo "$RESPONSE" | jq -e '.success == false' > /dev/null && echo "$RESPONSE" | jq -r '.error' | grep -q 'gebruik óf URL óf upload, niet beide'; then
             echo "✓ Beide URL en afbeelding gaf verwachte fout"
           else
-            echo "✗ Verwachtte 'gebruik URL of upload, niet beide' fout"
+            echo "✗ Verwachtte 'gebruik óf URL óf upload, niet beide' fout"
             echo "$RESPONSE" | jq .
             exit 1
           fi
@@ -827,10 +829,6 @@ jobs:
           echo "Test: Geldige API key in header werkt"
           curl -s -H "X-API-Key: test-api-key-12345" http://localhost:8890/api/artists | jq -e '.success == true'
 
-      - name: API Auth Test - Protected endpoint with valid API key (query param)
-        run: |
-          echo "Test: Geldige API key in query parameter werkt"
-          curl -s "http://localhost:8890/api/artists?key=another-test-key-67890" | jq -e '.success == true'
 
       - name: Stop API auth server
         run: |
