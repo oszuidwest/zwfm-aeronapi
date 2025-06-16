@@ -6,9 +6,6 @@ import (
 	"image"
 	"image/jpeg"
 	"image/png"
-	"io"
-	"net/http"
-	"slices"
 
 	"github.com/gen2brain/jpegli"
 	"golang.org/x/image/draw"
@@ -32,8 +29,6 @@ type ImageInfo struct {
 	Size   int
 }
 
-var SupportedFormats = []string{"jpeg", "jpg", "png"}
-
 type ImageOptimizer struct {
 	Config ImageConfig
 }
@@ -44,47 +39,8 @@ func NewImageOptimizer(config ImageConfig) *ImageOptimizer {
 	}
 }
 
-func downloadImage(url string) ([]byte, error) {
-	resp, err := http.Get(url)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("downloaden mislukt: HTTP %d", resp.StatusCode)
-	}
-
-	data, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("fout bij lezen: %w", err)
-	}
-
-	if err := validateImageData(data); err != nil {
-		return nil, err
-	}
-
-	return data, nil
-}
-
-func validateImageData(data []byte) error {
-	if len(data) == 0 {
-		return fmt.Errorf("afbeelding is leeg")
-	}
-
-	_, _, err := image.DecodeConfig(bytes.NewReader(data))
-	if err != nil {
-		return fmt.Errorf("ongeldige afbeelding: %w", err)
-	}
-
-	return nil
-}
-
-func validateImageFormat(format string) error {
-	if !slices.Contains(SupportedFormats, format) {
-		return fmt.Errorf("bestandsformaat %s wordt niet ondersteund (gebruik: %v)", format, SupportedFormats)
-	}
-	return nil
+func downloadImage(urlString string) ([]byte, error) {
+	return ValidateAndDownloadImage(urlString)
 }
 
 func getImageInfo(data []byte) (format string, width, height int, err error) {
@@ -246,7 +202,7 @@ func processImage(imageData []byte, config ImageConfig) (*ImageProcessingResult,
 }
 
 func validateImage(info *ImageInfo, config ImageConfig) error {
-	if err := validateImageFormat(info.Format); err != nil {
+	if err := ValidateImageFormat(info.Format); err != nil {
 		return err
 	}
 	return validateImageDimensions(info, config)
