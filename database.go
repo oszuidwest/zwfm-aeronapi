@@ -66,6 +66,7 @@ type PlaylistItem struct {
 	Duration       int    `db:"duration" json:"duration"`
 	HasTrackImage  bool   `db:"has_track_image" json:"has_track_image"`
 	HasArtistImage bool   `db:"has_artist_image" json:"has_artist_image"`
+	ExportType     int    `db:"exporttype" json:"exporttype"`
 }
 
 // PlaylistOptions configures playlist queries
@@ -267,7 +268,7 @@ func buildPlaylistQuery(schema string, opts PlaylistOptions) (string, []interfac
 	}
 
 	query := fmt.Sprintf(`
-		SELECT 
+		SELECT
 			pi.titleid as songid,
 			COALESCE(t.tracktitle, '') as songname,
 			COALESCE(t.artistid, '00000000-0000-0000-0000-000000000000') as artistid,
@@ -276,7 +277,8 @@ func buildPlaylistQuery(schema string, opts PlaylistOptions) (string, []interfac
 			TO_CHAR(pi.startdatetime + INTERVAL '1 millisecond' * COALESCE(t.knownlength, 0), 'HH24:MI:SS') as end_time,
 			COALESCE(t.knownlength, 0) as duration,
 			CASE WHEN t.picture IS NOT NULL THEN true ELSE false END as has_track_image,
-			CASE WHEN a.picture IS NOT NULL THEN true ELSE false END as has_artist_image
+			CASE WHEN a.picture IS NOT NULL THEN true ELSE false END as has_artist_image,
+			COALESCE(t.exporttype, 0) as exporttype
 		FROM %s.playlistitem pi
 		LEFT JOIN %s.track t ON pi.titleid = t.titleid
 		LEFT JOIN %s.artist a ON t.artistid = a.artistid
