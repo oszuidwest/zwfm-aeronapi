@@ -67,6 +67,7 @@ type PlaylistItem struct {
 	HasTrackImage  bool   `db:"has_track_image" json:"has_track_image"`
 	HasArtistImage bool   `db:"has_artist_image" json:"has_artist_image"`
 	ExportType     int    `db:"exporttype" json:"exporttype"`
+	ItemType       int    `db:"itemtype" json:"itemtype"`
 }
 
 // PlaylistOptions configures playlist queries
@@ -89,7 +90,7 @@ type PlaylistOptions struct {
 func defaultPlaylistOptions() PlaylistOptions {
 	return PlaylistOptions{
 		ItemTypes:   []int{1},
-		ExportTypes: []int{0},
+		ExportTypes: []int{},
 		SortBy:      "starttime",
 	}
 }
@@ -278,7 +279,8 @@ func buildPlaylistQuery(schema string, opts PlaylistOptions) (string, []interfac
 			COALESCE(t.knownlength, 0) as duration,
 			CASE WHEN t.picture IS NOT NULL THEN true ELSE false END as has_track_image,
 			CASE WHEN a.picture IS NOT NULL THEN true ELSE false END as has_artist_image,
-			COALESCE(t.exporttype, 0) as exporttype
+			COALESCE(t.exporttype, 0) as exporttype,
+			COALESCE(pi.itemtype, 0) as itemtype
 		FROM %s.playlistitem pi
 		LEFT JOIN %s.track t ON pi.titleid = t.titleid
 		LEFT JOIN %s.artist a ON t.artistid = a.artistid
