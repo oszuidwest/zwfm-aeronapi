@@ -10,11 +10,15 @@ import (
 	"github.com/jmoiron/sqlx"
 )
 
+// AeronService provides business logic for managing images in the Aeron radio automation system.
+// It orchestrates image processing, database operations, and validation workflows.
 type AeronService struct {
 	db     *sqlx.DB
 	config *Config
 }
 
+// NewAeronService creates a new AeronService instance with the provided database connection and configuration.
+// The service uses the database for entity operations and config for image processing settings.
 func NewAeronService(db *sqlx.DB, config *Config) *AeronService {
 	return &AeronService{
 		db:     db,
@@ -22,22 +26,29 @@ func NewAeronService(db *sqlx.DB, config *Config) *AeronService {
 	}
 }
 
+// ImageUploadParams contains the parameters required for uploading an image to an entity.
+// Either URL or ImageData should be provided, but not both.
 type ImageUploadParams struct {
-	Scope     string
-	ID        string
-	URL       string
-	ImageData []byte
+	Scope     string // Entity scope: "artist" or "track"
+	ID        string // UUID of the entity to update
+	URL       string // URL of the image to download (optional)
+	ImageData []byte // Raw image data (optional)
 }
 
+// ImageUploadResult contains the results of an image upload operation.
+// It provides information about the processed image and optimization statistics.
 type ImageUploadResult struct {
-	ItemName       string // Artist name or Track artist
-	ItemTitle      string // Track title (empty for artists)
-	OriginalSize   int
-	OptimizedSize  int
-	SavingsPercent float64
-	Encoder        string
+	ItemName       string  // Artist name or Track artist
+	ItemTitle      string  // Track title (empty for artists)
+	OriginalSize   int     // Size of original image in bytes
+	OptimizedSize  int     // Size of optimized image in bytes
+	SavingsPercent float64 // Percentage of size reduction achieved
+	Encoder        string  // Name of encoder used for optimization
 }
 
+// UploadImage processes and uploads an image for the specified entity.
+// It validates the entity exists, downloads/processes the image, optimizes it,
+// and stores it in the database. Returns optimization statistics on success.
 func (s *AeronService) UploadImage(params *ImageUploadParams) (*ImageUploadResult, error) {
 	if err := ValidateImageUploadParams(params); err != nil {
 		return nil, err
@@ -110,17 +121,23 @@ func (s *AeronService) UploadImage(params *ImageUploadParams) (*ImageUploadResul
 	}, nil
 }
 
+// ImageStats represents statistics about images in the database.
+// It provides counts of entities with and without images.
 type ImageStats struct {
-	Total         int
-	WithImages    int
-	WithoutImages int
+	Total         int // Total number of entities
+	WithImages    int // Number of entities with images
+	WithoutImages int // Number of entities without images
 }
 
+// DeleteResult contains the results of a bulk image deletion operation.
 type DeleteResult struct {
-	Count   int
-	Deleted int64
+	Count   int   // Number of entities that had images before deletion
+	Deleted int64 // Number of images actually deleted
 }
 
+// DeleteAllImages removes all images for entities of the specified scope.
+// It returns the number of images that were deleted.
+// The scope must be either "artist" or "track".
 func (s *AeronService) DeleteAllImages(scope string) (*DeleteResult, error) {
 	if err := ValidateScope(scope); err != nil {
 		return nil, err
@@ -166,6 +183,8 @@ func (s *AeronService) DeleteAllImages(scope string) (*DeleteResult, error) {
 	return &DeleteResult{Count: count, Deleted: deleted}, nil
 }
 
+// decodeBase64 decodes a base64-encoded string into raw bytes.
+// It automatically handles data URL prefixes (e.g., "data:image/jpeg;base64,").
 func decodeBase64(data string) ([]byte, error) {
 	// Remove data URL prefix if present (e.g., "data:image/jpeg;base64,")
 	if idx := strings.Index(data, ","); idx != -1 {
@@ -175,6 +194,9 @@ func decodeBase64(data string) ([]byte, error) {
 	return io.ReadAll(base64.NewDecoder(base64.StdEncoding, strings.NewReader(data)))
 }
 
+// GetStatistics returns image statistics for entities of the specified scope.
+// It counts total entities, those with images, and those without images.
+// The scope must be either "artist" or "track".
 func (s *AeronService) GetStatistics(scope string) (*ImageStats, error) {
 	if err := ValidateScope(scope); err != nil {
 		return nil, err

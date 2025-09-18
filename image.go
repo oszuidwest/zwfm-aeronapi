@@ -11,28 +11,37 @@ import (
 	"golang.org/x/image/draw"
 )
 
+// kilobyte represents the number of bytes in a kilobyte for size calculations.
 const kilobyte = 1024
 
+// ImageProcessingResult contains the complete results of image processing operations.
+// It includes both the processed image data and detailed statistics about the optimization.
 type ImageProcessingResult struct {
-	Data      []byte
-	Format    string
-	Encoder   string
-	Original  ImageInfo
-	Optimized ImageInfo
-	Savings   float64
+	Data      []byte    // The processed image data as bytes
+	Format    string    // The output format (typically "jpeg")
+	Encoder   string    // Description of which encoder was used
+	Original  ImageInfo // Information about the original image
+	Optimized ImageInfo // Information about the processed image
+	Savings   float64   // Percentage of size reduction achieved
 }
 
+// ImageInfo contains metadata about an image including dimensions and file size.
+// It is used to track image properties before and after processing.
 type ImageInfo struct {
-	Format string
-	Width  int
-	Height int
-	Size   int
+	Format string // Image format (e.g., "jpeg", "png")
+	Width  int    // Image width in pixels
+	Height int    // Image height in pixels
+	Size   int    // File size in bytes
 }
 
+// ImageOptimizer handles image optimization operations using configurable settings.
+// It provides methods to resize, compress, and optimize images for storage efficiency.
 type ImageOptimizer struct {
-	Config ImageConfig
+	Config ImageConfig // Configuration settings for optimization
 }
 
+// NewImageOptimizer creates a new ImageOptimizer with the specified configuration.
+// The optimizer will use the provided settings for all image processing operations.
 func NewImageOptimizer(config ImageConfig) *ImageOptimizer {
 	return &ImageOptimizer{
 		Config: config,
@@ -51,6 +60,9 @@ func getImageInfo(data []byte) (format string, width, height int, err error) {
 	return format, config.Width, config.Height, nil
 }
 
+// OptimizeImage processes and optimizes image data according to the configured settings.
+// It returns the optimized image data, format, encoder description, and any error encountered.
+// The function automatically selects the best compression method between standard JPEG and jpegli.
 func (opt *ImageOptimizer) OptimizeImage(data []byte) ([]byte, string, string, error) {
 	_, format, err := image.DecodeConfig(bytes.NewReader(data))
 	if err != nil {
@@ -107,6 +119,8 @@ func (opt *ImageOptimizer) processImage(img image.Image, originalData []byte, ou
 	return originalData, outputFormat, "origineel", nil
 }
 
+// resizeImage resizes an image to fit within the specified maximum dimensions while maintaining aspect ratio.
+// It uses high-quality CatmullRom scaling and will not upscale images that are already smaller than the target size.
 func (opt *ImageOptimizer) resizeImage(img image.Image, maxWidth, maxHeight int) image.Image {
 	bounds := img.Bounds()
 	width, height := bounds.Dx(), bounds.Dy()

@@ -1,555 +1,716 @@
-# API Documentatie
+# Aeron Image Manager API-documentatie
 
-Dit document bevat uitgebreide documentatie voor alle API-endpoints van de ZWFM Aeron API.
+## Inhoudsopgave
 
-## API-endpoints
+- [Overzicht](#overzicht)
+- [Snel overzicht endpoints](#snel-overzicht-endpoints)
+- [Authenticatie](#authenticatie)
+- [Response-formaat](#response-formaat)
+- [Foutmeldingen](#foutmeldingen)
+- [Endpoints](#endpoints)
+  - [Statuscontrole](#statuscontrole)
+  - [Artiestendpoints](#artiestendpoints)
+  - [Trackendpoints](#trackendpoints)
+  - [Playlist-endpoints](#playlist-endpoints)
+- [Codevoorbeelden](#codevoorbeelden)
+- [Configuratie](#configuratie)
 
-### Overzicht
+## Overzicht
 
-| Methode | Endpoint | Authenticatie | Beschrijving |
-|---------|----------|---------------|--------------|
-| **GET** | `/api/health` | Nee | Statuscontrole en versie-informatie |
-| **GET** | `/api/artists` | Ja | Statistieken van alle artiesten |
-| **GET** | `/api/artists/{id}` | Ja | Details van een specifieke artiest |
-| **GET** | `/api/artists/{id}/image` | Ja | Afbeelding van artiest ophalen |
-| **POST** | `/api/artists/{id}/image` | Ja | Afbeelding voor artiest uploaden |
-| **DELETE** | `/api/artists/{id}/image` | Ja | Afbeelding van artiest verwijderen |
-| **DELETE** | `/api/artists/bulk-delete` | Ja* | Alle artiestafbeeldingen verwijderen |
-| **GET** | `/api/tracks` | Ja | Statistieken van alle tracks |
-| **GET** | `/api/tracks/{id}` | Ja | Details van een specifieke track |
-| **GET** | `/api/tracks/{id}/image` | Ja | Afbeelding van track ophalen |
-| **POST** | `/api/tracks/{id}/image` | Ja | Afbeelding voor track uploaden |
-| **DELETE** | `/api/tracks/{id}/image` | Ja | Afbeelding van track verwijderen |
-| **DELETE** | `/api/tracks/bulk-delete` | Ja* | Alle trackafbeeldingen verwijderen |
-| **GET** | `/api/playlist` | Ja | Playlist met filters ophalen |
+De Aeron Image Manager API biedt RESTful-endpoints voor het beheren van afbeeldingen in het Aeron-radioautomatiseringssysteem. Deze API biedt directe databasetoegang om albumhoezen voor tracks en artiestfoto's toe te voegen, op te halen en te verwijderen.
 
-*Vereist extra bevestigingsheader
+**Basis-URL:** `http://localhost:8080/api`
 
-### Algemene informatie
+## Snel overzicht endpoints
 
-#### Authenticatie
-Alle endpoints behalve `/api/health` vereisen een API-sleutel:
-```http
-X-API-Key: jouw-api-key
-```
-
-#### Response Headers
-- **Content-Type**: `application/json` (standaard) of `image/*` voor afbeeldingen
-- **X-Request-ID**: Unieke ID voor request tracking
-- Ondersteunt gzip-compressie
-
-#### Statuscodes
-| Code | Betekenis | Wanneer |
-|------|-----------|---------|
-| **200** | OK | Succesvolle operatie |
-| **400** | Bad Request | Ongeldige parameters, formaat niet ondersteund, afbeelding te klein |
-| **401** | Unauthorized | Ongeldige of ontbrekende API-sleutel |
-| **404** | Not Found | Entiteit bestaat niet of heeft geen afbeelding |
-| **405** | Method Not Allowed | HTTP-methode niet toegestaan |
-| **500** | Internal Server Error | Database- of verwerkingsfout |
-
-##### 404 Not Found - Twee scenario's
-
-De API retourneert een 404-statuscode in twee verschillende situaties bij het ophalen van afbeeldingen:
-
-1. **Entiteit bestaat niet**
-   - Foutmelding: `"artiest-ID 'xxx' bestaat niet"` of `"track-ID 'xxx' bestaat niet"`
-   - De opgegeven ID komt niet voor in de database
-
-2. **Entiteit bestaat maar heeft geen afbeelding**
-   - Foutmelding: `"artiest heeft geen afbeelding"` of `"track heeft geen afbeelding"`
-   - De artiest/track bestaat wel, maar er is geen afbeelding opgeslagen
-
-**Waarom beide 404?** Dit is een bewuste ontwerpkeuze die aansluit bij industriestandaarden (zoals GitHub's API). Voor de meeste clients maakt het niet uit waarom de afbeelding niet beschikbaar is - ze tonen in beide gevallen een placeholder. Clients die wel onderscheid willen maken kunnen de foutmelding analyseren.
-
-#### Foutrespons
-```json
-{
-  "success": false,
-  "error": "Beschrijving van de fout"
-}
-```
-
-### Statuscontrole
-
-```http
-GET /api/health
-```
-
-Geen authenticatie vereist. Retourneert de serverstatus en versie.
-
-### Artiesten
-
-#### Statistieken van artiesten ophalen
-```http
-GET /api/artists
-X-API-Key: jouw-api-key
-```
-
-Response:
-```json
-{
-  "success": true,
-  "data": {
-    "total": 80,
-    "with_images": 10,
-    "without_images": 70
-  }
-}
-```
-
-#### Enkele artiest ophalen
-```http
-GET /api/artists/{artistid}
-X-API-Key: jouw-api-key
-```
-
-Response:
-```json
-{
-  "success": true,
-  "data": {
-    "artistid": "123e4567-e89b-12d3-a456-426614174000",
-    "artist": "Queen",
-    "info": "British rock band formed in London in 1970",
-    "website": "https://www.queenонline.com",
-    "twitter": "@QueenWillRock",
-    "instagram": "@officialqueen",
-    "has_image": true,
-    "repeat_value": 5
-  }
-}
-```
-
-#### Artiestafbeelding beheren
-Het endpoint `/api/artists/{artistid}/image` ondersteunt het ophalen (GET), uploaden (POST) en verwijderen (DELETE) van afbeeldingen.
-
-##### Afbeelding ophalen
-```http
-GET /api/artists/{artistid}/image
-X-API-Key: jouw-api-key
-```
-
-Retourneert:
-- **Content-Type**: `image/jpeg` of `image/png` (automatisch gedetecteerd)
-- **Status**: 200 (OK) met binaire afbeeldingsdata
-- **Status**: 404 (Not Found) als de artiest niet bestaat of geen afbeelding heeft
-
-**Let op**: Een 404-status kan twee dingen betekenen:
-- De artiest bestaat niet: `{"error": "artiest-ID 'xxx' bestaat niet"}`
-- De artiest heeft geen afbeelding: `{"error": "artiest heeft geen afbeelding"}`
-
-Tip: Gebruik eerst `GET /api/artists/{id}` om te controleren of de artiest bestaat en een afbeelding heeft (`has_image` veld).
-
-##### Afbeelding uploaden
-```http
-POST /api/artists/{artistid}/image
-X-API-Key: jouw-api-key
-Content-Type: application/json
-
-{
-  "url": "https://example.com/afbeelding.jpg"
-}
-```
-
-Of met een base64-gecodeerde afbeelding:
-```json
-{
-  "image": "data:image/jpeg;base64,..."
-}
-```
-
-##### Afbeelding verwijderen
-```http
-DELETE /api/artists/{artistid}/image
-X-API-Key: jouw-api-key
-```
-
-Response:
-```json
-{
-  "success": true,
-  "data": {
-    "message": "Artiestafbeelding succesvol verwijderd",
-    "artist_id": "123e4567-e89b-12d3-a456-426614174000"
-  }
-}
-```
-
-**Ondersteunde formaten**: JPEG (.jpg, .jpeg) en PNG (.png)
-
-**Let op**: 
-- De artiest-ID wordt uit de URL gehaald
-- Andere formaten (WEBP, GIF, BMP, enz.) worden geweigerd bij het uploaden
-
-#### Alle artiestafbeeldingen verwijderen
-```http
-DELETE /api/artists/bulk-delete
-X-API-Key: jouw-api-key
-X-Confirm-Bulk-Delete: VERWIJDER ALLES
-```
-
-### Tracks
-
-#### Statistieken van tracks ophalen
-```http
-GET /api/tracks
-X-API-Key: jouw-api-key
-```
-
-#### Enkele track ophalen
-```http
-GET /api/tracks/{trackid}
-X-API-Key: jouw-api-key
-```
-
-Response:
-```json
-{
-  "success": true,
-  "data": {
-    "titleid": "123e4567-e89b-12d3-a456-426614174000",
-    "tracktitle": "Bohemian Rhapsody",
-    "artist": "Queen",
-    "artistid": "987e6543-e21b-12d3-a456-426614174000",
-    "year": "1975",
-    "knownlength": 354000,
-    "introtime": 5000,
-    "outrotime": 10000,
-    "tempo": 120,
-    "bpm": 76,
-    "gender": 1,
-    "language": 1,
-    "mood": 3,
-    "exporttype": 1,
-    "repeat_value": 5,
-    "rating": 9,
-    "has_image": true,
-    "website": "https://www.queen.com",
-    "conductor": "",
-    "orchestra": ""
-  }
-}
-```
-
-#### Trackafbeelding beheren
-Het endpoint `/api/tracks/{trackid}/image` ondersteunt het ophalen (GET), uploaden (POST) en verwijderen (DELETE) van afbeeldingen.
-
-##### Afbeelding ophalen
-```http
-GET /api/tracks/{trackid}/image
-X-API-Key: jouw-api-key
-```
-
-Retourneert:
-- **Content-Type**: `image/jpeg` of `image/png` (automatisch gedetecteerd)
-- **Status**: 200 (OK) met binaire afbeeldingsdata
-- **Status**: 404 (Not Found) als de track niet bestaat of geen afbeelding heeft
-
-**Let op**: Een 404-status kan twee dingen betekenen:
-- De track bestaat niet: `{"error": "track-ID 'xxx' bestaat niet"}`
-- De track heeft geen afbeelding: `{"error": "track heeft geen afbeelding"}`
-
-Tip: Gebruik eerst `GET /api/tracks/{id}` om te controleren of de track bestaat en een afbeelding heeft (`has_image` veld).
-
-##### Afbeelding uploaden
-```http
-POST /api/tracks/{trackid}/image
-X-API-Key: jouw-api-key
-Content-Type: application/json
-
-{
-  "url": "https://example.com/albumcover.jpg"
-}
-```
-
-Of met een base64-gecodeerde afbeelding:
-```json
-{
-  "image": "data:image/jpeg;base64,..."
-}
-```
-
-Response:
-```json
-{
-  "success": true,
-  "data": {
-    "track": "Bohemian Rhapsody",
-    "artist": "Queen",
-    "original_size": 524288,
-    "optimized_size": 98304,
-    "savings_percent": 81.25,
-    "encoder": "jpegli (98 KB) versus standaard (120 KB)"
-  }
-}
-```
-
-##### Afbeelding verwijderen
-```http
-DELETE /api/tracks/{trackid}/image
-X-API-Key: jouw-api-key
-```
-
-Response:
-```json
-{
-  "success": true,
-  "data": {
-    "message": "Trackafbeelding succesvol verwijderd",
-    "track_id": "123e4567-e89b-12d3-a456-426614174000"
-  }
-}
-```
-
-**Let op**: 
-- De track-ID wordt uit de URL gehaald
-- Andere formaten (WEBP, GIF, BMP, enz.) worden geweigerd bij het uploaden
-
-#### Alle trackafbeeldingen verwijderen
-```http
-DELETE /api/tracks/bulk-delete
-X-API-Key: jouw-api-key
-X-Confirm-Bulk-Delete: VERWIJDER ALLES
-```
-
-### Playlist
-
-#### Playlist ophalen
-```http
-GET /api/playlist
-X-API-Key: jouw-api-key
-```
-
-Queryparameters:
-- `date`: Specifieke datum (YYYY-MM-DD), standaard: vandaag
-- `from`: Starttijdfilter (HH:MM)
-- `to`: Eindtijdfilter (HH:MM)
-- `limit`: Maximum aantal items
-- `offset`: Paginering-offset
-- `track_image`: Filter op trackafbeelding (yes/no)
-- `artist_image`: Filter op artiestafbeelding (yes/no)
-- `sort`: Sorteer op veld (time/artist/track)
-- `desc`: Sorteer aflopend (true/false)
-
-Voorbeelden:
-```http
-# Playlist van vanmiddag
-GET /api/playlist?from=14:00&to=18:00
-
-# Specifieke datum met paginering
-GET /api/playlist?date=2024-01-15&limit=20&offset=40
-
-# Alleen items zonder trackafbeeldingen, gesorteerd op artiest
-GET /api/playlist?track_image=no&sort=artist
-
-# Items met artiestafbeelding maar zonder trackafbeelding
-GET /api/playlist?artist_image=yes&track_image=no
-
-# Ochtendshow morgen
-GET /api/playlist?date=2024-01-16&from=06:00&to=10:00
-```
-
-Response:
-```json
-{
-  "success": true,
-  "data": [
-    {
-      "songid": "123e4567-e89b-12d3-a456-426614174000",
-      "songname": "Counting Stars",
-      "artistid": "987e6543-e21b-12d3-a456-426614174000",
-      "artistname": "OneRepublic",
-      "start_time": "14:35:00",
-      "end_time": "14:38:30",
-      "duration": 210000,
-      "has_track_image": true,
-      "has_artist_image": false
-    }
-  ]
-}
-```
+| Endpoint | Methode | Beschrijving | Auth |
+|----------|---------|--------------|------|
+| **Algemeen** |
+| `/api/health` | GET | API-status controleren | Nee |
+| **Artiesten** |
+| `/api/artists` | GET | Statistieken over artiesten | Ja |
+| `/api/artists/{id}` | GET | Specifieke artiest ophalen | Ja |
+| `/api/artists/{id}/image` | GET | Artiestafbeelding ophalen | Ja |
+| `/api/artists/{id}/image` | POST | Artiestafbeelding uploaden | Ja |
+| `/api/artists/{id}/image` | DELETE | Artiestafbeelding verwijderen | Ja |
+| `/api/artists/bulk-delete` | DELETE | Alle artiestafbeeldingen verwijderen | Ja |
+| **Tracks** |
+| `/api/tracks` | GET | Statistieken over tracks | Ja |
+| `/api/tracks/{id}` | GET | Specifieke track ophalen | Ja |
+| `/api/tracks/{id}/image` | GET | Trackafbeelding ophalen | Ja |
+| `/api/tracks/{id}/image` | POST | Trackafbeelding uploaden | Ja |
+| `/api/tracks/{id}/image` | DELETE | Trackafbeelding verwijderen | Ja |
+| `/api/tracks/bulk-delete` | DELETE | Alle trackafbeeldingen verwijderen | Ja |
+| **Playlist** |
+| `/api/playlist` | GET | Playlistblokken voor datum | Ja |
+| `/api/playlist?block_id={id}` | GET | Tracks in playlistblok | Ja |
 
 ## Authenticatie
 
-Authenticatie kan geconfigureerd worden in `config.yaml`:
+Wanneer authenticatie is ingeschakeld in de configuratie, vereisen alle endpoints (behalve `/health`) een API-sleutel.
 
-```yaml
-api:
-  enabled: true  # Schakel authenticatie in
-  keys:
-    - "jouw-api-key-hier"
-    - "nog-een-api-key"
+**Header:** `X-API-Key: jouw-api-sleutel`
+
+**Response bij ontbrekende autorisatie:**
+```json
+{
+  "error": "Niet geautoriseerd: ongeldige of ontbrekende API-sleutel",
+  "request_id": "abc123"
+}
 ```
 
-Gebruik de API-sleutel in verzoeken:
-```bash
-# Via header
-curl -H "X-API-Key: jouw-api-key-hier" http://localhost:8080/api/artists
-```
+## Algemene response-headers
 
-## Responsformaat
+Alle API-responses bevatten:
+- `Content-Type: application/json; charset=utf-8` (uitgezonderd afbeeldingsendpoints)
+- `X-Request-Id: uniek-verzoek-id`
 
-Succesvolle responsen:
+## Response-formaat
+
+Alle JSON-responses gebruiken een consistent wrapper-formaat:
 ```json
 {
   "success": true,
-  "data": { ... }
+  "data": { ... }  // Bij succesvolle requests
 }
 ```
 
-Foutresponsen:
+Of bij fouten:
 ```json
 {
   "success": false,
-  "error": "Foutmelding"
+  "error": "Foutmelding in het Nederlands"
 }
 ```
 
-## Veelvoorkomende use cases
+**Let op:** In de voorbeelden hieronder wordt voor de leesbaarheid alleen de inhoud van het `data`-veld getoond, maar in werkelijkheid wordt altijd de complete wrapper geretourneerd.
 
-### 1. Bulk upload van albumhoezen
-```python
-# Python voorbeeld
-import requests
+## Foutmeldingen
 
-api_key = "jouw-api-key"
-base_url = "http://localhost:8080/api"
-
-# Upload albumhoezen voor meerdere tracks
-tracks = [
-    {"id": "track-uuid-1", "image_url": "https://covers.com/album1.jpg"},
-    {"id": "track-uuid-2", "image_url": "https://covers.com/album2.jpg"},
-]
-
-for track in tracks:
-    response = requests.post(
-        f"{base_url}/tracks/{track['id']}/image",
-        headers={"X-API-Key": api_key},
-        json={"url": track["image_url"]}
-    )
-    print(f"Track {track['id']}: {response.json()}")
-```
-
-### 2. Controleer welke artiesten geen afbeelding hebben
-```bash
-# Haal statistieken op
-curl -H "X-API-Key: jouw-api-key" http://localhost:8080/api/artists
-
-# Filter playlist op items zonder afbeeldingen
-curl -H "X-API-Key: jouw-api-key" \
-  "http://localhost:8080/api/playlist?artist_image=no"
-```
-
-### 3. Robuust omgaan met afbeeldingen (404 handling)
-```python
-# Python voorbeeld voor robuuste afbeelding handling
-import requests
-
-def get_artist_image(api_key, artist_id):
-    # Eerst controleren of artiest bestaat en afbeelding heeft
-    response = requests.get(
-        f"http://localhost:8080/api/artists/{artist_id}",
-        headers={"X-API-Key": api_key}
-    )
-    
-    if response.status_code == 404:
-        print(f"Artiest {artist_id} bestaat niet")
-        return None
-    
-    artist_data = response.json()['data']
-    if not artist_data.get('has_image'):
-        print(f"Artiest {artist_data['artist']} heeft geen afbeelding")
-        return None
-    
-    # Nu veilig de afbeelding ophalen
-    image_response = requests.get(
-        f"http://localhost:8080/api/artists/{artist_id}/image",
-        headers={"X-API-Key": api_key}
-    )
-    
-    return image_response.content if image_response.status_code == 200 else None
-```
-
-### 4. Automatische synchronisatie met externe bronnen
-```javascript
-// Node.js voorbeeld
-const axios = require('axios');
-
-async function syncArtistImages() {
-  // Haal playlist op
-  const playlist = await axios.get('/api/playlist', {
-    headers: { 'X-API-Key': apiKey },
-    params: { artist_image: 'no', limit: 100 }
-  });
-
-  // Voor elke artiest zonder afbeelding
-  for (const item of playlist.data.data) {
-    // Zoek afbeelding in externe bron (bijv. Spotify, Last.fm)
-    const imageUrl = await findArtistImage(item.artistname);
-    
-    if (imageUrl) {
-      // Upload naar Aeron
-      await axios.post(
-        `/api/artists/${item.artistid}/image`,
-        { url: imageUrl },
-        { headers: { 'X-API-Key': apiKey } }
-      );
-    }
-  }
+Alle fouten volgen dit formaat:
+```json
+{
+  "error": "Foutmelding",
+  "request_id": "unieke-request-id"
 }
 ```
 
-### 5. Backup en restore van afbeeldingen
-```bash
-# Export alle artiestafbeeldingen
-for id in $(curl -s -H "X-API-Key: $API_KEY" http://localhost:8080/api/artists \
-  | jq -r '.data.artist_ids[]'); do
-  curl -s -H "X-API-Key: $API_KEY" \
-    http://localhost:8080/api/artists/$id/image \
-    -o "backup/artist_$id.jpg"
-done
+**HTTP-statuscodes:**
+- `400` Bad Request - Ongeldige invoerparameters
+- `401` Unauthorized - Ongeldige of ontbrekende API-sleutel
+- `404` Not Found - Bron niet gevonden
+- `500` Internal Server Error - Serverfout
 
-# Restore vanaf backup
-for file in backup/artist_*.jpg; do
-  id=$(basename $file .jpg | cut -d_ -f2)
-  base64_image=$(base64 -w 0 < $file)
-  curl -X POST http://localhost:8080/api/artists/$id/image \
-    -H "X-API-Key: $API_KEY" \
-    -H "Content-Type: application/json" \
-    -d "{\"image\":\"data:image/jpeg;base64,$base64_image\"}"
-done
-```
+---
 
-## Afbeeldingverwerking
+## Endpoints
 
-- **Ondersteunde bestandsformaten**: JPEG (.jpg, .jpeg) en PNG (.png) - andere formaten worden geweigerd
-- **Doelafmetingen**: Configureerbaar (standaard 640×640)
-- **Kwaliteit**: Configureerbaar (standaard 90)
-- **Intelligente verwerking**:
-  - **Perfecte grootte**: Origineel formaat behouden (PNG blijft PNG, JPEG blijft JPEG)
-  - **Verkleining nodig**: Altijd geconverteerd naar JPEG met Jpegli/standaardoptimalisatie
-- **Validatie**: Kleinere afbeeldingen worden geweigerd (configureerbaar)
+### Statuscontrole
 
-### Encoding-optimalisatie
+Controleer de status van de API.
 
-De API gebruikt intelligente compressie voor afbeeldingen die verkleind moeten worden:
+**Endpoint:** `GET /api/health`
+**Authenticatie:** Niet vereist
 
-1. **Dubbele codering**: Afbeeldingen die verkleind worden, worden gecodeerd met zowel Jpegli als de standaard Go JPEG-encoder
-2. **Automatische selectie**: De encoder die het kleinste bestand produceert, wordt automatisch gekozen
-3. **Behoud van origineel**: Afbeeldingen met de perfecte grootte behouden hun originele formaat zonder hercodering
-4. **Rapportage**: Toont welke encoder is gebruikt en hoeveel ruimte is bespaard
-
-Voorbeeldrespons:
+**Response:** `200 OK`
 ```json
 {
   "success": true,
   "data": {
-    "artist": "Queen",
-    "original_size": 2097152,
-    "optimized_size": 191488,
-    "savings_percent": 90.87,
-    "encoder": "jpegli"
+    "status": "healthy",
+    "version": "dev",
+    "database": "aeron"
   }
 }
 ```
+
+---
+
+## Artiestendpoints
+
+### Artieststatistieken ophalen
+
+Verkrijg statistieken over artiesten en hun afbeeldingen.
+
+**Endpoint:** `GET /api/artists`
+**Authenticatie:** Vereist
+
+**Response:** `200 OK`
+```json
+{
+  "total": 1250,
+  "with_images": 450,
+  "without_images": 800
+}
+```
+
+### Artiest ophalen via ID
+
+Verkrijg artiestgegevens inclusief afbeeldingsstatus.
+
+**Endpoint:** `GET /api/artists/{id}`
+**Authenticatie:** Vereist
+
+**Parameters:**
+- `id` (pad, vereist): Artiest-UUID
+
+**Response:** `200 OK`
+```json
+{
+  "artistid": "123e4567-e89b-12d3-a456-426614174000",
+  "artist": "The Beatles",
+  "has_image": true
+}
+```
+
+**Foutresponse:** `404 Not Found`
+```json
+{
+  "error": "Artist niet gevonden"
+}
+```
+
+### Artiestafbeelding ophalen
+
+Verkrijg de afbeelding van de artiest.
+
+**Endpoint:** `GET /api/artists/{id}/image`
+**Authenticatie:** Vereist
+
+**Parameters:**
+- `id` (pad, vereist): Artiest-UUID
+
+**Response:** `200 OK`
+- Content-Type: `image/jpeg`, `image/png` of `image/webp`
+- Binaire afbeeldingsdata
+
+**Foutresponse:** `404 Not Found`
+```json
+{
+  "error": "Afbeelding niet gevonden"
+}
+```
+
+### Artiestafbeelding uploaden
+
+Upload of werk een artiestafbeelding bij.
+
+**Endpoint:** `POST /api/artists/{id}/image`
+**Authenticatie:** Vereist
+
+**Parameters:**
+- `id` (pad, vereist): Artiest-UUID
+
+**Request Body:**
+```json
+{
+  "url": "https://voorbeeld.nl/artiest.jpg",
+  "image": "base64-gecodeerde-afbeeldingsdata"
+}
+```
+*Let op: Gebruik óf `url` óf `image`, niet beide tegelijk*
+
+**Response:** `200 OK`
+```json
+{
+  "artist": "The Beatles",
+  "original_size": 245678,
+  "optimized_size": 45678,
+  "savings_percent": 81.4,
+  "encoder": "jpegli"
+}
+```
+
+**Foutresponses:**
+- `400` Bad Request - Ongeldige invoer
+- `404` Not Found - Artiest niet gevonden
+- `422` Unprocessable Entity - Afbeeldingsvalidatie mislukt
+
+### Artiestafbeelding verwijderen
+
+Verwijder een artiestafbeelding.
+
+**Endpoint:** `DELETE /api/artists/{id}/image`
+**Authenticatie:** Vereist
+
+**Parameters:**
+- `id` (pad, vereist): Artiest-UUID
+
+**Response:** `200 OK`
+```json
+{
+  "message": "Artist-afbeelding succesvol verwijderd",
+  "artist_id": "123e4567-e89b-12d3-a456-426614174000"
+}
+```
+
+**Foutresponse:** `404 Not Found`
+```json
+{
+  "error": "Afbeelding niet gevonden"
+}
+```
+
+### Bulkverwijdering artiestafbeeldingen
+
+Verwijder alle artiestafbeeldingen uit de database.
+
+**Endpoint:** `DELETE /api/artists/bulk-delete`
+**Authenticatie:** Vereist
+
+**Vereiste header:**
+- `X-Confirm-Bulk-Delete: VERWIJDER ALLES`
+
+**Response:** `200 OK`
+```json
+{
+  "deleted": 450,
+  "message": "450 artist-afbeeldingen verwijderd"
+}
+```
+
+**Fout Response:** `400 Bad Request`
+```json
+{
+  "error": "Ontbrekende bevestigingsheader: X-Confirm-Bulk-Delete"
+}
+```
+
+---
+
+## Trackendpoints
+
+### Trackstatistieken ophalen
+
+Verkrijg statistieken over tracks en hun afbeeldingen.
+
+**Endpoint:** `GET /api/tracks`
+**Authenticatie:** Vereist
+
+**Response:** `200 OK`
+```json
+{
+  "total": 5000,
+  "with_images": 1200,
+  "without_images": 3800
+}
+```
+
+### Track ophalen via ID
+
+Verkrijg trackgegevens inclusief afbeeldingsstatus.
+
+**Endpoint:** `GET /api/tracks/{id}`
+**Authenticatie:** Vereist
+
+**Parameters:**
+- `id` (pad, vereist): Track-UUID
+
+**Response:** `200 OK`
+```json
+{
+  "titleid": "456e7890-e89b-12d3-a456-426614174000",
+  "tracktitle": "Hey Jude",
+  "artist": "The Beatles",
+  "artistid": "123e4567-e89b-12d3-a456-426614174000",
+  "has_image": true,
+  "exporttype": 0
+}
+```
+
+**Foutresponse:** `404 Not Found`
+```json
+{
+  "error": "Track niet gevonden"
+}
+```
+
+### Trackafbeelding ophalen
+
+Verkrijg de albumhoes van de track.
+
+**Endpoint:** `GET /api/tracks/{id}/image`
+**Authenticatie:** Vereist
+
+**Parameters:**
+- `id` (pad, vereist): Track-UUID
+
+**Response:** `200 OK`
+- Content-Type: `image/jpeg`, `image/png` of `image/webp`
+- Binaire afbeeldingsdata
+
+**Foutresponse:** `404 Not Found`
+```json
+{
+  "error": "Afbeelding niet gevonden"
+}
+```
+
+### Trackafbeelding uploaden
+
+Upload of werk een albumhoes bij.
+
+**Endpoint:** `POST /api/tracks/{id}/image`
+**Authenticatie:** Vereist
+
+**Parameters:**
+- `id` (pad, vereist): Track-UUID
+
+**Request Body:**
+```json
+{
+  "url": "https://voorbeeld.nl/albumhoes.jpg",
+  "image": "base64-gecodeerde-afbeeldingsdata"
+}
+```
+*Let op: Gebruik óf `url` óf `image`, niet beide tegelijk*
+
+**Response:** `200 OK`
+```json
+{
+  "track": "Hey Jude",
+  "artist": "The Beatles",
+  "original_size": 345678,
+  "optimized_size": 65678,
+  "savings_percent": 81.0,
+  "encoder": "jpegli"
+}
+```
+
+**Fout Responses:**
+- `400` Bad Request - Ongeldige invoer
+- `404` Not Found - Track niet gevonden
+- `422` Unprocessable Entity - Afbeelding validatie mislukt
+
+### Trackafbeelding verwijderen
+
+Verwijder de albumhoes van een track.
+
+**Endpoint:** `DELETE /api/tracks/{id}/image`
+**Authenticatie:** Vereist
+
+**Parameters:**
+- `id` (pad, vereist): Track-UUID
+
+**Response:** `200 OK`
+```json
+{
+  "message": "Track-afbeelding succesvol verwijderd",
+  "track_id": "456e7890-e89b-12d3-a456-426614174000"
+}
+```
+
+**Foutresponse:** `404 Not Found`
+```json
+{
+  "error": "Afbeelding niet gevonden"
+}
+```
+
+### Bulkverwijdering trackafbeeldingen
+
+Verwijder alle trackafbeeldingen uit de database.
+
+**Endpoint:** `DELETE /api/tracks/bulk-delete`
+**Authenticatie:** Vereist
+
+**Vereiste header:**
+- `X-Confirm-Bulk-Delete: VERWIJDER ALLES`
+
+**Response:** `200 OK`
+```json
+{
+  "deleted": 1200,
+  "message": "1200 track-afbeeldingen verwijderd"
+}
+```
+
+**Fout Response:** `400 Bad Request`
+```json
+{
+  "error": "Ontbrekende bevestigingsheader: X-Confirm-Bulk-Delete"
+}
+```
+
+---
+
+## Playlist-endpoints
+
+### Playlistblokken ophalen
+
+Verkrijg alle playlistblokken voor een specifieke datum.
+
+**Endpoint:** `GET /api/playlist`
+**Authenticatie:** Vereist
+
+**Queryparameters:**
+- `date` (optioneel): Datum in JJJJ-MM-DD-formaat (standaard: vandaag)
+
+**Response:** `200 OK`
+```json
+[
+  {
+    "blockid": "block-uuid-1",
+    "name": "Ochtend Show",
+    "date": "2025-09-17",
+    "start_time": "06:00:00",
+    "end_time": "10:00:00",
+    "tracks": [
+      {
+        "songid": "track-uuid-1",
+        "songname": "Nummer Titel",
+        "artistid": "artist-uuid-1",
+        "artistname": "Artiest Naam",
+        "start_time": "06:00:00",
+        "end_time": "06:03:24",
+        "duration": 204000,
+        "has_track_image": true,
+        "has_artist_image": false,
+        "exporttype": 0,
+        "mode": 2,
+        "is_voicetrack": false,
+        "is_commblock": false
+      }
+    ]
+  }
+]
+```
+
+### Playlisttracks per blok ophalen
+
+Verkrijg tracks voor een specifiek playlistblok.
+
+**Endpoint:** `GET /api/playlist?block_id={block_id}`
+**Authenticatie:** Vereist
+
+**Queryparameters:**
+- `block_id` (vereist): Playlistblok-UUID
+- `limit` (optioneel): Maximaal aantal tracks (standaard: 1000)
+- `offset` (optioneel): Offset voor paginering (standaard: 0)
+- `track_image` (optioneel): Filter op trackafbeeldingsstatus (`true`/`false`/`yes`/`no`/`1`/`0`)
+- `artist_image` (optioneel): Filter op artiestafbeeldingsstatus (`true`/`false`/`yes`/`no`/`1`/`0`)
+- `sort` (optioneel): Sorteerveld (`start_time`, `track`, `artist`, `duration`)
+- `desc` (optioneel): Sorteer aflopend indien `true`
+
+**Response:** `200 OK`
+```json
+[
+  {
+    "songid": "track-uuid-1",
+    "songname": "Nummer Titel",
+    "artistid": "artist-uuid-1",
+    "artistname": "Artiest Naam",
+    "start_time": "06:00:00",
+    "end_time": "06:03:24",
+    "duration": 204000,
+    "has_track_image": true,
+    "has_artist_image": false,
+    "exporttype": 0,
+    "mode": 2,
+    "is_voicetrack": false,
+    "is_commblock": false
+  }
+]
+```
+
+---
+
+## Afbeeldingsverwerking
+
+### Afbeeldingsoptimalisatie
+
+Alle geüploade afbeeldingen worden automatisch:
+1. Gevalideerd op formaat (JPEG, PNG, WebP)
+2. Gecontroleerd op minimumafmetingen (configureerbaar, standaard: 200×200)
+3. Geschaald naar maximumafmetingen (configureerbaar, standaard: 640×640)
+4. Geoptimaliseerd met dubbele codering (standaard-JPEG en jpegli)
+5. Opgeslagen met de kleinste bestandsgrootte
+
+### Ondersteunde afbeeldingsbronnen
+
+1. **URL-download**: Geef een URL op om de afbeelding te downloaden
+   - Ondersteunt HTTPS-URL's
+   - Valideert URL-veiligheid
+   - Download met time-out van 30 seconden
+
+2. **Base64-upload**: Verstuur base64-gecodeerde afbeeldingsdata
+   - Ondersteunt standaard base64-codering
+   - Maximumgrootte beperkt door verzoeklimieten
+
+### Afbeeldingsvalidatieregels
+
+- **Minimumafmetingen**: Configureerbaar (standaard: 200×200)
+- **Maximumafmetingen**: Configureerbaar (standaard: 640×640)
+- **Toegestane formaten**: JPEG, PNG, WebP
+- **Beeldverhouding**: Wordt behouden tijdens schalen
+- **Kwaliteit**: Configureerbare JPEG-kwaliteit (standaard: 85)
+
+---
+
+## Bedrijfsregels
+
+### Afbeeldingsverwerking
+- Afbeeldingen worden automatisch geoptimaliseerd voor gebruik in Aeron
+- Zowel standaard JPEG als jpegli-compressie wordt toegepast
+- De kleinste bestandsgrootte wordt automatisch geselecteerd
+
+### UUID-validatie
+- Alle artiest- en track-ID's moeten geldige UUID's zijn (versie 4-formaat)
+- Ongeldige UUID's resulteren in 400 Bad Request met Nederlandse foutmelding
+- Voorbeeld geldig UUID: `123e4567-e89b-12d3-a456-426614174000`
+
+### Afbeeldingsopslag
+- Afbeeldingen worden opgeslagen als BYTEA in PostgreSQL
+- Originele afbeeldingen worden niet bewaard
+- Uitsluitend geoptimaliseerde versies worden opgeslagen
+
+---
+
+## Frequentiebeperking
+
+Geen ingebouwde frequentiebeperking. Implementeer deze indien nodig op proxy- of load-balancerniveau.
+
+---
+
+## Gebruiksvoorbeelden
+
+### cURL-voorbeelden
+
+**Artiestafbeelding uploaden via URL:**
+```bash
+curl -X POST "http://localhost:8080/api/artists/123e4567-e89b-12d3-a456-426614174000/image" \
+  -H "X-API-Key: jouw-api-sleutel" \
+  -H "Content-Type: application/json" \
+  -d '{"url":"https://voorbeeld.nl/artiest.jpg"}'
+```
+
+**Trackafbeelding ophalen:**
+```bash
+curl -X GET "http://localhost:8080/api/tracks/456e7890-e89b-12d3-a456-426614174000/image" \
+  -H "X-API-Key: jouw-api-sleutel" \
+  --output track-afbeelding.jpg
+```
+
+**Alle artiestafbeeldingen verwijderen (let op: onomkeerbaar!):**
+```bash
+curl -X DELETE "http://localhost:8080/api/artists/bulk-delete" \
+  -H "X-API-Key: jouw-api-sleutel" \
+  -H "X-Confirm-Bulk-Delete: VERWIJDER ALLES"
+```
+
+**Playlist voor vandaag ophalen:**
+```bash
+curl -X GET "http://localhost:8080/api/playlist" \
+  -H "X-API-Key: jouw-api-sleutel"
+```
+
+### Python-voorbeeld
+
+```python
+import requests
+import base64
+
+API_KEY = "jouw-api-sleutel"
+BASE_URL = "http://localhost:8080/api"
+
+headers = {"X-API-Key": API_KEY}
+
+# Afbeelding uploaden vanuit bestand
+with open("albumhoes.jpg", "rb") as f:
+    image_data = base64.b64encode(f.read()).decode()
+
+response = requests.post(
+    f"{BASE_URL}/tracks/456e7890-e89b-12d3-a456-426614174000/image",
+    headers=headers,
+    json={"image": image_data}
+)
+
+if response.status_code == 200:
+    result = response.json()
+    print(f"Afbeelding geoptimaliseerd: {result['savings_percent']}% ruimtebesparing")
+```
+
+### JavaScript/Node.js-voorbeeld
+
+```javascript
+const axios = require('axios');
+const fs = require('fs');
+
+const API_KEY = 'jouw-api-sleutel';
+const BASE_URL = 'http://localhost:8080/api';
+
+// Artiestafbeelding uploaden via URL
+async function uploadArtiestAfbeelding(artistId, imageUrl) {
+    try {
+        const response = await axios.post(
+            `${BASE_URL}/artists/${artistId}/image`,
+            { url: imageUrl },
+            { headers: { 'X-API-Key': API_KEY } }
+        );
+        console.log('Upload succesvol:', response.data);
+    } catch (error) {
+        console.error('Upload mislukt:', error.response.data);
+    }
+}
+
+// Playlisttracks ophalen met filters
+async function haalPlaylistTracksOp(blockId) {
+    try {
+        const response = await axios.get(
+            `${BASE_URL}/playlist`,
+            {
+                params: {
+                    block_id: blockId,
+                    track_image: 'false',
+                    limit: 50
+                },
+                headers: { 'X-API-Key': API_KEY }
+            }
+        );
+        console.log(`${response.data.length} tracks zonder afbeeldingen gevonden`);
+    } catch (error) {
+        console.error('Verzoek mislukt:', error.response.data);
+    }
+}
+```
+
+---
+
+## Configuratie
+
+Het gedrag van de API kan worden geconfigureerd via `config.yaml`:
+
+```yaml
+# Databaseconfiguratie
+database:
+  host: localhost
+  port: 5432
+  user: aeron
+  password: ""
+  name: aeron
+  schema: aeron
+  sslmode: disable
+
+# Afbeeldingsverwerking
+image:
+  target_width: 640
+  target_height: 640
+  quality: 85
+  reject_smaller: false
+
+# API-configuratie
+api:
+  enabled: true
+  keys:
+    - "jouw-veilige-api-sleutel-hier"
+```
+
+---
+
+## Belangrijke opmerkingen
+
+- Alle foutmeldingen zijn in het Nederlands conform het Aeron-systeem
+- UUID's zijn hoofdletterongevoelig
+- Het contenttype van afbeeldingen wordt automatisch gedetecteerd
+- De API maakt gebruik van connection pooling voor optimale databaseprestaties
+- Geoptimaliseerd voor PostgreSQL met de Aeron-schemastructuur

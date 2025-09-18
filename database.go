@@ -9,74 +9,95 @@ import (
 	_ "github.com/lib/pq"
 )
 
+// Artist represents a basic artist entity from the database.
+// It contains minimal information used for listing operations.
 type Artist struct {
-	ID       string `db:"artistid"`
-	Name     string `db:"artist"`
-	HasImage bool   `db:"has_image"`
+	ID       string `db:"artistid"`  // UUID of the artist
+	Name     string `db:"artist"`    // Artist name
+	HasImage bool   `db:"has_image"` // Whether the artist has an associated image
 }
 
+// ArtistDetails represents complete artist information from the database.
+// It includes all metadata fields available for an artist entity.
 type ArtistDetails struct {
-	ID          string `db:"artistid" json:"artistid"`
-	Name        string `db:"artist" json:"artist"`
-	Info        string `db:"info" json:"info"`
-	Website     string `db:"website" json:"website"`
-	Twitter     string `db:"twitter" json:"twitter"`
-	Instagram   string `db:"instagram" json:"instagram"`
-	HasImage    bool   `db:"has_image" json:"has_image"`
-	RepeatValue int    `db:"repeat_value" json:"repeat_value"`
+	ID          string `db:"artistid" json:"artistid"`         // UUID of the artist
+	Name        string `db:"artist" json:"artist"`             // Artist name
+	Info        string `db:"info" json:"info"`                 // Artist biography or information
+	Website     string `db:"website" json:"website"`           // Artist website URL
+	Twitter     string `db:"twitter" json:"twitter"`           // Twitter handle
+	Instagram   string `db:"instagram" json:"instagram"`       // Instagram handle
+	HasImage    bool   `db:"has_image" json:"has_image"`       // Whether the artist has an associated image
+	RepeatValue int    `db:"repeat_value" json:"repeat_value"` // Repeat restriction value
 }
 
+// Track represents a basic track entity from the database.
+// It contains minimal information used for listing operations.
 type Track struct {
-	ID       string `db:"titleid"`
-	Title    string `db:"tracktitle"`
-	Artist   string `db:"artist"`
-	HasImage bool   `db:"has_image"`
+	ID       string `db:"titleid"`    // UUID of the track
+	Title    string `db:"tracktitle"` // Track title
+	Artist   string `db:"artist"`     // Artist name
+	HasImage bool   `db:"has_image"`  // Whether the track has an associated image
 }
 
+// TrackDetails represents complete track information from the database.
+// It includes all metadata fields available for a track entity.
 type TrackDetails struct {
-	ID          string `db:"titleid" json:"titleid"`
-	Title       string `db:"tracktitle" json:"tracktitle"`
-	Artist      string `db:"artist" json:"artist"`
-	ArtistID    string `db:"artistid" json:"artistid"`
-	Year        int    `db:"year" json:"year"`
-	KnownLength int    `db:"knownlength" json:"knownlength"`
-	IntroTime   int    `db:"introtime" json:"introtime"`
-	OutroTime   int    `db:"outrotime" json:"outrotime"`
-	Tempo       int    `db:"tempo" json:"tempo"`
-	BPM         int    `db:"bpm" json:"bpm"`
-	Gender      int    `db:"gender" json:"gender"`
-	Language    int    `db:"language" json:"language"`
-	Mood        int    `db:"mood" json:"mood"`
-	ExportType  int    `db:"exporttype" json:"exporttype"`
-	RepeatValue int    `db:"repeat_value" json:"repeat_value"`
-	Rating      int    `db:"rating" json:"rating"`
-	HasImage    bool   `db:"has_image" json:"has_image"`
-	Website     string `db:"website" json:"website"`
-	Conductor   string `db:"conductor" json:"conductor"`
-	Orchestra   string `db:"orchestra" json:"orchestra"`
+	ID          string `db:"titleid" json:"titleid"`           // UUID of the track
+	Title       string `db:"tracktitle" json:"tracktitle"`     // Track title
+	Artist      string `db:"artist" json:"artist"`             // Artist name
+	ArtistID    string `db:"artistid" json:"artistid"`         // UUID of the associated artist
+	Year        int    `db:"year" json:"year"`                 // Release year
+	KnownLength int    `db:"knownlength" json:"knownlength"`   // Track length in milliseconds
+	IntroTime   int    `db:"introtime" json:"introtime"`       // Intro length in milliseconds
+	OutroTime   int    `db:"outrotime" json:"outrotime"`       // Outro length in milliseconds
+	Tempo       int    `db:"tempo" json:"tempo"`               // Tempo classification
+	BPM         int    `db:"bpm" json:"bpm"`                   // Beats per minute
+	Gender      int    `db:"gender" json:"gender"`             // Vocalist gender classification
+	Language    int    `db:"language" json:"language"`         // Language classification
+	Mood        int    `db:"mood" json:"mood"`                 // Mood classification
+	ExportType  int    `db:"exporttype" json:"exporttype"`     // Export type (2 = excluded from operations)
+	RepeatValue int    `db:"repeat_value" json:"repeat_value"` // Repeat restriction value
+	Rating      int    `db:"rating" json:"rating"`             // Track rating
+	HasImage    bool   `db:"has_image" json:"has_image"`       // Whether the track has an associated image
+	Website     string `db:"website" json:"website"`           // Related website URL
+	Conductor   string `db:"conductor" json:"conductor"`       // Conductor name (for classical music)
+	Orchestra   string `db:"orchestra" json:"orchestra"`       // Orchestra name (for classical music)
 }
 
+// PlaylistBlock represents a programming block in the Aeron playlist system.
+// Blocks group playlist items by time periods (e.g., morning show, afternoon music).
+type PlaylistBlock struct {
+	BlockID   string `db:"blockid" json:"blockid"`       // UUID of the playlist block
+	Name      string `db:"name" json:"name"`             // Block name (e.g., "Morning Show")
+	StartTime string `db:"start_time" json:"start_time"` // Block start time (HH:MM:SS format)
+	EndTime   string `db:"end_time" json:"end_time"`     // Block end time (HH:MM:SS format)
+	Date      string `db:"date" json:"date"`             // Block date (YYYY-MM-DD format)
+}
+
+// PlaylistItem represents a single item in the Aeron playlist.
+// Items can be music tracks, voice tracks, commercials, or other content.
 type PlaylistItem struct {
-	SongID         string `db:"songid" json:"songid"`
-	SongName       string `db:"songname" json:"songname"`
-	ArtistID       string `db:"artistid" json:"artistid"`
-	ArtistName     string `db:"artistname" json:"artistname"`
-	StartTime      string `db:"start_time" json:"start_time"`
-	EndTime        string `db:"end_time" json:"end_time"`
-	Duration       int    `db:"duration" json:"duration"`
-	HasTrackImage  bool   `db:"has_track_image" json:"has_track_image"`
-	HasArtistImage bool   `db:"has_artist_image" json:"has_artist_image"`
-	ExportType     int    `db:"exporttype" json:"exporttype"`
-	ItemType       int    `db:"itemtype" json:"itemtype"`
+	SongID         string `db:"songid" json:"songid"`                     // UUID of the track
+	SongName       string `db:"songname" json:"songname"`                 // Track title
+	ArtistID       string `db:"artistid" json:"artistid"`                 // UUID of the artist
+	ArtistName     string `db:"artistname" json:"artistname"`             // Artist name
+	StartTime      string `db:"start_time" json:"start_time"`             // Scheduled start time (HH:MM:SS format)
+	EndTime        string `db:"end_time" json:"end_time"`                 // Calculated end time (HH:MM:SS format)
+	Duration       int    `db:"duration" json:"duration"`                 // Duration in milliseconds
+	HasTrackImage  bool   `db:"has_track_image" json:"has_track_image"`   // Whether the track has an image
+	HasArtistImage bool   `db:"has_artist_image" json:"has_artist_image"` // Whether the artist has an image
+	ExportType     int    `db:"exporttype" json:"exporttype"`             // Export type classification
+	Mode           int    `db:"mode" json:"mode"`                         // Playback mode
+	IsVoicetrack   bool   `db:"is_voicetrack" json:"is_voicetrack"`       // Whether this is a voice track
+	IsCommblock    bool   `db:"is_commblock" json:"is_commblock"`         // Whether this is a commercial block
 }
 
-// PlaylistOptions configures playlist queries
+// PlaylistOptions configures playlist queries with filtering and pagination options.
+// It provides flexible control over which playlist items are returned.
 type PlaylistOptions struct {
-	Date        string // Specific date (YYYY-MM-DD), empty = today
-	StartTime   string // Filter from time (HH:MM)
-	EndTime     string // Filter until time (HH:MM)
-	ItemTypes   []int  // Item types to include (default: [1])
-	ExportTypes []int  // Export types to exclude (default: [0])
+	BlockID     string // Filter by specific block ID (required for playlist items)
+	Date        string // Specific date (YYYY-MM-DD) for blocks endpoint
+	ExportTypes []int  // Export types to exclude from results
 	Limit       int    // Max items to return (0 = all)
 	Offset      int    // Pagination offset
 	SortBy      string // Sort field (default: "starttime")
@@ -86,16 +107,17 @@ type PlaylistOptions struct {
 	ArtistImage *bool // Filter by artist image: true (has), false (no), nil (all)
 }
 
-// DefaultPlaylistOptions returns default playlist options
+// defaultPlaylistOptions returns default playlist options with sensible defaults.
+// It excludes no export types and sorts by start time in ascending order.
 func defaultPlaylistOptions() PlaylistOptions {
 	return PlaylistOptions{
-		ItemTypes:   []int{1},
 		ExportTypes: []int{},
 		SortBy:      "starttime",
 	}
 }
 
-// Count items with flexible conditions using direct queries
+// countItems counts entities in the specified table based on image presence.
+// It returns the number of entities that either have or don't have images.
 func countItems(db *sqlx.DB, schema, table string, hasImage bool) (int, error) {
 	condition := "IS NULL"
 	if hasImage {
@@ -113,7 +135,8 @@ func countItems(db *sqlx.DB, schema, table string, hasImage bool) (int, error) {
 	return count, nil
 }
 
-// updateEntityImage updates image data for either artist or track
+// updateEntityImage updates the image data for either an artist or track entity.
+// The table parameter determines whether to update the artist or track table.
 func updateEntityImage(db *sqlx.DB, schema, table, id string, imageData []byte) error {
 	var query string
 	var entityType string
@@ -133,7 +156,8 @@ func updateEntityImage(db *sqlx.DB, schema, table, id string, imageData []byte) 
 	return nil
 }
 
-// deleteEntityImage removes image data for either artist or track
+// deleteEntityImage removes the image data for either an artist or track entity.
+// It sets the picture column to NULL and returns an error if the entity doesn't exist.
 func deleteEntityImage(db *sqlx.DB, schema, table, id string) error {
 	var query string
 	var entityType string
@@ -157,13 +181,14 @@ func deleteEntityImage(db *sqlx.DB, schema, table, id string) error {
 	}
 
 	if rowsAffected == 0 {
-		return fmt.Errorf("verwijderen van %s %s: geen record gevonden met ID %s", entityType, ErrSuffixFailed, id)
+		return fmt.Errorf("%s met ID '%s' %s", entityType, id, ErrSuffixNotExists)
 	}
 
 	return nil
 }
 
-// isValidSchemaName validates schema name to prevent SQL injection
+// isValidSchemaName validates that a schema name contains only safe characters.
+// It prevents SQL injection by allowing only alphanumeric characters and underscores.
 func isValidSchemaName(schema string) bool {
 	if schema == "" {
 		return false
@@ -176,7 +201,8 @@ func isValidSchemaName(schema string) bool {
 	return true
 }
 
-// buildPlaylistQuery creates SQL for playlist queries with parameters
+// buildPlaylistQuery creates a parameterized SQL query for playlist items.
+// It builds the query based on the provided options and returns the query string and parameters.
 func buildPlaylistQuery(schema string, opts PlaylistOptions) (string, []interface{}) {
 	var conditions []string
 	var params []interface{}
@@ -188,32 +214,13 @@ func buildPlaylistQuery(schema string, opts PlaylistOptions) (string, []interfac
 		return fmt.Sprintf("$%d", paramCount)
 	}
 
-	// Date filter
-	if opts.Date != "" {
-		conditions = append(conditions, fmt.Sprintf("DATE(pi.startdatetime) = %s", nextParam()))
-		params = append(params, opts.Date)
+	// Block filter is required - always use block-centric approach
+	if opts.BlockID != "" {
+		conditions = append(conditions, fmt.Sprintf("pi.blockid = %s", nextParam()))
+		params = append(params, opts.BlockID)
 	} else {
-		conditions = append(conditions, "DATE(pi.startdatetime) = CURRENT_DATE")
-	}
-
-	// Time range filter
-	if opts.StartTime != "" {
-		conditions = append(conditions, fmt.Sprintf("TO_CHAR(pi.startdatetime, 'HH24:MI') >= %s", nextParam()))
-		params = append(params, opts.StartTime)
-	}
-	if opts.EndTime != "" {
-		conditions = append(conditions, fmt.Sprintf("TO_CHAR(pi.startdatetime, 'HH24:MI') <= %s", nextParam()))
-		params = append(params, opts.EndTime)
-	}
-
-	// Item type filter
-	if len(opts.ItemTypes) > 0 {
-		placeholders := make([]string, len(opts.ItemTypes))
-		for i, t := range opts.ItemTypes {
-			placeholders[i] = nextParam()
-			params = append(params, t)
-		}
-		conditions = append(conditions, fmt.Sprintf("pi.itemtype IN (%s)", strings.Join(placeholders, ",")))
+		// If no block specified, return empty result
+		return "", []interface{}{}
 	}
 
 	// Export type filter
@@ -280,7 +287,9 @@ func buildPlaylistQuery(schema string, opts PlaylistOptions) (string, []interfac
 			CASE WHEN t.picture IS NOT NULL THEN true ELSE false END as has_track_image,
 			CASE WHEN a.picture IS NOT NULL THEN true ELSE false END as has_artist_image,
 			COALESCE(t.exporttype, 0) as exporttype,
-			COALESCE(pi.itemtype, 0) as itemtype
+			COALESCE(pi.mode, 0) as mode,
+			CASE WHEN t.userid = '021F097E-B504-49BB-9B89-16B64D2E8422' THEN true ELSE false END as is_voicetrack,
+			CASE WHEN COALESCE(pi.commblock, 0) > 0 THEN true ELSE false END as is_commblock
 		FROM %s.playlistitem pi
 		LEFT JOIN %s.track t ON pi.titleid = t.titleid
 		LEFT JOIN %s.artist a ON t.artistid = a.artistid
@@ -301,7 +310,8 @@ func buildPlaylistQuery(schema string, opts PlaylistOptions) (string, []interfac
 	return query, params
 }
 
-// executePlaylistQuery runs query with parameters and returns items
+// executePlaylistQuery executes a parameterized playlist query and returns the results.
+// It takes a prepared query string and its parameters, returning playlist items.
 func executePlaylistQuery(db *sqlx.DB, query string, params []interface{}) ([]PlaylistItem, error) {
 	var items []PlaylistItem
 	err := db.Select(&items, query, params...)
@@ -312,9 +322,133 @@ func executePlaylistQuery(db *sqlx.DB, query string, params []interface{}) ([]Pl
 	return items, nil
 }
 
+// getPlaylist retrieves playlist items from the database based on the provided options.
+// It builds and executes a query filtered by the playlist options.
 func getPlaylist(db *sqlx.DB, schema string, opts PlaylistOptions) ([]PlaylistItem, error) {
 	query, params := buildPlaylistQuery(schema, opts)
 	return executePlaylistQuery(db, query, params)
+}
+
+// getPlaylistBlocks retrieves all playlist blocks for a specific date.
+// If no date is provided, it returns blocks for the current date.
+func getPlaylistBlocks(db *sqlx.DB, schema string, date string) ([]PlaylistBlock, error) {
+	var dateFilter string
+	params := []interface{}{}
+
+	if date != "" {
+		// Use range query for better index usage
+		dateFilter = "pb.startdatetime >= $1::date AND pb.startdatetime < $1::date + INTERVAL '1 day'"
+		params = append(params, date)
+	} else {
+		// Use range query for current date
+		dateFilter = "pb.startdatetime >= CURRENT_DATE AND pb.startdatetime < CURRENT_DATE + INTERVAL '1 day'"
+	}
+
+	query := fmt.Sprintf(`
+		SELECT
+			pb.blockid,
+			COALESCE(pb.name, '') as name,
+			DATE(pb.startdatetime)::text as date,
+			TO_CHAR(pb.startdatetime, 'HH24:MI:SS') as start_time,
+			TO_CHAR(pb.enddatetime, 'HH24:MI:SS') as end_time
+		FROM %s.playlistblock pb
+		WHERE %s
+		ORDER BY pb.startdatetime
+	`, schema, dateFilter)
+
+	var blocks []PlaylistBlock
+	err := db.Select(&blocks, query, params...)
+	if err != nil {
+		return nil, fmt.Errorf("ophalen van playlist blocks mislukt: %w", err)
+	}
+
+	return blocks, nil
+}
+
+// getPlaylistBlocksWithTracks efficiently fetches all blocks and their tracks for a date.
+// It uses only 2 database queries to retrieve all data and returns blocks with their associated tracks.
+func getPlaylistBlocksWithTracks(db *sqlx.DB, schema string, date string) ([]PlaylistBlock, map[string][]PlaylistItem, error) {
+	// First get all blocks
+	blocks, err := getPlaylistBlocks(db, schema, date)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if len(blocks) == 0 {
+		return blocks, make(map[string][]PlaylistItem), nil
+	}
+
+	// Collect all block IDs
+	blockIDs := make([]string, len(blocks))
+	for i, block := range blocks {
+		blockIDs[i] = block.BlockID
+	}
+
+	// Build the query for all tracks in all blocks
+	var dateFilter string
+	params := []interface{}{}
+	paramCount := 0
+
+	if date != "" {
+		// Use range query for better index usage
+		dateFilter = "pi.startdatetime >= $1::date AND pi.startdatetime < $1::date + INTERVAL '1 day'"
+		params = append(params, date)
+		paramCount = 1
+	} else {
+		// Use range query for current date
+		dateFilter = "pi.startdatetime >= CURRENT_DATE AND pi.startdatetime < CURRENT_DATE + INTERVAL '1 day'"
+	}
+
+	// Build placeholders for block IDs
+	placeholders := make([]string, len(blockIDs))
+	for i, id := range blockIDs {
+		paramCount++
+		placeholders[i] = fmt.Sprintf("$%d", paramCount)
+		params = append(params, id)
+	}
+
+	// Create a temporary struct that includes blockid for grouping
+	type tempPlaylistItem struct {
+		PlaylistItem
+		TempBlockID string `db:"blockid"`
+	}
+
+	query := fmt.Sprintf(`
+		SELECT
+			pi.titleid as songid,
+			COALESCE(t.tracktitle, '') as songname,
+			COALESCE(t.artistid, '00000000-0000-0000-0000-000000000000') as artistid,
+			COALESCE(t.artist, '') as artistname,
+			TO_CHAR(pi.startdatetime, 'HH24:MI:SS') as start_time,
+			TO_CHAR(pi.startdatetime + INTERVAL '1 millisecond' * COALESCE(t.knownlength, 0), 'HH24:MI:SS') as end_time,
+			COALESCE(t.knownlength, 0) as duration,
+			CASE WHEN t.picture IS NOT NULL THEN true ELSE false END as has_track_image,
+			CASE WHEN a.picture IS NOT NULL THEN true ELSE false END as has_artist_image,
+			COALESCE(t.exporttype, 0) as exporttype,
+			COALESCE(pi.mode, 0) as mode,
+			CASE WHEN t.userid = '021F097E-B504-49BB-9B89-16B64D2E8422' THEN true ELSE false END as is_voicetrack,
+			CASE WHEN COALESCE(pi.commblock, 0) > 0 THEN true ELSE false END as is_commblock,
+			COALESCE(pi.blockid::text, '') as blockid
+		FROM %s.playlistitem pi
+		LEFT JOIN %s.track t ON pi.titleid = t.titleid
+		LEFT JOIN %s.artist a ON t.artistid = a.artistid
+		WHERE %s AND pi.blockid IN (%s)
+		ORDER BY pi.blockid, pi.startdatetime
+	`, schema, schema, schema, dateFilter, strings.Join(placeholders, ","))
+
+	var tempItems []tempPlaylistItem
+	err = db.Select(&tempItems, query, params...)
+	if err != nil {
+		return nil, nil, fmt.Errorf("ophalen van playlist items mislukt: %w", err)
+	}
+
+	// Group items by block ID
+	tracksByBlock := make(map[string][]PlaylistItem)
+	for _, temp := range tempItems {
+		tracksByBlock[temp.TempBlockID] = append(tracksByBlock[temp.TempBlockID], temp.PlaylistItem)
+	}
+
+	return blocks, tracksByBlock, nil
 }
 
 const getArtistDetailsQuery = `
@@ -330,6 +464,8 @@ const getArtistDetailsQuery = `
 	FROM %s.artist 
 	WHERE artistid = $1`
 
+// getArtistByID retrieves complete artist details by UUID.
+// It returns an error if the artist doesn't exist in the database.
 func getArtistByID(db *sqlx.DB, schema, artistID string) (*ArtistDetails, error) {
 	query := fmt.Sprintf(getArtistDetailsQuery, schema)
 
@@ -371,6 +507,8 @@ const getTrackDetailsQuery = `
 	FROM %s.track 
 	WHERE titleid = $1`
 
+// getTrackByID retrieves complete track details by UUID.
+// It returns an error if the track doesn't exist in the database.
 func getTrackByID(db *sqlx.DB, schema, trackID string) (*TrackDetails, error) {
 	query := fmt.Sprintf(getTrackDetailsQuery, schema)
 
@@ -387,7 +525,8 @@ func getTrackByID(db *sqlx.DB, schema, trackID string) (*TrackDetails, error) {
 	return &track, nil
 }
 
-// getEntityImage retrieves image data for either artist or track
+// getEntityImage retrieves the image data for either an artist or track entity.
+// It returns the raw image bytes or an error if the entity doesn't exist or has no image.
 func getEntityImage(db *sqlx.DB, schema, table, id string) ([]byte, error) {
 	var query string
 	var entityType string

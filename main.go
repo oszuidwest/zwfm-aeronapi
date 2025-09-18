@@ -1,3 +1,12 @@
+// Package main implements the Aeron Image Manager API server.
+//
+// This server provides an unofficial REST API for managing images in the Aeron
+// radio automation system. It allows adding and managing album covers for tracks
+// and photos for artists directly in the Aeron database, functionality that is
+// not natively supported by the system.
+//
+// The API server can be configured via YAML configuration file and supports
+// optional API key authentication for secure access.
 package main
 
 import (
@@ -10,12 +19,17 @@ import (
 	_ "github.com/lib/pq"
 )
 
-// Build information (set via ldflags)
-var (
-	Version   = "dev"
-	Commit    = "unknown"
-	BuildTime = "unknown"
-)
+// Version is the build version string, set at build time via ldflags.
+// It defaults to "dev" for development builds.
+var Version = "dev"
+
+// Commit is the git commit hash, set at build time via ldflags.
+// It defaults to "unknown" when not built from version control.
+var Commit = "unknown"
+
+// BuildTime is the build timestamp, set at build time via ldflags.
+// It defaults to "unknown" when build time is not captured.
+var BuildTime = "unknown"
 
 func main() {
 	var (

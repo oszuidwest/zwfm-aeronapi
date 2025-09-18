@@ -1,33 +1,40 @@
 package main
 
-// Scope constants - used across multiple files
+// Scope constants define the valid entity types for image operations.
+// These values are used throughout the application to distinguish between
+// artist and track entities.
 const (
-	ScopeArtist = "artist"
-	ScopeTrack  = "track"
+	ScopeArtist = "artist" // Represents artist entities
+	ScopeTrack  = "track"  // Represents track entities
 )
 
-// Error message suffixes - used across multiple files
+// Error message suffixes provide consistent Dutch error messaging.
+// These are appended to entity-specific error messages throughout the application.
 const (
-	ErrSuffixFailed    = "mislukt"
-	ErrSuffixNotExists = "bestaat niet"
+	ErrSuffixFailed    = "mislukt"      // "failed" - used for operation failures
+	ErrSuffixNotExists = "bestaat niet" // "does not exist" - used for missing entities
 )
 
-// Common strings - used across multiple files
+// Item type constants provide Dutch labels for entities.
+// These are used in user-facing messages and API responses.
 const (
-	ItemTypeArtist = "artiest"
-	ItemTypeTrack  = "track"
+	ItemTypeArtist = "artiest" // Dutch word for "artist"
+	ItemTypeTrack  = "track"   // English word "track" (commonly used in Dutch radio)
 )
 
-// Database table names - used across multiple files
+// Database table name constants ensure consistent table references.
+// These match the actual table names in the Aeron PostgreSQL schema.
 const (
-	tableArtist = "artist"
-	tableTrack  = "track"
+	tableArtist = "artist" // Artist table name
+	tableTrack  = "track"  // Track table name
 )
 
-// Supported image formats - used across multiple files
+// SupportedFormats lists the image formats that can be processed by the application.
+// All formats are converted to JPEG during optimization for consistency and size.
 var SupportedFormats = []string{"jpeg", "jpg", "png"}
 
-// GetEntityType returns the Dutch entity type string for a given scope
+// GetEntityType returns the Dutch entity type string for a given scope.
+// It converts internal scope constants to user-friendly Dutch labels.
 func GetEntityType(scope string) string {
 	if scope == ScopeTrack {
 		return "Track"
@@ -35,7 +42,9 @@ func GetEntityType(scope string) string {
 	return "Artiest"
 }
 
-// Error messages - centralized for consistency
+// ErrorMessages provides centralized Dutch error messages for consistent user communication.
+// Keys are internal error codes, values are user-friendly Dutch error messages.
+// Use fmt.Sprintf with these messages when formatting is needed.
 var ErrorMessages = map[string]string{
 	// Authentication errors
 	"auth_failed":     "Niet geautoriseerd: ongeldige of ontbrekende API-sleutel",

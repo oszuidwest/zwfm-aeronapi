@@ -14,10 +14,12 @@ import (
 	"github.com/doyensec/safeurl"
 )
 
-// UUID v4 format validation regex
+// uuidRegex validates UUID v4 format using a compiled regular expression.
+// It ensures that UUIDs follow the proper v4 format with correct version and variant bits.
 var uuidRegex = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
 
-// ValidateScope checks if the provided scope is valid
+// ValidateScope checks if the provided scope is valid for entity operations.
+// Valid scopes are "artist" and "track". Returns an error with available options if invalid.
 func ValidateScope(scope string) error {
 	if scope != ScopeArtist && scope != ScopeTrack {
 		return fmt.Errorf("ongeldig type: gebruik '%s' of '%s'", ScopeArtist, ScopeTrack)
@@ -25,7 +27,8 @@ func ValidateScope(scope string) error {
 	return nil
 }
 
-// ValidateEntityID validates that an ID is a proper UUID v4
+// ValidateEntityID validates that an ID is a proper UUID v4 format.
+// It checks for empty strings and validates the UUID format using regex matching.
 func ValidateEntityID(id string, entityType string) error {
 	if id == "" {
 		return fmt.Errorf("ongeldige %s-ID: mag niet leeg zijn", entityType)
@@ -39,7 +42,8 @@ func ValidateEntityID(id string, entityType string) error {
 	return nil
 }
 
-// ValidateImageUploadParams validates image upload parameters
+// ValidateImageUploadParams validates all parameters required for image upload operations.
+// It ensures proper scope, mutually exclusive URL/image data, and URL safety when applicable.
 func ValidateImageUploadParams(params *ImageUploadParams) error {
 	if err := ValidateScope(params.Scope); err != nil {
 		return err
@@ -67,7 +71,8 @@ func ValidateImageUploadParams(params *ImageUploadParams) error {
 	return nil
 }
 
-// createSafeHTTPClient creates a safeurl HTTP client with SSRF protection
+// createSafeHTTPClient creates a safeurl HTTP client configured with SSRF protection.
+// It uses default security settings that block private IPs, loopback addresses, and other dangerous targets.
 func createSafeHTTPClient() *safeurl.WrappedClient {
 	// Use default config which blocks private IPs, loopback, etc.
 	config := safeurl.GetConfigBuilder().Build()
@@ -75,7 +80,8 @@ func createSafeHTTPClient() *safeurl.WrappedClient {
 	return safeurl.Client(config)
 }
 
-// ValidateURL validates a URL by parsing and checking scheme
+// ValidateURL validates a URL by parsing it and checking for allowed schemes and hostname presence.
+// Only HTTP and HTTPS schemes are permitted to prevent access to local files or other protocols.
 func ValidateURL(urlString string) error {
 	if urlString == "" {
 		return fmt.Errorf("lege URL")
@@ -100,7 +106,8 @@ func ValidateURL(urlString string) error {
 	return nil
 }
 
-// ValidateContentType validates that a content type is an image type
+// ValidateContentType validates that a Content-Type header indicates an image.
+// It checks for the "image/" prefix and allows empty content types for flexibility.
 func ValidateContentType(contentType string) error {
 	if contentType != "" && !strings.HasPrefix(contentType, "image/") {
 		return fmt.Errorf("geen afbeelding content-type: %s", contentType)
@@ -108,7 +115,8 @@ func ValidateContentType(contentType string) error {
 	return nil
 }
 
-// ValidateImageData validates that data represents a valid image
+// ValidateImageData validates that the provided byte data represents a valid image.
+// It uses Go's image.DecodeConfig to verify the data can be decoded as an image.
 func ValidateImageData(data []byte) error {
 	if len(data) == 0 {
 		return fmt.Errorf("afbeelding is leeg")
@@ -122,7 +130,8 @@ func ValidateImageData(data []byte) error {
 	return nil
 }
 
-// ValidateImageFormat validates that a format is supported
+// ValidateImageFormat validates that an image format is supported by the application.
+// Supported formats are defined in the SupportedFormats slice and include JPEG and PNG.
 func ValidateImageFormat(format string) error {
 	if !slices.Contains(SupportedFormats, format) {
 		return fmt.Errorf("bestandsformaat %s wordt niet ondersteund (gebruik: %v)", format, SupportedFormats)
@@ -130,7 +139,9 @@ func ValidateImageFormat(format string) error {
 	return nil
 }
 
-// ValidateAndDownloadImage validates URL and downloads image with all necessary checks
+// ValidateAndDownloadImage performs comprehensive validation and secure download of an image from a URL.
+// It validates the URL, downloads using SSRF protection, validates content type, and verifies image data.
+// Returns the downloaded image bytes or an error if any validation step fails.
 func ValidateAndDownloadImage(urlString string) ([]byte, error) {
 	// 1. Validate URL first
 	if err := ValidateURL(urlString); err != nil {

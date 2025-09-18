@@ -1,59 +1,59 @@
-# ZuidWest FM Aeron API
+# Aeron Image Manager API
 
-Een **onofficiële** REST-API voor het Aeron-radioautomatiseringssysteem, specifiek ontwikkeld voor het **toevoegen en beheren van afbeeldingen** bij tracks en artiesten.
+Een **onofficiële** REST API voor het Aeron-radioautomatiseringssysteem, speciaal ontwikkeld voor het **toevoegen en beheren van afbeeldingen** voor tracks en artiesten.
 
 > [!WARNING]
-> Aeron is een product van Broadcast Partners. Deze API is volledig onofficieel en niet ontwikkeld door of in samenwerking met Broadcast Partners. Gebruik is op eigen risico. Maak altijd een back-up van je database voordat je deze tool gebruikt.
+> Aeron is een product van Broadcast Partners. Deze API is volledig onofficieel en wordt niet ontwikkeld door of in samenwerking met Broadcast Partners. Gebruik is op eigen risico. Maak altijd eerst een back-up van je database voordat je deze tool gebruikt.
 
 ## Waarom deze API?
 
-Het Aeron-systeem biedt standaard geen mogelijkheid om programmatisch afbeeldingen toe te voegen aan tracks en artiesten. Deze onofficiële API vult dat gat door directe toegang tot de Aeron-database te bieden, waardoor je:
+Het Aeron-systeem biedt standaard geen mogelijkheid om programmatisch afbeeldingen toe te voegen aan tracks en artiesten. Deze onofficiële API vult deze leemte door directe toegang tot de Aeron-database te bieden, waardoor je:
 - **Automatisch albumhoezen kunt toevoegen** aan tracks
-- **Artiestfoto's kunt uploaden** voor een visueel aantrekkelijke presentatie
-- **Bulk-operaties kunt uitvoeren** om snel grote hoeveelheden afbeeldingen te verwerken
+- **Artiestfoto's kunt beheren** voor een visueel aantrekkelijke weergave
+- **Bulkbewerkingen kunt uitvoeren** om efficiënt grote aantallen afbeeldingen te verwerken
 
-## Hoofdfunctionaliteit: Afbeeldingen toevoegen
+## Hoofdfunctionaliteit
 
-De primaire focus van deze API is het **toevoegen van afbeeldingen** aan:
-- **Artiesten**: Voeg foto's toe aan artiestprofielen
-- **Tracks**: Voeg albumhoezen of andere afbeeldingen toe aan individuele tracks
+De primaire functie van deze API is het **beheren van afbeeldingen** voor:
+- **Artiesten**: Toevoegen en beheren van artiestfoto's
+- **Tracks**: Toevoegen en beheren van albumhoezen
 
 ### Aanvullende functionaliteiten
 
-- **Automatische optimalisatie**: Afbeeldingen worden automatisch verkleind en geoptimaliseerd voor gebruik in Aeron
-- **Dubbele encoder**: Vergelijkt jpegli met standaard JPEG en selecteert de kleinste bestandsgrootte
-- **Playlist-API**: Haal playlistinformatie op met inzicht in welke items afbeeldingen hebben
-- **Statistieken**: Monitor hoeveel artiesten en tracks al afbeeldingen hebben
-- **Bulkoperaties**: Verwijder alle afbeeldingen voor een specifiek type in één keer
-- **Authenticatie**: Optionele API-sleutelauthenticatie voor beveiliging
+- **Automatische optimalisatie**: Afbeeldingen worden automatisch geschaald en geoptimaliseerd voor gebruik in Aeron
+- **Geavanceerde compressie**: Vergelijkt jpegli met standaard JPEG en selecteert automatisch de kleinste bestandsgrootte
+- **Playlist-integratie**: Bekijk playlist-informatie inclusief de beschikbaarheid van afbeeldingen
+- **Statistieken**: Monitor hoeveel artiesten en tracks reeds van afbeeldingen zijn voorzien
+- **Bulkbewerkingen**: Verwijder alle afbeeldingen van een specifiek type in één handeling
+- **Beveiliging**: Optionele API-sleutelverificatie voor veilige toegang
 
 ## Snelstart
 
-### 🐳 Docker (Aanbevolen)
+### 🐳 Docker (aanbevolen)
 ```bash
-# Start met example config
+# Starten met voorbeeldconfiguratie
 docker run -d -p 8080:8080 --name zwfm-aeronapi ghcr.io/oszuidwest/zwfm-aeronapi:latest
 
-# Of met eigen config
+# Of met eigen configuratie
 docker run -d -p 8080:8080 -v $(pwd)/config.yaml:/config.yaml --name zwfm-aeronapi ghcr.io/oszuidwest/zwfm-aeronapi:latest
 ```
 
-### 🪟 Windows
-1. Download het `.exe` bestand van de [laatste release](https://github.com/oszuidwest/zwfm-aeronapi/releases/latest)
-2. Plaats het in een map (bijvoorbeeld `C:\Program Files\zwfm-aeronapi`)
-3. Maak een `config.yaml` bestand in dezelfde map
-4. Start via command prompt: `zwfm-aeronapi.exe`
+### Uitvoerbare bestanden
+Download uitvoerbare bestanden voor verschillende platformen via de [releases-pagina](https://github.com/oszuidwest/zwfm-aeronapi/releases):
+- **Linux**: amd64, arm64, armv7
+- **Windows**: amd64, arm64
+- **macOS**: Intel (amd64), Apple Silicon (arm64)
 
 ## Installatie
 
 ### Met Docker
 
 ```bash
-# Download config voorbeeld
+# Download voorbeeldconfiguratie
 wget https://raw.githubusercontent.com/oszuidwest/zwfm-aeronapi/main/config.example.yaml -O config.yaml
-# Pas config.yaml aan
+# Pas config.yaml aan naar jouw situatie
 
-# Start container
+# Start de container
 docker run -d \
   -p 8080:8080 \
   -v $(pwd)/config.yaml:/config.yaml \
@@ -70,61 +70,31 @@ cd zwfm-aeronapi
 
 # Kopieer en pas de configuratie aan
 cp config.example.yaml config.yaml
-# Bewerk config.yaml met je database gegevens
+# Bewerk config.yaml met jouw databasegegevens
 
-# Bouw en start
+# Compileer en start de applicatie
 go build -o zwfm-aeronapi .
 ./zwfm-aeronapi -config=config.yaml -port=8080
 ```
 
-### Windows Service
-
-Voor Windows is er een alles-in-één installer:
-
-```powershell
-# Open PowerShell als Administrator
-
-# Optie 1: Direct installeren
-irm https://raw.githubusercontent.com/oszuidwest/zwfm-aeronapi/main/install.ps1 | iex
-
-# Optie 2: Download script eerst (voor inspectie)
-Invoke-WebRequest -Uri https://raw.githubusercontent.com/oszuidwest/zwfm-aeronapi/main/install.ps1 -OutFile install.ps1
-.\install.ps1
-```
-
-De installer:
-- Downloadt automatisch de laatste versie
-- Maakt de Windows service aan
-- Kopieert een voorbeeld configuratie
-- Start de service automatisch
-
-Zie [Windows documentatie](WINDOWS.md) voor meer details.
-
-### Binaire bestanden
-
-Download voor andere platformen van de [Releases-pagina](https://github.com/oszuidwest/zwfm-aeronapi/releases):
-
-- **Linux**: amd64, arm64, armv7
-- **Windows**: amd64, arm64 (zie [Windows Service installatie](WINDOWS.md) voor Aeron-integratie)
-- **macOS**: Intel (amd64), Apple Silicon (arm64)
 
 ## Configuratie
 
-Kopieer `config.example.yaml` naar `config.yaml` en pas de waardes aan:
+Kopieer `config.example.yaml` naar `config.yaml` en pas de waarden aan:
 
 ```bash
 cp config.example.yaml config.yaml
 ```
 
-Zie [`config.example.yaml`](config.example.yaml) voor:
-- Volledige documentatie van alle configuratie opties
-- Voorbeelden voor verschillende omgevingen (ontwikkeling, productie, Windows)
-- Uitleg over elke instelling
+Raadpleeg [`config.example.yaml`](config.example.yaml) voor:
+- Volledige documentatie van alle configuratie-opties
+- Voorbeelden voor verschillende omgevingen
+- Gedetailleerde uitleg van elke instelling
 
-## API-server starten
+## De API-server starten
 
 ```bash
-# Standaardpoort 8080
+# Standaardpoort (8080)
 ./zwfm-aeronapi
 
 # Aangepaste poort
@@ -133,13 +103,13 @@ Zie [`config.example.yaml`](config.example.yaml) voor:
 # Met aangepaste configuratie
 ./zwfm-aeronapi -config=/pad/naar/config.yaml -port=8080
 
-# Toon versie
+# Versie-informatie tonen
 ./zwfm-aeronapi -version
 ```
 
-## Quick Start
+## Snelstartgids
 
-### 1. Start de API
+### 1. Start de API-server
 ```bash
 ./zwfm-aeronapi -config=config.yaml
 ```
@@ -152,31 +122,24 @@ curl http://localhost:8080/api/health
 ### 3. Upload een artiestafbeelding
 ```bash
 curl -X POST http://localhost:8080/api/artists/{artistid}/image \
-  -H "X-API-Key: jouw-api-key" \
+  -H "X-API-Key: jouw-api-sleutel" \
   -H "Content-Type: application/json" \
   -d '{"url":"https://example.com/artist.jpg"}'
 ```
 
-### 4. Upload een trackafbeelding
+### 4. Upload een albumhoes
 ```bash
 curl -X POST http://localhost:8080/api/tracks/{trackid}/image \
-  -H "X-API-Key: jouw-api-key" \
+  -H "X-API-Key: jouw-api-sleutel" \
   -H "Content-Type: application/json" \
   -d '{"url":"https://example.com/album.jpg"}'
 ```
 
-Voor uitgebreide API-documentatie, inclusief alle endpoints, voorbeelden en use cases, zie [API.md](API.md).
-
-## Windows Service installatie
-
-Als je deze API naast Aeron op een Windows-server wilt draaien, zie [WINDOWS.md](WINDOWS.md) voor:
-- Automatische service installatie
-- Integratie met Aeron
-- Service beheer en troubleshooting
+Voor uitgebreide API-documentatie, inclusief alle endpoints, voorbeelden en gebruiksscenario's, raadpleeg [API.md](API.md).
 
 ## Databaseschema
 
-Vereiste PostgreSQL-tabellen zoals gebruikt door Aeron:
+Vereiste PostgreSQL-tabellen conform het Aeron-systeem:
 
 ```sql
 CREATE TABLE {schema}.artist (
@@ -204,13 +167,13 @@ CREATE TABLE {schema}.playlistitem (
 
 ## Ontwikkeling
 
-### Vereisten
-- Go 1.24 of hoger
+### Systeemvereisten
+- Go 1.24 of recenter
 - PostgreSQL met Aeron-database
 - ImageMagick
-- Jpegli (optioneel, voor verbeterde compressie)
+- Jpegli (optioneel, voor geavanceerde compressie)
 
-### Bouwen
+### Compileren
 ```bash
 go mod download
 go build -o zwfm-aeronapi .
@@ -223,4 +186,4 @@ go test ./...
 
 ## Licentie
 
-MIT-licentie - zie het LICENSE-bestand voor details.
+MIT-licentie - raadpleeg het LICENSE-bestand voor details.

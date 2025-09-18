@@ -11,22 +11,31 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 )
 
+// AeronAPI represents the HTTP API server for the Aeron radio automation system.
+// It provides REST endpoints for managing artist and track images in the Aeron database.
+// The API supports image upload, retrieval, deletion, and statistics operations.
 type AeronAPI struct {
 	service *AeronService
 	config  *Config
 }
 
+// ImageUploadRequest represents the JSON request body for image upload operations.
+// Either URL or Image should be provided, but not both.
 type ImageUploadRequest struct {
-	URL   string `json:"url"`
-	Image string `json:"image"`
+	URL   string `json:"url"`   // URL of the image to download and process
+	Image string `json:"image"` // Base64-encoded image data
 }
 
+// ImageStatsResponse represents the response format for statistics endpoints.
+// It provides counts of entities with and without images.
 type ImageStatsResponse struct {
-	Total         int `json:"total"`
-	WithImages    int `json:"with_images"`
-	WithoutImages int `json:"without_images"`
+	Total         int `json:"total"`          // Total number of entities
+	WithImages    int `json:"with_images"`    // Number of entities with images
+	WithoutImages int `json:"without_images"` // Number of entities without images
 }
 
+// NewAeronAPI creates a new AeronAPI instance with the provided service and configuration.
+// The service handles business logic while config contains API authentication settings.
 func NewAeronAPI(service *AeronService, config *Config) *AeronAPI {
 	return &AeronAPI{
 		service: service,
@@ -34,6 +43,9 @@ func NewAeronAPI(service *AeronService, config *Config) *AeronAPI {
 	}
 }
 
+// Start initializes and starts the HTTP server on the specified port.
+// It configures middleware, routes, and begins listening for incoming requests.
+// Returns an error if the server fails to start.
 func (s *AeronAPI) Start(port string) error {
 	router := chi.NewRouter()
 
@@ -340,60 +352,83 @@ func (s *AeronAPI) handleDeleteImage(scope string) http.HandlerFunc {
 }
 
 func (s *AeronAPI) handlePlaylist(w http.ResponseWriter, r *http.Request) {
-	// Parse query parameters manually (lighter than validation)
-	opts := defaultPlaylistOptions()
 	query := r.URL.Query()
+	blockID := query.Get("block_id")
 
-	// Date parameter
-	if date := query.Get("date"); date != "" {
-		opts.Date = date
-	}
+	// If block_id is provided, return tracks for that specific block
+	if blockID != "" {
+		opts := defaultPlaylistOptions()
+		opts.BlockID = blockID
 
-	// Time range
-	if from := query.Get("from"); from != "" {
-		opts.StartTime = from
-	}
-	if to := query.Get("to"); to != "" {
-		opts.EndTime = to
-	}
-
-	// Limit and offset
-	if limit := query.Get("limit"); limit != "" {
-		if l, err := strconv.Atoi(limit); err == nil && l > 0 {
-			opts.Limit = l
+		// Limit and offset
+		if limit := query.Get("limit"); limit != "" {
+			if l, err := strconv.Atoi(limit); err == nil && l > 0 {
+				opts.Limit = l
+			}
 		}
-	}
-	if offset := query.Get("offset"); offset != "" {
-		if o, err := strconv.Atoi(offset); err == nil && o >= 0 {
-			opts.Offset = o
+		if offset := query.Get("offset"); offset != "" {
+			if o, err := strconv.Atoi(offset); err == nil && o >= 0 {
+				opts.Offset = o
+			}
 		}
+
+		// Track image filter
+		if trackImage := query.Get("track_image"); trackImage != "" {
+			opts.TrackImage = parseBoolParam(trackImage)
+		}
+
+		// Artist image filter
+		if artistImage := query.Get("artist_image"); artistImage != "" {
+			opts.ArtistImage = parseBoolParam(artistImage)
+		}
+
+		// Sort options
+		if sort := query.Get("sort"); sort != "" {
+			opts.SortBy = sort
+		}
+		if query.Get("desc") == "true" {
+			opts.SortDesc = true
+		}
+
+		playlist, err := getPlaylist(s.service.db, s.config.Database.Schema, opts)
+		if err != nil {
+			respondError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+
+		respondJSON(w, http.StatusOK, playlist)
+		return
 	}
 
-	// Track image filter
-	if trackImage := query.Get("track_image"); trackImage != "" {
-		opts.TrackImage = parseBoolParam(trackImage)
-	}
+	// No block_id: return all blocks with their tracks for today (or specified date)
+	date := query.Get("date")
 
-	// Artist image filter
-	if artistImage := query.Get("artist_image"); artistImage != "" {
-		opts.ArtistImage = parseBoolParam(artistImage)
-	}
-
-	// Sort options
-	if sort := query.Get("sort"); sort != "" {
-		opts.SortBy = sort
-	}
-	if query.Get("desc") == "true" {
-		opts.SortDesc = true
-	}
-
-	playlist, err := getPlaylist(s.service.db, s.config.Database.Schema, opts)
+	// Get all blocks and tracks in just 2 queries (optimized)
+	blocks, tracksByBlock, err := getPlaylistBlocksWithTracks(s.service.db, s.config.Database.Schema, date)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	respondJSON(w, http.StatusOK, playlist)
+	// Build the response
+	type BlockWithTracks struct {
+		PlaylistBlock
+		Tracks []PlaylistItem `json:"tracks"`
+	}
+
+	result := make([]BlockWithTracks, len(blocks))
+	for i, block := range blocks {
+		tracks := tracksByBlock[block.BlockID]
+		if tracks == nil {
+			tracks = []PlaylistItem{}
+		}
+		result[i] = BlockWithTracks{
+			PlaylistBlock: block,
+			Tracks:        tracks,
+		}
+	}
+
+	respondJSON(w, http.StatusOK, result)
 }
 
 func (s *AeronAPI) isValidAPIKey(key string) bool {

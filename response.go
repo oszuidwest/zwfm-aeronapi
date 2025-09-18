@@ -6,14 +6,16 @@ import (
 	"strings"
 )
 
-// APIResponse is the standard response format for all API endpoints
+// APIResponse is the standard response format for all API endpoints.
+// It provides a consistent structure for both successful and error responses.
 type APIResponse struct {
-	Success bool        `json:"success"`
-	Data    interface{} `json:"data,omitempty"`
-	Error   string      `json:"error,omitempty"`
+	Success bool        `json:"success"`         // Whether the operation was successful
+	Data    interface{} `json:"data,omitempty"`  // Response data for successful operations
+	Error   string      `json:"error,omitempty"` // Error message for failed operations
 }
 
-// respondJSON sends a successful JSON response
+// respondJSON sends a successful JSON response with the specified status code and data.
+// It automatically sets the success field to true and includes the provided data.
 func respondJSON(w http.ResponseWriter, statusCode int, data interface{}) {
 	w.WriteHeader(statusCode)
 	_ = json.NewEncoder(w).Encode(APIResponse{
@@ -22,7 +24,8 @@ func respondJSON(w http.ResponseWriter, statusCode int, data interface{}) {
 	})
 }
 
-// respondError sends an error JSON response
+// respondError sends an error JSON response with the specified status code and error message.
+// It automatically sets the success field to false and includes the error message.
 func respondError(w http.ResponseWriter, statusCode int, errorMsg string) {
 	w.WriteHeader(statusCode)
 	_ = json.NewEncoder(w).Encode(APIResponse{
@@ -31,7 +34,8 @@ func respondError(w http.ResponseWriter, statusCode int, errorMsg string) {
 	})
 }
 
-// errorCode returns the appropriate HTTP status code for an error
+// errorCode determines the appropriate HTTP status code based on the error message content.
+// It maps common Dutch error messages to their corresponding HTTP status codes.
 func errorCode(err error) int {
 	if err == nil {
 		return http.StatusOK

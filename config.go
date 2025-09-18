@@ -7,34 +7,46 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// DatabaseConfig contains PostgreSQL database connection parameters.
+// All fields are required for establishing a connection to the Aeron database.
 type DatabaseConfig struct {
-	Host     string `yaml:"host"`
-	Port     string `yaml:"port"`
-	Name     string `yaml:"name"`
-	User     string `yaml:"user"`
-	Password string `yaml:"password"`
-	Schema   string `yaml:"schema"`
-	SSLMode  string `yaml:"sslmode"`
+	Host     string `yaml:"host"`     // Database host address
+	Port     string `yaml:"port"`     // Database port number
+	Name     string `yaml:"name"`     // Database name
+	User     string `yaml:"user"`     // Database username
+	Password string `yaml:"password"` // Database password
+	Schema   string `yaml:"schema"`   // Database schema name (typically "aeron")
+	SSLMode  string `yaml:"sslmode"`  // SSL connection mode
 }
 
+// ImageConfig contains image processing and optimization settings.
+// It defines how uploaded images should be resized and compressed.
 type ImageConfig struct {
-	TargetWidth   int  `yaml:"target_width"`
-	TargetHeight  int  `yaml:"target_height"`
-	Quality       int  `yaml:"quality"`
-	RejectSmaller bool `yaml:"reject_smaller"`
+	TargetWidth   int  `yaml:"target_width"`   // Target width for image resizing
+	TargetHeight  int  `yaml:"target_height"`  // Target height for image resizing
+	Quality       int  `yaml:"quality"`        // JPEG quality (1-100)
+	RejectSmaller bool `yaml:"reject_smaller"` // Whether to reject images smaller than target dimensions
 }
 
+// APIConfig contains API authentication settings.
+// When enabled, all API endpoints require a valid API key in the X-API-Key header.
 type APIConfig struct {
-	Enabled bool     `yaml:"enabled"`
-	Keys    []string `yaml:"keys"`
+	Enabled bool     `yaml:"enabled"` // Whether API key authentication is enabled
+	Keys    []string `yaml:"keys"`    // List of valid API keys
 }
 
+// Config represents the complete application configuration loaded from YAML.
+// It contains all settings needed for database connectivity, image processing, and API authentication.
+// The zero value is not usable; all fields must be properly configured.
 type Config struct {
-	Database DatabaseConfig `yaml:"database"`
-	Image    ImageConfig    `yaml:"image"`
-	API      APIConfig      `yaml:"api"`
+	Database DatabaseConfig `yaml:"database"` // Database connection settings
+	Image    ImageConfig    `yaml:"image"`    // Image processing settings
+	API      APIConfig      `yaml:"api"`      // API authentication settings
 }
 
+// loadConfig loads and validates application configuration from a YAML file.
+// If configPath is empty, it attempts to load "config.yaml" from the current directory.
+// Returns an error if the file cannot be read or contains invalid configuration.
 func loadConfig(configPath string) (*Config, error) {
 	config := &Config{}
 
@@ -62,6 +74,9 @@ func loadConfig(configPath string) (*Config, error) {
 	return config, nil
 }
 
+// validateConfig ensures that all required configuration fields are present and valid.
+// It checks database connection parameters, image settings, and returns an error
+// listing any missing or invalid configuration values.
 func validateConfig(config *Config) error {
 	var missing []string
 
