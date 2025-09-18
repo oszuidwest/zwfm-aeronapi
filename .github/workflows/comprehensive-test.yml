@@ -273,25 +273,38 @@ jobs:
 
           RESPONSE=$(curl -s -H 'X-API-Key: test-api-key-12345' http://localhost:8888/api/playlist)
           SUCCESS=$(echo "$RESPONSE" | jq '.success')
-          ITEM_COUNT=$(echo "$RESPONSE" | jq '.data | length')
+          BLOCK_COUNT=$(echo "$RESPONSE" | jq '.data | length')
 
           echo "Response success: $SUCCESS"
-          echo "Playlist items: $ITEM_COUNT"
-          if [ "$SUCCESS" = "true" ] && [ "$ITEM_COUNT" -gt 0 ]; then
-            echo "✓ Playlist endpoint geeft items terug"
-            # Controleer structuur eerste item
-            FIRST_ITEM=$(echo "$RESPONSE" | jq '.data[0]')
-            if echo "$FIRST_ITEM" | jq -e 'has("songid") and has("songname") and has("artistid") and
-                                              has("artistname") and has("start_time") and
-                                              has("has_track_image") and has("has_artist_image")' > /dev/null; then
-              echo "✓ Playlist items hebben correcte structuur"
+          echo "Playlist blocks: $BLOCK_COUNT"
+          if [ "$SUCCESS" = "true" ] && [ "$BLOCK_COUNT" -gt 0 ]; then
+            echo "✓ Playlist endpoint geeft blocks terug"
+            # Controleer structuur eerste block
+            FIRST_BLOCK=$(echo "$RESPONSE" | jq '.data[0]')
+            if echo "$FIRST_BLOCK" | jq -e 'has("blockid") and has("name") and has("start_time") and
+                                              has("end_time") and has("date") and has("tracks")' > /dev/null; then
+              echo "✓ Playlist blocks hebben correcte structuur"
+              # Check if block has tracks and they have the right structure
+              TRACK_COUNT=$(echo "$FIRST_BLOCK" | jq '.tracks | length')
+              if [ "$TRACK_COUNT" -gt 0 ]; then
+                FIRST_TRACK=$(echo "$FIRST_BLOCK" | jq '.tracks[0]')
+                if echo "$FIRST_TRACK" | jq -e 'has("songid") and has("songname") and has("artistid") and
+                                                  has("artistname") and has("start_time") and
+                                                  has("has_track_image") and has("has_artist_image")' > /dev/null; then
+                  echo "✓ Playlist tracks hebben correcte structuur"
+                else
+                  echo "✗ Playlist tracks missen verplichte velden"
+                  echo "$FIRST_TRACK" | jq .
+                  exit 1
+                fi
+              fi
             else
-              echo "✗ Playlist items missen verplichte velden"
-              echo "$FIRST_ITEM" | jq .
+              echo "✗ Playlist blocks missen verplichte velden"
+              echo "$FIRST_BLOCK" | jq .
               exit 1
             fi
           else
-            echo "✗ Playlist endpoint mislukt of geen items"
+            echo "✗ Playlist endpoint mislukt of geen blocks"
             echo "$RESPONSE" | jq .
             exit 1
           fi
