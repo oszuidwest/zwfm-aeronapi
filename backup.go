@@ -157,7 +157,9 @@ func (s *AeronService) CreateBackup(ctx context.Context, req BackupRequest) (*Ba
 
 	if err != nil {
 		// Clean up partial file if it exists
-		os.Remove(fullPath)
+		if removeErr := os.Remove(fullPath); removeErr != nil && !os.IsNotExist(removeErr) {
+			slog.Warn("Opruimen van mislukte backup gefaald", "path", fullPath, "error", removeErr)
+		}
 		slog.Error("Backup mislukt", "error", err, "output", string(output))
 		return nil, &BackupError{Operation: "maken", Err: fmt.Errorf("%s", strings.TrimSpace(string(output)))}
 	}
