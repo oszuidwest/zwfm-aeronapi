@@ -1,4 +1,4 @@
-// Package main provides version information for the Aeron Image Manager API.
+// Package main provides version information for the Aeron Toolbox API.
 package main
 
 // Version is the build version string, set at build time via ldflags.

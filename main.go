@@ -1,9 +1,8 @@
-// Package main implements the Aeron Image Manager API server.
+// Package main implements the Aeron Toolbox API server.
 //
-// This server provides an unofficial REST API for managing images in the Aeron
-// radio automation system. It allows adding and managing album covers for tracks
-// and photos for artists directly in the Aeron database, functionality that is
-// not natively supported by the system.
+// This server provides an unofficial REST API for the Aeron radio automation system.
+// It offers image management, database browsing, database maintenance, and backup
+// functionality through direct database access.
 //
 // The API server can be configured via JSON configuration file and supports
 // optional API key authentication for secure access.
@@ -43,7 +42,7 @@ func run() error {
 	flag.Parse()
 
 	if *version {
-		fmt.Printf("Aeron Image Manager %s (%s)\n", Version, Commit)
+		fmt.Printf("Aeron Toolbox %s (%s)\n", Version, Commit)
 		fmt.Printf("Build time: %s\n", BuildTime)
 		return nil
 	}

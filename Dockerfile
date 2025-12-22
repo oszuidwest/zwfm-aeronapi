@@ -49,7 +49,7 @@ RUN mkdir -p /backups && chown aeron:aeron /backups
 COPY --from=builder /app/zwfm-aeronapi /app/zwfm-aeronapi
 
 # Copy config file (if exists)
-COPY --chown=aeron:aeron config.yaml* /app/
+COPY --chown=aeron:aeron config.json* /app/
 
 # Change ownership
 RUN chown -R aeron:aeron /app

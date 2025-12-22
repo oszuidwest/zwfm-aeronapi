@@ -1,15 +1,16 @@
-# ZWFM Aeron API Tests
+# Aeron Toolbox Tests
 
-This directory contains test fixtures and data for the ZWFM Aeron API project.
+This directory contains test fixtures and data for the Aeron Toolbox project.
 
 ## Structure
 
 ```
 tests/
-├── fixtures/           # Test data and configuration
-│   ├── mock_data.sql   # Mock database data
-│   └── test_config.json # Test configuration
-└── docker-compose.test.yml # Test database setup (optional for local testing)
+├── fixtures/              # Test data
+│   └── mock_data.sql      # Mock database data (artists, tracks, playlist)
+├── docker-compose.test.yml # Test database setup
+├── Dockerfile.testdb      # Test database image
+└── README.md              # This file
 ```
 
 ## Test Execution
@@ -24,16 +25,20 @@ If you want to test locally, you can:
 
 ```bash
 cd tests
-docker-compose -f docker-compose.test.yml up -d
+docker compose -f docker-compose.test.yml up -d
 ```
 
 This starts a PostgreSQL container on port 5433 with mock data.
 
-### 2. Run the application manually
+### 2. Create a test config and run the application
 
 ```bash
+# Create test config (see config.example.json, use port 5433)
+cp config.example.json test_config.json
+# Edit test_config.json: set port to "5433"
+
 go build -o zwfm-aeronapi .
-./zwfm-aeronapi -config=tests/fixtures/test_config.json
+./zwfm-aeronapi -config=test_config.json -port=8080
 ```
 
 ## Test Data
@@ -56,9 +61,8 @@ GitHub Actions automatically:
 
 ## Writing New Tests
 
-1. Add test data to `fixtures/`
-2. Create test scripts in `integration/`
-3. Update GitHub Actions workflow if needed
+1. Add test data to `fixtures/mock_data.sql`
+2. Update the GitHub Actions workflow in `.github/workflows/comprehensive-test.yml`
 
 ## Test Configuration
 

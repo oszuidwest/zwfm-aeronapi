@@ -1,4 +1,4 @@
-# Aeron Image Manager API-documentatie
+# Aeron Toolbox API-documentatie
 
 ## Inhoudsopgave
 
@@ -19,7 +19,7 @@
 
 ## Overzicht
 
-De Aeron Image Manager API biedt RESTful-endpoints voor het beheren van afbeeldingen in het Aeron-radioautomatiseringssysteem. Deze API biedt directe databasetoegang om albumhoezen voor tracks en artiestfoto's toe te voegen, op te halen en te verwijderen.
+De Aeron Toolbox API biedt RESTful-endpoints voor het Aeron-radioautomatiseringssysteem. De API biedt directe databasetoegang voor afbeeldingenbeheer, mediabrowser, database-onderhoud en backup-management.
 
 **Basis-URL:** `http://localhost:8080/api`
 
@@ -66,8 +66,8 @@ Wanneer authenticatie is ingeschakeld in de configuratie, vereisen alle endpoint
 **Response bij ontbrekende autorisatie:**
 ```json
 {
-  "error": "Niet geautoriseerd: ongeldige of ontbrekende API-sleutel",
-  "request_id": "abc123"
+  "success": false,
+  "error": "Niet geautoriseerd: ongeldige of ontbrekende API-sleutel"
 }
 ```
 
@@ -75,7 +75,6 @@ Wanneer authenticatie is ingeschakeld in de configuratie, vereisen alle endpoint
 
 Alle API-responses bevatten:
 - `Content-Type: application/json; charset=utf-8` (uitgezonderd afbeeldingsendpoints)
-- `X-Request-Id: uniek-verzoek-id`
 
 ## Response-formaat
 
@@ -102,8 +101,8 @@ Of bij fouten:
 Alle fouten volgen dit formaat:
 ```json
 {
-  "error": "Foutmelding",
-  "request_id": "unieke-request-id"
+  "success": false,
+  "error": "Foutmelding"
 }
 ```
 
@@ -131,7 +130,8 @@ Controleer de status van de API.
   "data": {
     "status": "healthy",
     "version": "dev",
-    "database": "aeron"
+    "database": "aeron",
+    "database_status": "connected"
   }
 }
 ```
@@ -228,8 +228,7 @@ Upload of werk een artiestafbeelding bij.
   "artist": "The Beatles",
   "original_size": 245678,
   "optimized_size": 45678,
-  "savings_percent": 81.4,
-  "encoder": "jpegli"
+  "savings_percent": 81.4
 }
 ```
 
@@ -380,12 +379,11 @@ Upload of werk een albumhoes bij.
 **Response:** `200 OK`
 ```json
 {
-  "track": "Hey Jude",
   "artist": "The Beatles",
+  "track": "Hey Jude",
   "original_size": 345678,
   "optimized_size": 65678,
-  "savings_percent": 81.0,
-  "encoder": "jpegli"
+  "savings_percent": 81.0
 }
 ```
 
@@ -469,8 +467,8 @@ Verkrijg alle playlistblokken voor een specifieke datum.
     "end_time": "10:00:00",
     "tracks": [
       {
-        "songid": "track-uuid-1",
-        "songname": "Nummer Titel",
+        "trackid": "track-uuid-1",
+        "tracktitle": "Nummer Titel",
         "artistid": "artist-uuid-1",
         "artistname": "Artiest Naam",
         "start_time": "06:00:00",
@@ -508,8 +506,8 @@ Verkrijg tracks voor een specifiek playlistblok.
 ```json
 [
   {
-    "songid": "track-uuid-1",
-    "songname": "Nummer Titel",
+    "trackid": "track-uuid-1",
+    "tracktitle": "Nummer Titel",
     "artistid": "artist-uuid-1",
     "artistname": "Artiest Naam",
     "start_time": "06:00:00",
@@ -794,11 +792,11 @@ Verwijder een specifiek backup bestand.
 ### Afbeeldingsoptimalisatie
 
 Alle geüploade afbeeldingen worden automatisch:
-1. Gevalideerd op formaat (JPEG, PNG, WebP)
-2. Gecontroleerd op minimumafmetingen (configureerbaar, standaard: 200×200)
+1. Gevalideerd op formaat (JPEG, PNG)
+2. Gecontroleerd op minimumafmetingen (optioneel, configureerbaar)
 3. Geschaald naar maximumafmetingen (configureerbaar, standaard: 640×640)
-4. Geoptimaliseerd met dubbele codering (standaard-JPEG en jpegli)
-5. Opgeslagen met de kleinste bestandsgrootte
+4. Geconverteerd naar geoptimaliseerde JPEG
+5. Alleen opgeslagen als de geoptimaliseerde versie kleiner is dan het origineel
 
 ### Ondersteunde afbeeldingsbronnen
 
@@ -813,9 +811,9 @@ Alle geüploade afbeeldingen worden automatisch:
 
 ### Afbeeldingsvalidatieregels
 
-- **Minimumafmetingen**: Configureerbaar (standaard: 200×200)
+- **Minimumafmetingen**: Optioneel configureerbaar via `reject_smaller`
 - **Maximumafmetingen**: Configureerbaar (standaard: 640×640)
-- **Toegestane formaten**: JPEG, PNG, WebP
+- **Toegestane formaten**: JPEG, PNG
 - **Beeldverhouding**: Wordt behouden tijdens schalen
 - **Kwaliteit**: Configureerbare JPEG-kwaliteit (standaard: 85)
 
@@ -825,8 +823,8 @@ Alle geüploade afbeeldingen worden automatisch:
 
 ### Afbeeldingsverwerking
 - Afbeeldingen worden automatisch geoptimaliseerd voor gebruik in Aeron
-- Zowel standaard JPEG als jpegli-compressie wordt toegepast
-- De kleinste bestandsgrootte wordt automatisch geselecteerd
+- PNG-afbeeldingen worden geconverteerd naar JPEG
+- Alleen de geoptimaliseerde versie wordt opgeslagen als deze kleiner is dan het origineel
 
 ### UUID-validatie
 - Alle artiest- en track-ID's moeten geldige UUID's zijn (versie 4-formaat)
@@ -995,9 +993,44 @@ Het gedrag van de API kan worden geconfigureerd via `config.json`:
 }
 ```
 
-Zie [CLAUDE.md](CLAUDE.md) voor een complete configuratie-referentie met alle beschikbare opties.
+Zie [config.example.json](config.example.json) voor alle beschikbare opties.
 
 ---
+
+## Databaseschema
+
+De API werkt met de volgende Aeron PostgreSQL-tabellen:
+
+```sql
+CREATE TABLE {schema}.artist (
+    artistid UUID PRIMARY KEY,
+    artist VARCHAR NOT NULL,
+    picture BYTEA
+);
+
+CREATE TABLE {schema}.track (
+    titleid UUID PRIMARY KEY,
+    tracktitle VARCHAR NOT NULL,
+    artist VARCHAR,
+    artistid UUID,
+    picture BYTEA,
+    exporttype INTEGER
+);
+
+CREATE TABLE {schema}.playlistitem (
+    id SERIAL PRIMARY KEY,
+    titleid UUID,
+    startdatetime TIMESTAMP,
+    blockid UUID
+);
+
+CREATE TABLE {schema}.playlistblock (
+    blockid UUID PRIMARY KEY,
+    name VARCHAR,
+    startdatetime TIMESTAMP,
+    enddatetime TIMESTAMP
+);
+```
 
 ## Belangrijke opmerkingen
 
@@ -1005,4 +1038,3 @@ Zie [CLAUDE.md](CLAUDE.md) voor een complete configuratie-referentie met alle be
 - UUID's zijn hoofdletterongevoelig
 - Het contenttype van afbeeldingen wordt automatisch gedetecteerd
 - De API maakt gebruik van connection pooling voor optimale databaseprestaties
-- Geoptimaliseerd voor PostgreSQL met de Aeron-schemastructuur
