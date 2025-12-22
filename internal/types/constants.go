@@ -1,4 +1,4 @@
-package main
+package types
 
 import "fmt"
 
@@ -85,10 +85,10 @@ func IDColumnForTable(table Table) string {
 	return "artistid"
 }
 
-// isValidIdentifier validates that a name contains only safe characters for SQL identifiers.
+// IsValidIdentifier validates that a name contains only safe characters for SQL identifiers.
 // It prevents SQL injection by allowing only alphanumeric characters and underscores.
 // This is used for both schema names and table names.
-func isValidIdentifier(name string) bool {
+func IsValidIdentifier(name string) bool {
 	if name == "" {
 		return false
 	}
@@ -104,13 +104,23 @@ func isValidIdentifier(name string) bool {
 // both the schema and table names to prevent SQL injection.
 // Returns an error if either name contains invalid characters.
 func QualifiedTable(schema string, table Table) (string, error) {
-	if !isValidIdentifier(schema) {
+	if !IsValidIdentifier(schema) {
 		return "", fmt.Errorf("ongeldige schema naam: %s", schema)
 	}
-	if !isValidIdentifier(string(table)) {
+	if !IsValidIdentifier(string(table)) {
 		return "", fmt.Errorf("ongeldige tabel naam: %s", table)
 	}
 	return fmt.Sprintf("%s.%s", schema, table), nil
+}
+
+// MustQualifiedTable returns a fully qualified table name or panics on error.
+// Only use this when schema and table are known to be valid (e.g., from config validation).
+func MustQualifiedTable(schema string, table Table) string {
+	qt, err := QualifiedTable(schema, table)
+	if err != nil {
+		panic(err)
+	}
+	return qt
 }
 
 // ErrorMessages provides centralized Dutch error messages for consistent user communication.

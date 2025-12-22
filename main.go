@@ -22,19 +22,11 @@ import (
 
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
+
+	"github.com/oszuidwest/zwfm-aeronapi/internal/api"
+	"github.com/oszuidwest/zwfm-aeronapi/internal/config"
+	"github.com/oszuidwest/zwfm-aeronapi/internal/service"
 )
-
-// Version is the build version string, set at build time via ldflags.
-// It defaults to "dev" for development builds.
-var Version = "dev"
-
-// Commit is the git commit hash, set at build time via ldflags.
-// It defaults to "unknown" when not built from version control.
-var Commit = "unknown"
-
-// BuildTime is the build timestamp, set at build time via ldflags.
-// It defaults to "unknown" when build time is not captured.
-var BuildTime = "unknown"
 
 func main() {
 	if err := run(); err != nil {
@@ -57,7 +49,7 @@ func run() error {
 	}
 
 	// Load configuration
-	config, err := loadConfig(*configFile)
+	cfg, err := config.Load(*configFile)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Configuratiefout: %v\n", err)
 		return err
@@ -67,7 +59,7 @@ func run() error {
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, nil)))
 
 	// Connect to database
-	db, err := connectDatabase(config)
+	db, err := connectDatabase(cfg)
 	if err != nil {
 		return err
 	}
@@ -78,8 +70,9 @@ func run() error {
 	}()
 
 	// Create service and API server
-	service := NewAeronService(db, config)
-	apiServer := NewAeronAPI(service, config)
+	svc := service.New(db, cfg)
+	api.Version = Version
+	apiServer := api.New(svc, cfg)
 
 	// Setup signal handling for graceful shutdown
 	stop := make(chan os.Signal, 1)
@@ -117,26 +110,22 @@ func run() error {
 }
 
 // connectDatabase establishes a connection to the PostgreSQL database with configured pool settings.
-func connectDatabase(config *Config) (*sqlx.DB, error) {
-	dbURL := fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=%s",
-		config.Database.User, config.Database.Password, config.Database.Host,
-		config.Database.Port, config.Database.Name, config.Database.SSLMode)
-
-	db, err := sqlx.Open("postgres", dbURL)
+func connectDatabase(cfg *config.Config) (*sqlx.DB, error) {
+	db, err := sqlx.Open("postgres", cfg.Database.ConnectionString())
 	if err != nil {
 		slog.Error("Database verbinding mislukt", "error", err)
 		return nil, err
 	}
 
 	// Configure connection pool
-	db.SetMaxOpenConns(config.Database.GetMaxOpenConns())
-	db.SetMaxIdleConns(config.Database.GetMaxIdleConns())
-	db.SetConnMaxLifetime(config.Database.GetConnMaxLifetime())
+	db.SetMaxOpenConns(cfg.Database.GetMaxOpenConns())
+	db.SetMaxIdleConns(cfg.Database.GetMaxIdleConns())
+	db.SetConnMaxLifetime(cfg.Database.GetConnMaxLifetime())
 
 	slog.Info("Database connection pool geconfigureerd",
-		"max_open", config.Database.GetMaxOpenConns(),
-		"max_idle", config.Database.GetMaxIdleConns(),
-		"max_lifetime", config.Database.GetConnMaxLifetime())
+		"max_open", cfg.Database.GetMaxOpenConns(),
+		"max_idle", cfg.Database.GetMaxIdleConns(),
+		"max_lifetime", cfg.Database.GetConnMaxLifetime())
 
 	if err := db.Ping(); err != nil {
 		slog.Error("Database ping mislukt", "error", err)

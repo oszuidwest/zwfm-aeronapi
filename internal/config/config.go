@@ -1,10 +1,12 @@
-package main
+// Package config provides application configuration management.
+package config
 
 import (
 	"fmt"
 	"os"
 	"time"
 
+	"github.com/oszuidwest/zwfm-aeronapi/internal/types"
 	"gopkg.in/yaml.v3"
 )
 
@@ -183,10 +185,10 @@ func (c *BackupConfig) GetDefaultCompression() int {
 	return c.DefaultCompression
 }
 
-// loadConfig loads and validates application configuration from a YAML file.
+// Load loads and validates application configuration from a YAML file.
 // If configPath is empty, it attempts to load "config.yaml" from the current directory.
 // Returns an error if the file cannot be read or contains invalid configuration.
-func loadConfig(configPath string) (*Config, error) {
+func Load(configPath string) (*Config, error) {
 	config := &Config{}
 
 	if configPath == "" {
@@ -206,17 +208,17 @@ func loadConfig(configPath string) (*Config, error) {
 		return nil, fmt.Errorf("fout in configuratiebestand: %w", err)
 	}
 
-	if err := validateConfig(config); err != nil {
+	if err := validate(config); err != nil {
 		return nil, fmt.Errorf("configuratie is onvolledig: %w", err)
 	}
 
 	return config, nil
 }
 
-// validateConfig ensures that all required configuration fields are present and valid.
+// validate ensures that all required configuration fields are present and valid.
 // It checks database connection parameters, image settings, and returns an error
 // listing any missing or invalid configuration values.
-func validateConfig(config *Config) error {
+func validate(config *Config) error {
 	var missing []string
 
 	// Database validation
@@ -243,7 +245,7 @@ func validateConfig(config *Config) error {
 	}
 
 	// Validate schema name for SQL safety
-	if config.Database.Schema != "" && !isValidIdentifier(config.Database.Schema) {
+	if config.Database.Schema != "" && !types.IsValidIdentifier(config.Database.Schema) {
 		return fmt.Errorf("database.schema bevat ongeldige tekens")
 	}
 
@@ -262,4 +264,10 @@ func validateConfig(config *Config) error {
 		return fmt.Errorf("configuratie mist de volgende velden: %v", missing)
 	}
 	return nil
+}
+
+// ConnectionString returns a PostgreSQL connection string.
+func (c *DatabaseConfig) ConnectionString() string {
+	return fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
+		c.Host, c.Port, c.User, c.Password, c.Name, c.SSLMode)
 }

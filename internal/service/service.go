@@ -1,4 +1,5 @@
-package main
+// Package service provides business logic for managing images in the Aeron radio automation system.
+package service
 
 import (
 	"context"
@@ -8,6 +9,11 @@ import (
 	"io"
 	"log/slog"
 	"strings"
+
+	"github.com/oszuidwest/zwfm-aeronapi/internal/config"
+	"github.com/oszuidwest/zwfm-aeronapi/internal/database"
+	"github.com/oszuidwest/zwfm-aeronapi/internal/image"
+	"github.com/oszuidwest/zwfm-aeronapi/internal/types"
 )
 
 // DB is an interface that abstracts database operations used by the service.
@@ -24,27 +30,42 @@ type DB interface {
 // It orchestrates image processing, database operations, and validation workflows.
 type AeronService struct {
 	db     DB
-	config *Config
+	config *config.Config
 	schema string // Cached schema name for convenience
 }
 
-// NewAeronService creates a new AeronService instance with the provided database connection and configuration.
+// New creates a new AeronService instance with the provided database connection and configuration.
 // The service uses the database for entity operations and config for image processing settings.
-func NewAeronService(db DB, config *Config) *AeronService {
+func New(db DB, cfg *config.Config) *AeronService {
 	return &AeronService{
 		db:     db,
-		config: config,
-		schema: config.Database.Schema,
+		config: cfg,
+		schema: cfg.Database.Schema,
 	}
+}
+
+// Config returns the service configuration.
+func (s *AeronService) Config() *config.Config {
+	return s.config
+}
+
+// DB returns the database interface.
+func (s *AeronService) DB() DB {
+	return s.db
+}
+
+// Schema returns the database schema name.
+func (s *AeronService) Schema() string {
+	return s.schema
 }
 
 // ImageUploadParams contains the parameters required for uploading an image to an entity.
 // Either URL or ImageData should be provided, but not both.
 type ImageUploadParams struct {
-	Scope     Scope  // Entity scope: ScopeArtist or ScopeTrack
-	ID        string // UUID of the entity to update
-	URL       string // URL of the image to download (optional)
-	ImageData []byte // Raw image data (optional)
+	Scope     types.Scope // Entity scope: ScopeArtist or ScopeTrack
+	ID        string      // UUID of the entity to update
+	URL       string      // URL of the image to download (optional)
+	ImageData []byte      // Raw image data (optional)
 }
 
 // ImageUploadResult contains the results of an image upload operation.
@@ -62,22 +83,22 @@ type ImageUploadResult struct {
 // It validates the entity exists, downloads/processes the image, optimizes it,
 // and stores it in the database. Returns optimization statistics on success.
 func (s *AeronService) UploadImage(ctx context.Context, params *ImageUploadParams) (*ImageUploadResult, error) {
-	if err := ValidateImageUploadParams(params); err != nil {
+	if err := validateImageUploadParams(params); err != nil {
 		return nil, err
 	}
 
 	// First check if the artist/track exists before downloading/processing the image
 	var itemName, itemTitle string
 
-	if params.Scope == ScopeArtist {
-		artist, err := getArtistByID(ctx, s.db, s.schema, params.ID)
+	if params.Scope == types.ScopeArtist {
+		artist, err := database.GetArtistByID(ctx, s.db, s.schema, params.ID)
 		if err != nil {
 			slog.Error("Artiest ophalen mislukt", "artist_id", params.ID, "error", err)
 			return nil, err
 		}
 		itemName = artist.Name
 	} else {
-		track, err := getTrackByID(ctx, s.db, s.schema, params.ID)
+		track, err := database.GetTrackByID(ctx, s.db, s.schema, params.ID)
 		if err != nil {
 			slog.Error("Track ophalen mislukt", "track_id", params.ID, "error", err)
 			return nil, err
@@ -90,27 +111,33 @@ func (s *AeronService) UploadImage(ctx context.Context, params *ImageUploadParam
 	var imageData []byte
 	var err error
 	if params.URL != "" {
-		imageData, err = downloadImage(params.URL, s.config.Image.GetMaxDownloadBytes())
+		imageData, err = image.DownloadImage(params.URL, s.config.Image.GetMaxDownloadBytes())
 		if err != nil {
 			slog.Error("Afbeelding download mislukt", "url", params.URL, "error", err)
-			return nil, &ImageProcessingError{Reason: fmt.Sprintf("downloaden mislukt: %v", err)}
+			return nil, &types.ImageProcessingError{Reason: fmt.Sprintf("downloaden mislukt: %v", err)}
 		}
 	} else {
 		imageData = params.ImageData
 	}
 
 	// Process image
-	processingResult, err := processImage(imageData, s.config.Image)
+	imgConfig := image.Config{
+		TargetWidth:   s.config.Image.TargetWidth,
+		TargetHeight:  s.config.Image.TargetHeight,
+		Quality:       s.config.Image.Quality,
+		RejectSmaller: s.config.Image.RejectSmaller,
+	}
+	processingResult, err := image.Process(imageData, imgConfig)
 	if err != nil {
 		slog.Error("Afbeelding verwerking mislukt", "error", err)
-		return nil, &ImageProcessingError{Reason: fmt.Sprintf("verwerken mislukt: %v", err)}
+		return nil, &types.ImageProcessingError{Reason: fmt.Sprintf("verwerken mislukt: %v", err)}
 	}
 
 	// Update the database
-	table := TableForScope(params.Scope)
-	if err := updateEntityImage(ctx, s.db, s.schema, table, params.ID, processingResult.Data); err != nil {
+	table := types.TableForScope(params.Scope)
+	if err := database.UpdateEntityImage(ctx, s.db, s.schema, table, params.ID, processingResult.Data); err != nil {
 		slog.Error("Afbeelding opslaan mislukt", "scope", params.Scope, "id", params.ID, "error", err)
-		return nil, &DatabaseError{Operation: "afbeelding opslaan", Err: err}
+		return nil, &types.DatabaseError{Operation: "afbeelding opslaan", Err: err}
 	}
 
 	return &ImageUploadResult{
@@ -139,19 +166,19 @@ type DeleteResult struct {
 
 // DeleteAllImages removes all images for entities of the specified scope.
 // It returns the number of images that were deleted.
-func (s *AeronService) DeleteAllImages(ctx context.Context, scope Scope) (*DeleteResult, error) {
-	if err := ValidateScope(scope); err != nil {
+func (s *AeronService) DeleteAllImages(ctx context.Context, scope types.Scope) (*DeleteResult, error) {
+	if err := validateScope(scope); err != nil {
 		return nil, err
 	}
 
-	table := TableForScope(scope)
-	qt, err := QualifiedTable(s.schema, table)
+	table := types.TableForScope(scope)
+	qt, err := types.QualifiedTable(s.schema, table)
 	if err != nil {
 		slog.Error("Ongeldige tabel configuratie", "schema", s.schema, "table", table, "error", err)
-		return nil, &ConfigurationError{Field: "tabel", Message: fmt.Sprintf("ongeldige tabel configuratie: %v", err)}
+		return nil, &types.ConfigurationError{Field: "tabel", Message: fmt.Sprintf("ongeldige tabel configuratie: %v", err)}
 	}
 
-	count, err := countItems(ctx, s.db, s.schema, table, true)
+	count, err := database.CountItems(ctx, s.db, s.schema, table, true)
 	if err != nil {
 		slog.Error("Tellen items met afbeeldingen mislukt", "scope", scope, "error", err)
 		return nil, err
@@ -165,9 +192,9 @@ func (s *AeronService) DeleteAllImages(ctx context.Context, scope Scope) (*Delet
 
 	result, err := s.db.ExecContext(ctx, query)
 	if err != nil {
-		itemType := EntityTypeForScope(scope)
+		itemType := types.EntityTypeForScope(scope)
 		slog.Error("Bulk delete query mislukt", "scope", scope, "query", query, "error", err)
-		return nil, &DatabaseError{Operation: fmt.Sprintf("verwijderen van %s-afbeeldingen", itemType), Err: err}
+		return nil, &types.DatabaseError{Operation: fmt.Sprintf("verwijderen van %s-afbeeldingen", itemType), Err: err}
 	}
 
 	deleted, err := result.RowsAffected()
@@ -178,9 +205,9 @@ func (s *AeronService) DeleteAllImages(ctx context.Context, scope Scope) (*Delet
 	return &DeleteResult{Count: count, Deleted: deleted}, nil
 }
 
-// decodeBase64 decodes a base64-encoded string into raw bytes.
+// DecodeBase64 decodes a base64-encoded string into raw bytes.
 // It automatically handles data URL prefixes (e.g., "data:image/jpeg;base64,").
-func decodeBase64(data string) ([]byte, error) {
+func DecodeBase64(data string) ([]byte, error) {
 	// Remove data URL prefix if present (e.g., "data:image/jpeg;base64,")
 	if idx := strings.Index(data, ","); idx != -1 {
 		data = data[idx+1:]
@@ -191,24 +218,24 @@ func decodeBase64(data string) ([]byte, error) {
 
 // GetStatistics returns image statistics for entities of the specified scope.
 // It counts total entities, those with images, and those without images.
-func (s *AeronService) GetStatistics(ctx context.Context, scope Scope) (*ImageStats, error) {
-	if err := ValidateScope(scope); err != nil {
+func (s *AeronService) GetStatistics(ctx context.Context, scope types.Scope) (*ImageStats, error) {
+	if err := validateScope(scope); err != nil {
 		return nil, err
 	}
 
-	table := TableForScope(scope)
+	table := types.TableForScope(scope)
 
 	// Get counts
-	withImages, err := countItems(ctx, s.db, s.schema, table, true)
+	withImages, err := database.CountItems(ctx, s.db, s.schema, table, true)
 	if err != nil {
 		slog.Error("Tellen items met afbeeldingen mislukt", "scope", scope, "error", err)
-		return nil, &DatabaseError{Operation: "tellen items met afbeeldingen", Err: err}
+		return nil, &types.DatabaseError{Operation: "tellen items met afbeeldingen", Err: err}
 	}
 
-	withoutImages, err := countItems(ctx, s.db, s.schema, table, false)
+	withoutImages, err := database.CountItems(ctx, s.db, s.schema, table, false)
 	if err != nil {
 		slog.Error("Tellen items zonder afbeeldingen mislukt", "scope", scope, "error", err)
-		return nil, &DatabaseError{Operation: "tellen items zonder afbeeldingen", Err: err}
+		return nil, &types.DatabaseError{Operation: "tellen items zonder afbeeldingen", Err: err}
 	}
 
 	total := withImages + withoutImages
@@ -218,4 +245,33 @@ func (s *AeronService) GetStatistics(ctx context.Context, scope Scope) (*ImageSt
 		WithImages:    withImages,
 		WithoutImages: withoutImages,
 	}, nil
+}
+
+// validateScope checks if the provided scope is valid for entity operations.
+func validateScope(scope types.Scope) error {
+	if scope != types.ScopeArtist && scope != types.ScopeTrack {
+		return types.NewValidationError("scope", fmt.Sprintf("ongeldig type: gebruik '%s' of '%s'", types.ScopeArtist, types.ScopeTrack))
+	}
+	return nil
+}
+
+// validateImageUploadParams validates all parameters required for image upload operations.
+func validateImageUploadParams(params *ImageUploadParams) error {
+	if err := validateScope(params.Scope); err != nil {
+		return err
+	}
+
+	// Check that we have either URL or image data, but not both
+	hasURL := params.URL != ""
+	hasImageData := len(params.ImageData) > 0
+
+	if !hasURL && !hasImageData {
+		return types.NewValidationError("image", "afbeelding is verplicht")
+	}
+
+	if hasURL && hasImageData {
+		return types.NewValidationError("image", "gebruik óf URL óf upload, niet beide")
+	}
+
+	return nil
 }
