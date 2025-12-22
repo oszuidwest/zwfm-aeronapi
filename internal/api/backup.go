@@ -11,6 +11,12 @@ import (
 	"github.com/oszuidwest/zwfm-aeronapi/internal/service"
 )
 
+// BackupDeleteResponse represents the response format for backup delete operations.
+type BackupDeleteResponse struct {
+	Message  string `json:"message"`
+	Filename string `json:"filename"`
+}
+
 func (s *Server) handleCreateBackup(w http.ResponseWriter, r *http.Request) {
 	var req service.BackupRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err.Error() != "EOF" {
@@ -116,8 +122,8 @@ func (s *Server) handleDeleteBackup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	respondJSON(w, http.StatusOK, map[string]string{
-		"message":  "Backup succesvol verwijderd",
-		"filename": filename,
+	respondJSON(w, http.StatusOK, BackupDeleteResponse{
+		Message:  "Backup succesvol verwijderd",
+		Filename: filename,
 	})
 }

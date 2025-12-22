@@ -54,26 +54,26 @@ type Track struct {
 // TrackDetails represents complete track information from the database.
 // It includes all metadata fields available for a track entity.
 type TrackDetails struct {
-	ID             string `db:"titleid" json:"titleid"`           // UUID of the track
-	TrackTitle     string `db:"tracktitle" json:"tracktitle"`     // Track title
-	Artist         string `db:"artist" json:"artist"`             // Artist name
-	ArtistID       string `db:"artistid" json:"artistid"`         // UUID of the associated artist
-	Year           int    `db:"year" json:"year"`                 // Release year
-	KnownLengthMs  int    `db:"knownlength" json:"knownlength"`   // Track length in milliseconds
-	IntroTimeMs    int    `db:"introtime" json:"introtime"`       // Intro length in milliseconds
-	OutroTimeMs    int    `db:"outrotime" json:"outrotime"`       // Outro length in milliseconds
-	Tempo          int    `db:"tempo" json:"tempo"`               // Tempo classification (values defined in Aeron system)
-	BPM            int    `db:"bpm" json:"bpm"`                   // Beats per minute
-	Gender         int    `db:"gender" json:"gender"`             // Vocalist gender classification
-	Language       int    `db:"language" json:"language"`         // Language classification
-	Mood           int    `db:"mood" json:"mood"`                 // Mood classification
-	ExportType     int    `db:"exporttype" json:"exporttype"`     // Export type (2 = excluded from operations)
-	RepeatValue    int    `db:"repeat_value" json:"repeat_value"` // Repeat restriction value
-	Rating         int    `db:"rating" json:"rating"`             // Track rating
-	HasImage       bool   `db:"has_image" json:"has_image"`       // Whether the track has an associated image
-	Website        string `db:"website" json:"website"`           // Related website URL
-	Conductor      string `db:"conductor" json:"conductor"`       // Conductor name (for classical music)
-	Orchestra      string `db:"orchestra" json:"orchestra"`       // Orchestra name (for classical music)
+	ID            string `db:"titleid" json:"titleid"`           // UUID of the track
+	TrackTitle    string `db:"tracktitle" json:"tracktitle"`     // Track title
+	Artist        string `db:"artist" json:"artist"`             // Artist name
+	ArtistID      string `db:"artistid" json:"artistid"`         // UUID of the associated artist
+	Year          int    `db:"year" json:"year"`                 // Release year
+	KnownLengthMs int    `db:"knownlength" json:"knownlength"`   // Track length in milliseconds
+	IntroTimeMs   int    `db:"introtime" json:"introtime"`       // Intro length in milliseconds
+	OutroTimeMs   int    `db:"outrotime" json:"outrotime"`       // Outro length in milliseconds
+	Tempo         int    `db:"tempo" json:"tempo"`               // Tempo classification (values defined in Aeron system)
+	BPM           int    `db:"bpm" json:"bpm"`                   // Beats per minute
+	Gender        int    `db:"gender" json:"gender"`             // Vocalist gender classification
+	Language      int    `db:"language" json:"language"`         // Language classification
+	Mood          int    `db:"mood" json:"mood"`                 // Mood classification
+	ExportType    int    `db:"exporttype" json:"exporttype"`     // Export type (2 = excluded from operations)
+	RepeatValue   int    `db:"repeat_value" json:"repeat_value"` // Repeat restriction value
+	Rating        int    `db:"rating" json:"rating"`             // Track rating
+	HasImage      bool   `db:"has_image" json:"has_image"`       // Whether the track has an associated image
+	Website       string `db:"website" json:"website"`           // Related website URL
+	Conductor     string `db:"conductor" json:"conductor"`       // Conductor name (for classical music)
+	Orchestra     string `db:"orchestra" json:"orchestra"`       // Orchestra name (for classical music)
 }
 
 // CountItems counts entities in the specified table based on image presence.

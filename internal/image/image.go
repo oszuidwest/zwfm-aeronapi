@@ -137,10 +137,7 @@ func (o *Optimizer) resizeImage(sourceImage image.Image, maxWidth, maxHeight int
 	// Calculate scale factor to fit within bounds while maintaining aspect ratio
 	scaleFactorX := float64(maxWidth) / float64(width)
 	scaleFactorY := float64(maxHeight) / float64(height)
-	scale := scaleFactorX
-	if scaleFactorY < scaleFactorX {
-		scale = scaleFactorY
-	}
+	scale := min(scaleFactorX, scaleFactorY)
 
 	// If image is already smaller, don't upscale
 	if scale >= 1 {

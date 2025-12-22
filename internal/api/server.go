@@ -5,6 +5,7 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"slices"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -39,6 +40,12 @@ func New(svc *service.AeronService, cfg *config.Config) *Server {
 // Returns an error if the server fails to start.
 func (s *Server) Start(port string) error {
 	router := chi.NewRouter()
+
+	// Cross-Origin protection (CSRF) - blocks malicious cross-origin requests
+	cop := http.NewCrossOriginProtection()
+	router.Use(func(next http.Handler) http.Handler {
+		return cop.Handler(next)
+	})
 
 	// Add Chi built-in middleware
 	router.Use(middleware.RequestID)
@@ -154,16 +161,7 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 }
 
 func (s *Server) isValidAPIKey(key string) bool {
-	if key == "" {
-		return false
-	}
-
-	for _, validKey := range s.config.API.Keys {
-		if key == validKey {
-			return true
-		}
-	}
-	return false
+	return key != "" && slices.Contains(s.config.API.Keys, key)
 }
 
 // detectImageContentType detects the content type from image data using Go's built-in detection

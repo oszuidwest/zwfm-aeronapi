@@ -68,12 +68,11 @@ type ImageUploadParams struct {
 // ImageUploadResult contains the results of an image upload operation.
 // It provides information about the processed image and optimization statistics.
 type ImageUploadResult struct {
-	ArtistName          string  // Artist name (always populated)
-	TrackTitle          string  // Track title (empty for artists)
-	OriginalSize        int     // Size of original image in bytes
-	OptimizedSize       int     // Size of optimized image in bytes
+	ArtistName           string  // Artist name (always populated)
+	TrackTitle           string  // Track title (empty for artists)
+	OriginalSize         int     // Size of original image in bytes
+	OptimizedSize        int     // Size of optimized image in bytes
 	SizeReductionPercent float64 // Percentage of size reduction achieved
-	Encoder             string  // Name of encoder used for optimization
 }
 
 // UploadImage processes and uploads an image for the specified entity.
@@ -138,12 +137,11 @@ func (s *AeronService) UploadImage(ctx context.Context, params *ImageUploadParam
 	}
 
 	return &ImageUploadResult{
-		OriginalSize:        processingResult.Original.Size,
-		OptimizedSize:       processingResult.Optimized.Size,
+		OriginalSize:         processingResult.Original.Size,
+		OptimizedSize:        processingResult.Optimized.Size,
 		SizeReductionPercent: processingResult.Savings,
-		Encoder:             processingResult.Encoder,
-		ArtistName:          name,
-		TrackTitle:          title,
+		ArtistName:           name,
+		TrackTitle:           title,
 	}, nil
 }
 
@@ -206,10 +204,9 @@ func (s *AeronService) DeleteAllImages(ctx context.Context, entityType types.Ent
 // It automatically handles data URL prefixes (e.g., "data:image/jpeg;base64,").
 func DecodeBase64(data string) ([]byte, error) {
 	// Remove data URL prefix if present (e.g., "data:image/jpeg;base64,")
-	if idx := strings.Index(data, ","); idx != -1 {
-		data = data[idx+1:]
+	if _, after, found := strings.Cut(data, ","); found {
+		data = after
 	}
-
 	return io.ReadAll(base64.NewDecoder(base64.StdEncoding, strings.NewReader(data)))
 }
 

@@ -100,12 +100,14 @@ func QualifiedTable(schema string, table Table) (string, error) {
 // Keys are internal error codes, values are user-friendly Dutch error messages.
 //
 // Format strings use standard fmt.Sprintf verbs:
-//   %s - string interpolation (e.g., entity type, entity ID)
-//   %d - integer interpolation (e.g., count)
-//   %w - error wrapping (for errors.Is/As compatibility)
+//
+//	%s - string interpolation (e.g., entity type, entity ID)
+//	%d - integer interpolation (e.g., count)
+//	%w - error wrapping (for errors.Is/As compatibility)
 //
 // Example usage:
-//   msg := fmt.Sprintf(ErrorMessages["invalid_uuid"], "artiest")
+//
+//	msg := fmt.Sprintf(ErrorMessages["invalid_uuid"], "artiest")
 var ErrorMessages = map[string]string{
 	// Authentication errors
 	"auth_failed":     "Niet geautoriseerd: ongeldige of ontbrekende API-sleutel",

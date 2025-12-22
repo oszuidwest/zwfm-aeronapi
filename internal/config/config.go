@@ -2,6 +2,7 @@
 package config
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -28,19 +29,19 @@ type DatabaseConfig struct {
 // ImageConfig contains image processing and optimization settings.
 // It defines how uploaded images should be resized and compressed.
 type ImageConfig struct {
-	TargetWidth               int   `json:"target_width"`                   // Target width for image resizing
-	TargetHeight              int   `json:"target_height"`                  // Target height for image resizing
-	Quality                   int   `json:"quality"`                        // JPEG quality (1-100)
-	RejectSmaller             bool  `json:"reject_smaller"`                 // Whether to reject images smaller than target dimensions
-	MaxImageDownloadSizeBytes int64 `json:"max_image_download_size_bytes"`  // Maximum download size in bytes (default: 50MB)
+	TargetWidth               int   `json:"target_width"`                  // Target width for image resizing
+	TargetHeight              int   `json:"target_height"`                 // Target height for image resizing
+	Quality                   int   `json:"quality"`                       // JPEG quality (1-100)
+	RejectSmaller             bool  `json:"reject_smaller"`                // Whether to reject images smaller than target dimensions
+	MaxImageDownloadSizeBytes int64 `json:"max_image_download_size_bytes"` // Maximum download size in bytes (default: 50MB)
 }
 
 // APIConfig contains API authentication and server settings.
 // When enabled, all API endpoints require a valid API key in the X-API-Key header.
 type APIConfig struct {
-	Enabled               bool     `json:"enabled"`                  // Whether API key authentication is enabled
-	Keys                  []string `json:"keys"`                     // List of valid API keys
-	RequestTimeoutSeconds int      `json:"request_timeout_seconds"`  // Request timeout in seconds (default: 30)
+	Enabled               bool     `json:"enabled"`                 // Whether API key authentication is enabled
+	Keys                  []string `json:"keys"`                    // List of valid API keys
+	RequestTimeoutSeconds int      `json:"request_timeout_seconds"` // Request timeout in seconds (default: 30)
 }
 
 // MaintenanceConfig contains thresholds for database maintenance recommendations.
@@ -72,117 +73,78 @@ type Config struct {
 
 // Default configuration values
 const (
-	DefaultMaxOpenConnections             = 25
-	DefaultMaxIdleConnections             = 5
-	DefaultConnMaxLifetimeMinutes         = 5                // minutes
-	DefaultMaxImageDownloadSizeBytes      = 50 * 1024 * 1024 // 50MB
-	DefaultRequestTimeoutSeconds          = 30               // seconds
-	DefaultBloatThreshold                 = 10.0
-	DefaultDeadTupleThreshold             = 10000
-	DefaultBackupRetentionDays            = 30
-	DefaultBackupMaxBackups               = 10
-	DefaultBackupFormat                   = "custom"
-	DefaultBackupCompression              = 9
-	DefaultBackupPath                     = "./backups"
+	DefaultMaxOpenConnections        = 25
+	DefaultMaxIdleConnections        = 5
+	DefaultConnMaxLifetimeMinutes    = 5                // minutes
+	DefaultMaxImageDownloadSizeBytes = 50 * 1024 * 1024 // 50MB
+	DefaultRequestTimeoutSeconds     = 30               // seconds
+	DefaultBloatThreshold            = 10.0
+	DefaultDeadTupleThreshold        = 10000
+	DefaultBackupRetentionDays       = 30
+	DefaultBackupMaxBackups          = 10
+	DefaultBackupFormat              = "custom"
+	DefaultBackupCompression         = 9
+	DefaultBackupPath                = "./backups"
 )
 
 // GetMaxDownloadBytes returns the maximum download size, using default if not configured.
 func (c *ImageConfig) GetMaxDownloadBytes() int64 {
-	if c.MaxImageDownloadSizeBytes <= 0 {
-		return DefaultMaxImageDownloadSizeBytes
-	}
-	return c.MaxImageDownloadSizeBytes
+	return cmp.Or(c.MaxImageDownloadSizeBytes, DefaultMaxImageDownloadSizeBytes)
 }
 
 // GetRequestTimeout returns the request timeout duration.
 func (c *APIConfig) GetRequestTimeout() time.Duration {
-	if c.RequestTimeoutSeconds <= 0 {
-		return time.Duration(DefaultRequestTimeoutSeconds) * time.Second
-	}
-	return time.Duration(c.RequestTimeoutSeconds) * time.Second
+	return time.Duration(cmp.Or(c.RequestTimeoutSeconds, DefaultRequestTimeoutSeconds)) * time.Second
 }
 
 // GetMaxOpenConns returns the max open connections, using default if not configured.
 func (c *DatabaseConfig) GetMaxOpenConns() int {
-	if c.MaxOpenConns <= 0 {
-		return DefaultMaxOpenConnections
-	}
-	return c.MaxOpenConns
+	return cmp.Or(c.MaxOpenConns, DefaultMaxOpenConnections)
 }
 
 // GetMaxIdleConns returns the max idle connections, using default if not configured.
 func (c *DatabaseConfig) GetMaxIdleConns() int {
-	if c.MaxIdleConns <= 0 {
-		return DefaultMaxIdleConnections
-	}
-	return c.MaxIdleConns
+	return cmp.Or(c.MaxIdleConns, DefaultMaxIdleConnections)
 }
 
 // GetConnMaxLifetime returns the connection max lifetime.
 func (c *DatabaseConfig) GetConnMaxLifetime() time.Duration {
-	if c.ConnMaxLifetimeMinutes <= 0 {
-		return time.Duration(DefaultConnMaxLifetimeMinutes) * time.Minute
-	}
-	return time.Duration(c.ConnMaxLifetimeMinutes) * time.Minute
+	return time.Duration(cmp.Or(c.ConnMaxLifetimeMinutes, DefaultConnMaxLifetimeMinutes)) * time.Minute
 }
 
 // GetBloatThreshold returns the bloat percentage threshold for vacuum recommendations.
 func (c *MaintenanceConfig) GetBloatThreshold() float64 {
-	if c.BloatThreshold <= 0 {
-		return DefaultBloatThreshold
-	}
-	return c.BloatThreshold
+	return cmp.Or(c.BloatThreshold, DefaultBloatThreshold)
 }
 
 // GetDeadTupleThreshold returns the dead tuple count threshold for vacuum recommendations.
 func (c *MaintenanceConfig) GetDeadTupleThreshold() int64 {
-	if c.DeadTupleThreshold <= 0 {
-		return DefaultDeadTupleThreshold
-	}
-	return c.DeadTupleThreshold
+	return cmp.Or(c.DeadTupleThreshold, DefaultDeadTupleThreshold)
 }
 
 // GetPath returns the backup path, using default if not configured.
 func (c *BackupConfig) GetPath() string {
-	if c.Path == "" {
-		return DefaultBackupPath
-	}
-	return c.Path
+	return cmp.Or(c.Path, DefaultBackupPath)
 }
 
 // GetRetentionDays returns the backup retention period in days.
 func (c *BackupConfig) GetRetentionDays() int {
-	if c.RetentionDays <= 0 {
-		return DefaultBackupRetentionDays
-	}
-	return c.RetentionDays
+	return cmp.Or(c.RetentionDays, DefaultBackupRetentionDays)
 }
 
 // GetMaxBackups returns the maximum number of backups to keep.
 func (c *BackupConfig) GetMaxBackups() int {
-	if c.MaxBackups <= 0 {
-		return DefaultBackupMaxBackups
-	}
-	return c.MaxBackups
+	return cmp.Or(c.MaxBackups, DefaultBackupMaxBackups)
 }
 
 // GetDefaultFormat returns the default backup format ("custom" or "plain").
 func (c *BackupConfig) GetDefaultFormat() string {
-	if c.DefaultFormat == "" {
-		return DefaultBackupFormat
-	}
-	return c.DefaultFormat
+	return cmp.Or(c.DefaultFormat, DefaultBackupFormat)
 }
 
 // GetDefaultCompression returns the default compression level (0-9).
 func (c *BackupConfig) GetDefaultCompression() int {
-	if c.DefaultCompression <= 0 {
-		return DefaultBackupCompression
-	}
-	if c.DefaultCompression > 9 {
-		return 9
-	}
-	return c.DefaultCompression
+	return min(cmp.Or(c.DefaultCompression, DefaultBackupCompression), 9)
 }
 
 // Load loads and validates application configuration from a JSON file.

@@ -36,6 +36,36 @@ type BlockWithTracks struct {
 	Tracks []database.PlaylistItem `json:"tracks"`
 }
 
+// HealthResponse represents the response format for the health check endpoint.
+type HealthResponse struct {
+	Status         string `json:"status"`
+	Version        string `json:"version"`
+	Database       string `json:"database"`
+	DatabaseStatus string `json:"database_status"`
+}
+
+// ImageUploadResponse represents the response format for image upload operations.
+type ImageUploadResponse struct {
+	Artist               string  `json:"artist"`
+	Track                string  `json:"track,omitempty"`
+	OriginalSize         int     `json:"original_size"`
+	OptimizedSize        int     `json:"optimized_size"`
+	SizeReductionPercent float64 `json:"savings_percent"`
+}
+
+// BulkDeleteResponse represents the response format for bulk delete operations.
+type BulkDeleteResponse struct {
+	Deleted int64  `json:"deleted"`
+	Message string `json:"message"`
+}
+
+// ImageDeleteResponse represents the response format for image delete operations.
+type ImageDeleteResponse struct {
+	Message  string `json:"message"`
+	ArtistID string `json:"artist_id,omitempty"`
+	TrackID  string `json:"track_id,omitempty"`
+}
+
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	// Ping database to verify connectivity
 	dbStatus := "connected"
@@ -44,11 +74,11 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		slog.Warn("Database health check mislukt", "error", err)
 	}
 
-	respondJSON(w, http.StatusOK, map[string]string{
-		"status":          "healthy",
-		"version":         Version,
-		"database":        s.service.Config().Database.Name,
-		"database_status": dbStatus,
+	respondJSON(w, http.StatusOK, HealthResponse{
+		Status:         "healthy",
+		Version:        Version,
+		Database:       s.service.Config().Database.Name,
+		DatabaseStatus: dbStatus,
 	})
 }
 
@@ -103,19 +133,16 @@ func (s *Server) handleEntityByID(entityType types.EntityType) http.HandlerFunc 
 }
 
 // uploadResponse creates the response object for upload results
-func (s *Server) uploadResponse(result *service.ImageUploadResult, entityType types.EntityType) map[string]interface{} {
-	response := map[string]interface{}{
-		"original_size":   result.OriginalSize,
-		"optimized_size":  result.OptimizedSize,
-		"savings_percent": result.SizeReductionPercent,
-		"encoder":         result.Encoder,
+func (s *Server) uploadResponse(result *service.ImageUploadResult, entityType types.EntityType) ImageUploadResponse {
+	response := ImageUploadResponse{
+		Artist:               result.ArtistName,
+		OriginalSize:         result.OriginalSize,
+		OptimizedSize:        result.OptimizedSize,
+		SizeReductionPercent: result.SizeReductionPercent,
 	}
 
-	if entityType == types.EntityTypeArtist {
-		response["artist"] = result.ArtistName
-	} else {
-		response["track"] = result.TrackTitle
-		response["artist"] = result.ArtistName
+	if entityType == types.EntityTypeTrack {
+		response.Track = result.TrackTitle
 	}
 
 	return response
@@ -141,9 +168,9 @@ func (s *Server) handleBulkDelete(entityType types.EntityType) http.HandlerFunc 
 		label := types.LabelForEntityType(entityType)
 
 		message := strconv.FormatInt(result.DeletedCount, 10) + " " + label + "-afbeeldingen verwijderd"
-		respondJSON(w, http.StatusOK, map[string]interface{}{
-			"deleted": result.DeletedCount,
-			"message": message,
+		respondJSON(w, http.StatusOK, BulkDeleteResponse{
+			Deleted: result.DeletedCount,
+			Message: message,
 		})
 	}
 }
@@ -250,15 +277,16 @@ func (s *Server) handleDeleteImage(entityType types.EntityType) http.HandlerFunc
 			return
 		}
 
-		responseKeyName := "artist_id"
-		if entityType == types.EntityTypeTrack {
-			responseKeyName = "track_id"
+		response := ImageDeleteResponse{
+			Message: label + "-afbeelding succesvol verwijderd",
+		}
+		if entityType == types.EntityTypeArtist {
+			response.ArtistID = entityID
+		} else {
+			response.TrackID = entityID
 		}
 
-		respondJSON(w, http.StatusOK, map[string]string{
-			"message":       label + "-afbeelding succesvol verwijderd",
-			responseKeyName: entityID,
-		})
+		respondJSON(w, http.StatusOK, response)
 	}
 }
 
