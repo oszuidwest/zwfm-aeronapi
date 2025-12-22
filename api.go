@@ -389,13 +389,7 @@ func (s *AeronAPI) handleVacuum(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	opts := VacuumOptions{
-		Tables:  req.Tables,
-		Analyze: req.Analyze,
-		DryRun:  req.DryRun,
-	}
-
-	result, err := s.service.VacuumTables(opts)
+	result, err := s.service.VacuumTables(VacuumOptions(req))
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, err.Error())
 		return
