@@ -1,4 +1,5 @@
-package main
+// Package api provides the HTTP API server for the Aeron radio automation system.
+package api
 
 import (
 	"encoding/json"
@@ -6,21 +7,25 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+
+	"github.com/oszuidwest/zwfm-aeronapi/internal/types"
 )
 
-// APIResponse is the standard response format for all API endpoints.
+// Response is the standard response format for all API endpoints.
 // It provides a consistent structure for both successful and error responses.
-type APIResponse struct {
-	Success bool        `json:"success"`         // Whether the operation was successful
-	Data    interface{} `json:"data,omitempty"`  // Response data for successful operations
-	Error   string      `json:"error,omitempty"` // Error message for failed operations
+// The Data field uses any to allow flexible response types (artists, tracks, stats, etc.)
+// that are dynamically determined at runtime based on the endpoint.
+type Response struct {
+	Success bool   `json:"success"`         // Whether the operation was successful
+	Data    any    `json:"data,omitempty"`  // Response data for successful operations
+	Error   string `json:"error,omitempty"` // Error message for failed operations
 }
 
 // respondJSON sends a successful JSON response with the specified status code and data.
 // It automatically sets the success field to true and includes the provided data.
-func respondJSON(w http.ResponseWriter, statusCode int, data interface{}) {
+func respondJSON(w http.ResponseWriter, statusCode int, data any) {
 	w.WriteHeader(statusCode)
-	if err := json.NewEncoder(w).Encode(APIResponse{
+	if err := json.NewEncoder(w).Encode(Response{
 		Success: true,
 		Data:    data,
 	}); err != nil {
@@ -32,7 +37,7 @@ func respondJSON(w http.ResponseWriter, statusCode int, data interface{}) {
 // It automatically sets the success field to false and includes the error message.
 func respondError(w http.ResponseWriter, statusCode int, errorMsg string) {
 	w.WriteHeader(statusCode)
-	if err := json.NewEncoder(w).Encode(APIResponse{
+	if err := json.NewEncoder(w).Encode(Response{
 		Success: false,
 		Error:   errorMsg,
 	}); err != nil {
@@ -49,37 +54,37 @@ func errorCode(err error) int {
 	}
 
 	// Check custom error types first (preferred method)
-	var notFound *NotFoundError
+	var notFound *types.NotFoundError
 	if errors.As(err, &notFound) {
 		return http.StatusNotFound
 	}
 
-	var noImage *NoImageError
+	var noImage *types.NoImageError
 	if errors.As(err, &noImage) {
 		return http.StatusNotFound
 	}
 
-	var validation *ValidationError
+	var validation *types.ValidationError
 	if errors.As(err, &validation) {
 		return http.StatusBadRequest
 	}
 
-	var imageProc *ImageProcessingError
+	var imageProc *types.ImageProcessingError
 	if errors.As(err, &imageProc) {
 		return http.StatusBadRequest
 	}
 
-	var config *ConfigurationError
+	var config *types.ConfigurationError
 	if errors.As(err, &config) {
 		return http.StatusInternalServerError
 	}
 
-	var dbErr *DatabaseError
+	var dbErr *types.DatabaseError
 	if errors.As(err, &dbErr) {
 		return http.StatusInternalServerError
 	}
 
-	var backupErr *BackupError
+	var backupErr *types.BackupError
 	if errors.As(err, &backupErr) {
 		return http.StatusInternalServerError
 	}
@@ -88,7 +93,7 @@ func errorCode(err error) int {
 	errorMsg := err.Error()
 
 	// 404 Not Found errors
-	if strings.Contains(errorMsg, ErrSuffixNotExists) ||
+	if strings.Contains(errorMsg, "bestaat niet") ||
 		strings.Contains(errorMsg, "heeft geen afbeelding") {
 		return http.StatusNotFound
 	}

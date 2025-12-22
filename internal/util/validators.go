@@ -1,4 +1,5 @@
-package main
+// Package util provides utility functions for input validation and HTTP operations.
+package util
 
 import (
 	"bytes"
@@ -13,68 +14,32 @@ import (
 	"strings"
 
 	"github.com/doyensec/safeurl"
+	"github.com/oszuidwest/zwfm-aeronapi/internal/types"
 )
 
 // uuidRegex validates UUID v4 format using a compiled regular expression.
 // It ensures that UUIDs follow the proper v4 format with correct version and variant bits.
 var uuidRegex = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
 
-// ValidateScope checks if the provided scope is valid for entity operations.
-// Valid scopes are ScopeArtist and ScopeTrack. Returns an error with available options if invalid.
-func ValidateScope(scope Scope) error {
-	if scope != ScopeArtist && scope != ScopeTrack {
-		return NewValidationError("scope", fmt.Sprintf("ongeldig type: gebruik '%s' of '%s'", ScopeArtist, ScopeTrack))
-	}
-	return nil
-}
-
 // ValidateEntityID validates that an ID is a proper UUID v4 format.
 // It checks for empty strings and validates the UUID format using regex matching.
-func ValidateEntityID(id string, entityType string) error {
+// The entityLabel parameter is a Dutch label (e.g., "artiest", "track") used in error messages.
+func ValidateEntityID(id string, entityLabel string) error {
 	if id == "" {
-		return NewValidationError("id", fmt.Sprintf("ongeldige %s-ID: mag niet leeg zijn", entityType))
+		return types.NewValidationError("id", fmt.Sprintf("ongeldige %s-ID: mag niet leeg zijn", entityLabel))
 	}
 
 	// Validate UUID v4 format using regex
 	if !uuidRegex.MatchString(id) {
-		return NewValidationError("id", fmt.Sprintf("ongeldige %s-ID: moet een UUID zijn", entityType))
+		return types.NewValidationError("id", fmt.Sprintf("ongeldige %s-ID: moet een UUID zijn", entityLabel))
 	}
 
 	return nil
 }
 
-// ValidateImageUploadParams validates all parameters required for image upload operations.
-// It ensures proper scope, mutually exclusive URL/image data, and URL safety when applicable.
-func ValidateImageUploadParams(params *ImageUploadParams) error {
-	if err := ValidateScope(params.Scope); err != nil {
-		return err
-	}
-
-	// Check that we have either URL or image data, but not both
-	hasURL := params.URL != ""
-	hasImageData := len(params.ImageData) > 0
-
-	if !hasURL && !hasImageData {
-		return NewValidationError("image", "afbeelding is verplicht")
-	}
-
-	if hasURL && hasImageData {
-		return NewValidationError("image", "gebruik óf URL óf upload, niet beide")
-	}
-
-	// Validate URL with SafeURL to prevent SSRF attacks
-	if hasURL {
-		if err := ValidateURL(params.URL); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-// createSafeHTTPClient creates a safeurl HTTP client configured with SSRF protection.
+// newSafeHTTPClient creates a safeurl HTTP client configured with SSRF protection.
 // It uses default security settings that block private IPs, loopback addresses, and other dangerous targets.
-func createSafeHTTPClient() *safeurl.WrappedClient {
+func newSafeHTTPClient() *safeurl.WrappedClient {
 	// Use default config which blocks private IPs, loopback, etc.
 	config := safeurl.GetConfigBuilder().Build()
 
@@ -85,23 +50,23 @@ func createSafeHTTPClient() *safeurl.WrappedClient {
 // Only HTTP and HTTPS schemes are permitted to prevent access to local files or other protocols.
 func ValidateURL(urlString string) error {
 	if urlString == "" {
-		return NewValidationError("url", "lege URL")
+		return types.NewValidationError("url", "lege URL")
 	}
 
 	// Parse URL
 	parsedURL, err := url.Parse(urlString)
 	if err != nil {
-		return NewValidationError("url", fmt.Sprintf("ongeldige URL: %v", err))
+		return types.NewValidationError("url", fmt.Sprintf("ongeldige URL: %v", err))
 	}
 
 	// Only allow HTTP and HTTPS
 	if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
-		return NewValidationError("url", "alleen HTTP en HTTPS URLs toegestaan")
+		return types.NewValidationError("url", "alleen HTTP en HTTPS URLs toegestaan")
 	}
 
 	// Check hostname is present
 	if parsedURL.Host == "" {
-		return NewValidationError("url", "geen hostname opgegeven")
+		return types.NewValidationError("url", "geen hostname opgegeven")
 	}
 
 	return nil
@@ -111,7 +76,7 @@ func ValidateURL(urlString string) error {
 // It checks for the "image/" prefix and allows empty content types for flexibility.
 func ValidateContentType(contentType string) error {
 	if contentType != "" && !strings.HasPrefix(contentType, "image/") {
-		return &ImageProcessingError{Reason: fmt.Sprintf("geen afbeelding content-type: %s", contentType)}
+		return &types.ImageProcessingError{Message: fmt.Sprintf("geen afbeelding content-type: %s", contentType)}
 	}
 	return nil
 }
@@ -120,12 +85,12 @@ func ValidateContentType(contentType string) error {
 // It uses Go's image.DecodeConfig to verify the data can be decoded as an image.
 func ValidateImageData(data []byte) error {
 	if len(data) == 0 {
-		return &ImageProcessingError{Reason: "afbeelding is leeg"}
+		return &types.ImageProcessingError{Message: "afbeelding is leeg"}
 	}
 
 	_, _, err := image.DecodeConfig(bytes.NewReader(data))
 	if err != nil {
-		return &ImageProcessingError{Reason: fmt.Sprintf("ongeldige afbeelding: %v", err)}
+		return &types.ImageProcessingError{Message: fmt.Sprintf("ongeldige afbeelding: %v", err)}
 	}
 
 	return nil
@@ -134,8 +99,8 @@ func ValidateImageData(data []byte) error {
 // ValidateImageFormat validates that an image format is supported by the application.
 // Supported formats are defined in the SupportedFormats slice and include JPEG and PNG.
 func ValidateImageFormat(format string) error {
-	if !slices.Contains(SupportedFormats, format) {
-		return &ImageProcessingError{Reason: fmt.Sprintf("bestandsformaat %s wordt niet ondersteund (gebruik: %v)", format, SupportedFormats)}
+	if !slices.Contains(types.SupportedFormats, format) {
+		return &types.ImageProcessingError{Message: fmt.Sprintf("bestandsformaat %s wordt niet ondersteund (gebruik: %v)", format, types.SupportedFormats)}
 	}
 	return nil
 }
@@ -150,13 +115,13 @@ func ValidateAndDownloadImage(urlString string, maxSize int64) ([]byte, error) {
 	}
 
 	// 2. Create safe HTTP client with SSRF protection
-	client := createSafeHTTPClient()
+	client := newSafeHTTPClient()
 
 	// 3. Download image using safe client
 	resp, err := client.Get(urlString)
 	if err != nil {
 		// safeurl returns specific errors for blocked requests
-		return nil, &ImageProcessingError{Reason: fmt.Sprintf("downloaden mislukt: %v", err)}
+		return nil, &types.ImageProcessingError{Message: fmt.Sprintf("downloaden mislukt: %v", err)}
 	}
 	defer func() {
 		if err := resp.Body.Close(); err != nil {
@@ -166,7 +131,7 @@ func ValidateAndDownloadImage(urlString string, maxSize int64) ([]byte, error) {
 
 	// 4. Check HTTP status
 	if resp.StatusCode != http.StatusOK {
-		return nil, &ImageProcessingError{Reason: fmt.Sprintf("downloaden mislukt: HTTP %d", resp.StatusCode)}
+		return nil, &types.ImageProcessingError{Message: fmt.Sprintf("downloaden mislukt: HTTP %d", resp.StatusCode)}
 	}
 
 	// 5. Validate Content-Type header
@@ -179,7 +144,7 @@ func ValidateAndDownloadImage(urlString string, maxSize int64) ([]byte, error) {
 	limitedReader := io.LimitReader(resp.Body, maxSize)
 	data, err := io.ReadAll(limitedReader)
 	if err != nil {
-		return nil, &ImageProcessingError{Reason: fmt.Sprintf("fout bij lezen: %v", err)}
+		return nil, &types.ImageProcessingError{Message: fmt.Sprintf("fout bij lezen: %v", err)}
 	}
 
 	// 7. Validate image data

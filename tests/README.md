@@ -8,7 +8,7 @@ This directory contains test fixtures and data for the ZWFM Aeron API project.
 tests/
 ├── fixtures/           # Test data and configuration
 │   ├── mock_data.sql   # Mock database data
-│   └── test_config.yaml # Test configuration
+│   └── test_config.json # Test configuration
 └── docker-compose.test.yml # Test database setup (optional for local testing)
 ```
 
@@ -33,7 +33,7 @@ This starts a PostgreSQL container on port 5433 with mock data.
 
 ```bash
 go build -o zwfm-aeronapi .
-./zwfm-aeronapi -config=tests/fixtures/test_config.yaml -list
+./zwfm-aeronapi -config=tests/fixtures/test_config.json
 ```
 
 ## Test Data

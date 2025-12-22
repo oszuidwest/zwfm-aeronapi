@@ -1,4 +1,5 @@
-package main
+// Package types provides shared type definitions used across the application.
+package types
 
 import "fmt"
 
@@ -34,11 +35,11 @@ func (e *ValidationError) Error() string {
 
 // ImageProcessingError indicates image processing failed
 type ImageProcessingError struct {
-	Reason string
+	Message string
 }
 
 func (e *ImageProcessingError) Error() string {
-	return fmt.Sprintf("afbeelding verwerking mislukt: %s", e.Reason)
+	return fmt.Sprintf("afbeelding verwerking mislukt: %s", e.Message)
 }
 
 // DatabaseError wraps database operation errors
@@ -91,7 +92,7 @@ func NewNoImageError(entity, id string) *NoImageError {
 	return &NoImageError{Entity: entity, ID: id}
 }
 
-// NewValidationError creates a new ValidationError
+// NewValidationError creates a new ValidationError.
 func NewValidationError(field, message string) *ValidationError {
 	return &ValidationError{Field: field, Message: message}
 }
