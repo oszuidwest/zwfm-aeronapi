@@ -275,3 +275,249 @@ func formatBytes(bytes int64) string {
 		return fmt.Sprintf("%d bytes", bytes)
 	}
 }
+
+// VacuumOptions configures vacuum operation parameters.
+type VacuumOptions struct {
+	Tables  []string // Specific tables to vacuum (empty = auto-select based on bloat)
+	Analyze bool     // Run ANALYZE after VACUUM
+	DryRun  bool     // Only show what would be done, don't execute
+}
+
+// VacuumResult represents the result of a vacuum operation on a single table.
+type VacuumResult struct {
+	Table         string  `json:"table"`
+	Success       bool    `json:"success"`
+	Message       string  `json:"message"`
+	DeadTuples    int64   `json:"dead_tuples_before"`
+	BloatPercent  float64 `json:"bloat_percent_before"`
+	Duration      string  `json:"duration,omitempty"`
+	Analyzed      bool    `json:"analyzed"`
+	Skipped       bool    `json:"skipped,omitempty"`
+	SkippedReason string  `json:"skipped_reason,omitempty"`
+}
+
+// VacuumResponse represents the overall result of vacuum operations.
+type VacuumResponse struct {
+	DryRun        bool           `json:"dry_run"`
+	TablesTotal   int            `json:"tables_total"`
+	TablesSuccess int            `json:"tables_success"`
+	TablesFailed  int            `json:"tables_failed"`
+	TablesSkipped int            `json:"tables_skipped"`
+	Results       []VacuumResult `json:"results"`
+	ExecutedAt    time.Time      `json:"executed_at"`
+}
+
+// VacuumTables performs VACUUM on tables in the schema.
+// If no tables are specified, it automatically selects tables with high bloat (>10%) or many dead tuples (>10000).
+func (s *AeronService) VacuumTables(opts VacuumOptions) (*VacuumResponse, error) {
+	response := &VacuumResponse{
+		DryRun:     opts.DryRun,
+		ExecutedAt: time.Now(),
+		Results:    []VacuumResult{},
+	}
+
+	// Get current table health to determine which tables need vacuum
+	tables, err := getTableHealth(s.db, s.config.Database.Schema)
+	if err != nil {
+		return nil, fmt.Errorf("ophalen tabel statistieken mislukt: %w", err)
+	}
+
+	// Determine which tables to vacuum
+	var tablesToVacuum []TableHealth
+	if len(opts.Tables) > 0 {
+		// User specified specific tables
+		tableMap := make(map[string]TableHealth)
+		for _, t := range tables {
+			tableMap[t.Name] = t
+		}
+		for _, tableName := range opts.Tables {
+			if t, exists := tableMap[tableName]; exists {
+				tablesToVacuum = append(tablesToVacuum, t)
+			} else {
+				// Table not found in schema
+				response.Results = append(response.Results, VacuumResult{
+					Table:         tableName,
+					Success:       false,
+					Message:       fmt.Sprintf("Tabel '%s' niet gevonden in schema '%s'", tableName, s.config.Database.Schema),
+					Skipped:       true,
+					SkippedReason: "niet gevonden",
+				})
+				response.TablesSkipped++
+			}
+		}
+	} else {
+		// Auto-select tables with high bloat or many dead tuples
+		for _, t := range tables {
+			if t.BloatPercent > 10 || t.DeadTuples > 10000 {
+				tablesToVacuum = append(tablesToVacuum, t)
+			}
+		}
+	}
+
+	response.TablesTotal = len(tablesToVacuum) + response.TablesSkipped
+
+	// Process each table
+	for _, table := range tablesToVacuum {
+		result := VacuumResult{
+			Table:        table.Name,
+			DeadTuples:   table.DeadTuples,
+			BloatPercent: table.BloatPercent,
+			Analyzed:     opts.Analyze,
+		}
+
+		if opts.DryRun {
+			result.Success = true
+			if opts.Analyze {
+				result.Message = fmt.Sprintf("Zou VACUUM ANALYZE uitvoeren op '%s'", table.Name)
+			} else {
+				result.Message = fmt.Sprintf("Zou VACUUM uitvoeren op '%s'", table.Name)
+			}
+			response.TablesSuccess++
+		} else {
+			// Execute the vacuum
+			start := time.Now()
+			err := s.executeVacuum(table.Name, opts.Analyze)
+			duration := time.Since(start)
+			result.Duration = duration.Round(time.Millisecond).String()
+
+			if err != nil {
+				result.Success = false
+				result.Message = fmt.Sprintf("VACUUM mislukt: %v", err)
+				response.TablesFailed++
+			} else {
+				result.Success = true
+				if opts.Analyze {
+					result.Message = fmt.Sprintf("VACUUM ANALYZE succesvol uitgevoerd op '%s'", table.Name)
+				} else {
+					result.Message = fmt.Sprintf("VACUUM succesvol uitgevoerd op '%s'", table.Name)
+				}
+				response.TablesSuccess++
+			}
+		}
+
+		response.Results = append(response.Results, result)
+	}
+
+	return response, nil
+}
+
+// executeVacuum runs VACUUM on a single table.
+func (s *AeronService) executeVacuum(tableName string, analyze bool) error {
+	// Validate table name to prevent SQL injection
+	if !isValidTableName(tableName) {
+		return fmt.Errorf("ongeldige tabelnaam: %s", tableName)
+	}
+
+	// Build the VACUUM command
+	// Note: VACUUM cannot be run inside a transaction, so we use Exec directly
+	var query string
+	if analyze {
+		query = fmt.Sprintf("VACUUM ANALYZE %s.%s", s.config.Database.Schema, tableName)
+	} else {
+		query = fmt.Sprintf("VACUUM %s.%s", s.config.Database.Schema, tableName)
+	}
+
+	_, err := s.db.Exec(query)
+	return err
+}
+
+// AnalyzeTables performs ANALYZE on tables in the schema.
+func (s *AeronService) AnalyzeTables(tableNames []string) (*VacuumResponse, error) {
+	response := &VacuumResponse{
+		DryRun:     false,
+		ExecutedAt: time.Now(),
+		Results:    []VacuumResult{},
+	}
+
+	// Get current table health
+	tables, err := getTableHealth(s.db, s.config.Database.Schema)
+	if err != nil {
+		return nil, fmt.Errorf("ophalen tabel statistieken mislukt: %w", err)
+	}
+
+	// Determine which tables to analyze
+	var tablesToAnalyze []TableHealth
+	if len(tableNames) > 0 {
+		// User specified specific tables
+		tableMap := make(map[string]TableHealth)
+		for _, t := range tables {
+			tableMap[t.Name] = t
+		}
+		for _, tableName := range tableNames {
+			if t, exists := tableMap[tableName]; exists {
+				tablesToAnalyze = append(tablesToAnalyze, t)
+			} else {
+				response.Results = append(response.Results, VacuumResult{
+					Table:         tableName,
+					Success:       false,
+					Message:       fmt.Sprintf("Tabel '%s' niet gevonden in schema '%s'", tableName, s.config.Database.Schema),
+					Skipped:       true,
+					SkippedReason: "niet gevonden",
+				})
+				response.TablesSkipped++
+			}
+		}
+	} else {
+		// Analyze tables that were never analyzed
+		for _, t := range tables {
+			if t.LastAnalyze == nil && t.LastAutoanalyze == nil && t.RowCount > 0 {
+				tablesToAnalyze = append(tablesToAnalyze, t)
+			}
+		}
+	}
+
+	response.TablesTotal = len(tablesToAnalyze) + response.TablesSkipped
+
+	// Process each table
+	for _, table := range tablesToAnalyze {
+		result := VacuumResult{
+			Table:        table.Name,
+			DeadTuples:   table.DeadTuples,
+			BloatPercent: table.BloatPercent,
+			Analyzed:     true,
+		}
+
+		start := time.Now()
+		err := s.executeAnalyze(table.Name)
+		duration := time.Since(start)
+		result.Duration = duration.Round(time.Millisecond).String()
+
+		if err != nil {
+			result.Success = false
+			result.Message = fmt.Sprintf("ANALYZE mislukt: %v", err)
+			response.TablesFailed++
+		} else {
+			result.Success = true
+			result.Message = fmt.Sprintf("ANALYZE succesvol uitgevoerd op '%s'", table.Name)
+			response.TablesSuccess++
+		}
+
+		response.Results = append(response.Results, result)
+	}
+
+	return response, nil
+}
+
+// executeAnalyze runs ANALYZE on a single table.
+func (s *AeronService) executeAnalyze(tableName string) error {
+	if !isValidTableName(tableName) {
+		return fmt.Errorf("ongeldige tabelnaam: %s", tableName)
+	}
+
+	query := fmt.Sprintf("ANALYZE %s.%s", s.config.Database.Schema, tableName)
+	_, err := s.db.Exec(query)
+	return err
+}
+
+// isValidTableName validates that a table name contains only safe characters.
+func isValidTableName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for _, r := range name {
+		if (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') && r != '_' {
+			return false
+		}
+	}
+	return true
+}

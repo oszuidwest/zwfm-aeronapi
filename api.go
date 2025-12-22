@@ -26,6 +26,18 @@ type ImageUploadRequest struct {
 	Image string `json:"image"` // Base64-encoded image data
 }
 
+// VacuumRequest represents the JSON request body for vacuum operations.
+type VacuumRequest struct {
+	Tables  []string `json:"tables"`  // Specific tables to vacuum (empty = auto-select based on bloat)
+	Analyze bool     `json:"analyze"` // Run ANALYZE after VACUUM
+	DryRun  bool     `json:"dry_run"` // Only show what would be done, don't execute
+}
+
+// AnalyzeRequest represents the JSON request body for analyze operations.
+type AnalyzeRequest struct {
+	Tables []string `json:"tables"` // Specific tables to analyze (empty = auto-select)
+}
+
 // ImageStatsResponse represents the response format for statistics endpoints.
 // It provides counts of entities with and without images.
 type ImageStatsResponse struct {
@@ -78,6 +90,8 @@ func (s *AeronAPI) Start(port string) error {
 			// Database maintenance
 			r.Route("/db", func(r chi.Router) {
 				r.Get("/health", s.handleDatabaseHealth)
+				r.Post("/vacuum", s.handleVacuum)
+				r.Post("/analyze", s.handleAnalyze)
 			})
 		})
 	})
@@ -264,7 +278,9 @@ func (s *AeronAPI) handleGetImage(scope string) http.HandlerFunc {
 
 		// Write image data directly
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write(imageData)
+		if _, err := w.Write(imageData); err != nil {
+			slog.Debug("Schrijven afbeelding naar client mislukt", "error", err)
+		}
 	}
 }
 
@@ -364,6 +380,44 @@ func (s *AeronAPI) handleDatabaseHealth(w http.ResponseWriter, r *http.Request) 
 	}
 
 	respondJSON(w, http.StatusOK, health)
+}
+
+func (s *AeronAPI) handleVacuum(w http.ResponseWriter, r *http.Request) {
+	var req VacuumRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err.Error() != "EOF" {
+		respondError(w, http.StatusBadRequest, "Ongeldige aanvraaginhoud")
+		return
+	}
+
+	opts := VacuumOptions{
+		Tables:  req.Tables,
+		Analyze: req.Analyze,
+		DryRun:  req.DryRun,
+	}
+
+	result, err := s.service.VacuumTables(opts)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	respondJSON(w, http.StatusOK, result)
+}
+
+func (s *AeronAPI) handleAnalyze(w http.ResponseWriter, r *http.Request) {
+	var req AnalyzeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err.Error() != "EOF" {
+		respondError(w, http.StatusBadRequest, "Ongeldige aanvraaginhoud")
+		return
+	}
+
+	result, err := s.service.AnalyzeTables(req.Tables)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	respondJSON(w, http.StatusOK, result)
 }
 
 func (s *AeronAPI) handlePlaylist(w http.ResponseWriter, r *http.Request) {

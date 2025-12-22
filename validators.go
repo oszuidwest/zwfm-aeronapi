@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"image"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -157,7 +158,11 @@ func ValidateAndDownloadImage(urlString string) ([]byte, error) {
 		// safeurl returns specific errors for blocked requests
 		return nil, fmt.Errorf("downloaden mislukt: %v", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			slog.Debug("Sluiten response body mislukt", "error", err)
+		}
+	}()
 
 	// 4. Check HTTP status
 	if resp.StatusCode != http.StatusOK {

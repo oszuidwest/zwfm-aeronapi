@@ -179,7 +179,11 @@ func (s *AeronService) DeleteAllImages(scope string) (*DeleteResult, error) {
 		return nil, fmt.Errorf("verwijderen van %s-afbeeldingen mislukt: %w", itemType, err)
 	}
 
-	deleted, _ := result.RowsAffected()
+	deleted, err := result.RowsAffected()
+	if err != nil {
+		slog.Warn("Kon aantal verwijderde rijen niet ophalen", "error", err)
+		deleted = int64(count) // fallback naar count
+	}
 	return &DeleteResult{Count: count, Deleted: deleted}, nil
 }
 

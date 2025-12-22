@@ -32,6 +32,12 @@ var Commit = "unknown"
 var BuildTime = "unknown"
 
 func main() {
+	if err := run(); err != nil {
+		os.Exit(1)
+	}
+}
+
+func run() error {
 	var (
 		configFile = flag.String("config", "", "Path to config file (default: config.yaml)")
 		serverPort = flag.String("port", "8080", "API server port (default: 8080)")
@@ -42,14 +48,14 @@ func main() {
 	if *version {
 		fmt.Printf("Aeron Image Manager %s (%s)\n", Version, Commit)
 		fmt.Printf("Build time: %s\n", BuildTime)
-		return
+		return nil
 	}
 
 	// Load configuration
 	config, err := loadConfig(*configFile)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Configuratiefout: %v\n", err)
-		os.Exit(1)
+		return err
 	}
 
 	// Initialize simple logger to stdout
@@ -62,7 +68,7 @@ func main() {
 	db, err := sqlx.Open("postgres", dbURL)
 	if err != nil {
 		slog.Error("Database verbinding mislukt", "error", err)
-		os.Exit(1)
+		return err
 	}
 	defer func() {
 		if err := db.Close(); err != nil {
@@ -72,10 +78,8 @@ func main() {
 
 	if err := db.Ping(); err != nil {
 		slog.Error("Database ping mislukt", "error", err)
-		os.Exit(1)
+		return err
 	}
-
-	// Database connected successfully
 
 	// Create service and start API server
 	service := NewAeronService(db, config)
@@ -86,6 +90,8 @@ func main() {
 
 	if err := apiServer.Start(*serverPort); err != nil {
 		slog.Error("API server gestopt met fout", "error", err)
-		os.Exit(1)
+		return err
 	}
+
+	return nil
 }

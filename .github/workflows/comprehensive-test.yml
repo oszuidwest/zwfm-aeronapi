@@ -16,7 +16,7 @@ on:
         type: boolean
         default: false
 env:
-  GO_VERSION: "1.24"
+  GO_VERSION: '1.24'  # Also update in test.yml and release.yml
   POSTGRES_USER: aeron
   POSTGRES_PASSWORD: aeron123
   POSTGRES_DB: aeron_db
@@ -64,6 +64,9 @@ jobs:
         with:
           version: latest
           args: --timeout=5m
+
+      - name: Check for dead code
+        run: go run golang.org/x/tools/cmd/deadcode@latest ./...
 
       # ==========================================
       # BUILD
@@ -932,6 +935,148 @@ jobs:
         run: |
           kill $(cat api_bulk.pid) || true
           rm -f api_bulk.pid
+
+      # ==========================================
+      # DATABASE MAINTENANCE TESTS
+      # ==========================================
+      - name: "=== DATABASE MAINTENANCE TESTS ==="
+        run: echo "Start database maintenance tests"
+
+      - name: Reset database before maintenance tests
+        run: ./reset_db.sh
+
+      - name: Start API server for maintenance tests
+        run: |
+          ./zwfm-aeronapi -config=test_config.yaml -port=8896 &
+          echo $! > api_maint.pid
+          sleep 3
+
+      - name: DB Maintenance Test - Health endpoint
+        run: |
+          echo "Test: Database health endpoint"
+          RESPONSE=$(curl -s -H 'X-API-Key: test-api-key-12345' http://localhost:8896/api/db/health)
+
+          if echo "$RESPONSE" | jq -e '.success == true and .data.database_name != null and .data.tables != null' > /dev/null; then
+            TABLE_COUNT=$(echo "$RESPONSE" | jq '.data.tables | length')
+            RECO_COUNT=$(echo "$RESPONSE" | jq '.data.recommendations | length')
+            echo "✓ Database health endpoint succesvol"
+            echo "  Tabellen gevonden: $TABLE_COUNT"
+            echo "  Aanbevelingen: $RECO_COUNT"
+          else
+            echo "✗ Database health endpoint mislukt:"
+            echo "$RESPONSE" | jq .
+            exit 1
+          fi
+
+      - name: DB Maintenance Test - Vacuum dry-run
+        run: |
+          echo "Test: Vacuum dry-run"
+          RESPONSE=$(curl -s -X POST -H 'X-API-Key: test-api-key-12345' \
+            -H 'Content-Type: application/json' \
+            http://localhost:8896/api/db/vacuum \
+            -d '{"dry_run": true}')
+
+          if echo "$RESPONSE" | jq -e '.success == true and .data.dry_run == true' > /dev/null; then
+            TABLES_TOTAL=$(echo "$RESPONSE" | jq '.data.tables_total')
+            echo "✓ Vacuum dry-run succesvol"
+            echo "  Tabellen die gevacuumd zouden worden: $TABLES_TOTAL"
+            echo "$RESPONSE" | jq '.data.results[] | {table, bloat_percent_before, dead_tuples_before, message}'
+          else
+            echo "✗ Vacuum dry-run mislukt:"
+            echo "$RESPONSE" | jq .
+            exit 1
+          fi
+
+      - name: DB Maintenance Test - Vacuum specific table (dry-run)
+        run: |
+          echo "Test: Vacuum specifieke tabel (dry-run)"
+          RESPONSE=$(curl -s -X POST -H 'X-API-Key: test-api-key-12345' \
+            -H 'Content-Type: application/json' \
+            http://localhost:8896/api/db/vacuum \
+            -d '{"tables": ["artist"], "dry_run": true}')
+
+          if echo "$RESPONSE" | jq -e '.success == true and .data.tables_total == 1' > /dev/null; then
+            echo "✓ Vacuum specifieke tabel dry-run succesvol"
+          else
+            echo "✗ Vacuum specifieke tabel dry-run mislukt:"
+            echo "$RESPONSE" | jq .
+            exit 1
+          fi
+
+      - name: DB Maintenance Test - Vacuum with analyze (dry-run)
+        run: |
+          echo "Test: Vacuum met analyze (dry-run)"
+          RESPONSE=$(curl -s -X POST -H 'X-API-Key: test-api-key-12345' \
+            -H 'Content-Type: application/json' \
+            http://localhost:8896/api/db/vacuum \
+            -d '{"tables": ["track"], "analyze": true, "dry_run": true}')
+
+          if echo "$RESPONSE" | jq -e '.success == true and .data.results[0].analyzed == true' > /dev/null; then
+            MESSAGE=$(echo "$RESPONSE" | jq -r '.data.results[0].message')
+            echo "✓ Vacuum met analyze dry-run succesvol"
+            echo "  Message: $MESSAGE"
+          else
+            echo "✗ Vacuum met analyze dry-run mislukt:"
+            echo "$RESPONSE" | jq .
+            exit 1
+          fi
+
+      - name: DB Maintenance Test - Vacuum non-existent table
+        run: |
+          echo "Test: Vacuum niet-bestaande tabel"
+          RESPONSE=$(curl -s -X POST -H 'X-API-Key: test-api-key-12345' \
+            -H 'Content-Type: application/json' \
+            http://localhost:8896/api/db/vacuum \
+            -d '{"tables": ["nonexistent_table"], "dry_run": true}')
+
+          if echo "$RESPONSE" | jq -e '.success == true and .data.tables_skipped == 1' > /dev/null; then
+            SKIP_REASON=$(echo "$RESPONSE" | jq -r '.data.results[0].skipped_reason')
+            echo "✓ Niet-bestaande tabel correct geskipped: $SKIP_REASON"
+          else
+            echo "✗ Niet-bestaande tabel handling mislukt:"
+            echo "$RESPONSE" | jq .
+            exit 1
+          fi
+
+      - name: DB Maintenance Test - Analyze dry-run
+        run: |
+          echo "Test: Analyze endpoint"
+          RESPONSE=$(curl -s -X POST -H 'X-API-Key: test-api-key-12345' \
+            -H 'Content-Type: application/json' \
+            http://localhost:8896/api/db/analyze \
+            -d '{"tables": ["artist"]}')
+
+          if echo "$RESPONSE" | jq -e '.success == true' > /dev/null; then
+            echo "✓ Analyze endpoint succesvol"
+            echo "$RESPONSE" | jq '.data.results[] | {table, success, message}'
+          else
+            echo "✗ Analyze endpoint mislukt:"
+            echo "$RESPONSE" | jq .
+            exit 1
+          fi
+
+      - name: DB Maintenance Test - Execute actual vacuum on small table
+        run: |
+          echo "Test: Daadwerkelijke vacuum op kleine tabel"
+          RESPONSE=$(curl -s -X POST -H 'X-API-Key: test-api-key-12345' \
+            -H 'Content-Type: application/json' \
+            http://localhost:8896/api/db/vacuum \
+            -d '{"tables": ["artist"], "analyze": true}')
+
+          if echo "$RESPONSE" | jq -e '.success == true and .data.tables_success >= 1' > /dev/null; then
+            DURATION=$(echo "$RESPONSE" | jq -r '.data.results[0].duration')
+            echo "✓ Daadwerkelijke vacuum succesvol uitgevoerd"
+            echo "  Duur: $DURATION"
+          else
+            echo "✗ Vacuum uitvoering mislukt:"
+            echo "$RESPONSE" | jq .
+            exit 1
+          fi
+
+      - name: Stop API maintenance server
+        run: |
+          kill $(cat api_maint.pid) || true
+          rm -f api_maint.pid
 
       # ==========================================
       # CLEANUP

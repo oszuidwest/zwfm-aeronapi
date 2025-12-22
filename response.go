@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"strings"
 )
@@ -18,20 +19,24 @@ type APIResponse struct {
 // It automatically sets the success field to true and includes the provided data.
 func respondJSON(w http.ResponseWriter, statusCode int, data interface{}) {
 	w.WriteHeader(statusCode)
-	_ = json.NewEncoder(w).Encode(APIResponse{
+	if err := json.NewEncoder(w).Encode(APIResponse{
 		Success: true,
 		Data:    data,
-	})
+	}); err != nil {
+		slog.Debug("Schrijven JSON response naar client mislukt", "error", err)
+	}
 }
 
 // respondError sends an error JSON response with the specified status code and error message.
 // It automatically sets the success field to false and includes the error message.
 func respondError(w http.ResponseWriter, statusCode int, errorMsg string) {
 	w.WriteHeader(statusCode)
-	_ = json.NewEncoder(w).Encode(APIResponse{
+	if err := json.NewEncoder(w).Encode(APIResponse{
 		Success: false,
 		Error:   errorMsg,
-	})
+	}); err != nil {
+		slog.Debug("Schrijven error response naar client mislukt", "error", err)
+	}
 }
 
 // errorCode determines the appropriate HTTP status code based on the error message content.
