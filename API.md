@@ -538,9 +538,10 @@ Verkrijg gedetailleerde database statistieken inclusief tabelgroottes, bloat-per
 ```json
 {
   "database_name": "aeron",
+  "database_version": "PostgreSQL 16.1",
   "database_size": "2.45 GB",
   "database_size_bytes": 2630451200,
-  "schema": "aeron",
+  "schema_name": "aeron",
   "tables": [
     {
       "name": "track",
@@ -549,21 +550,25 @@ Verkrijg gedetailleerde database statistieken inclusief tabelgroottes, bloat-per
       "bloat_percent": 3.5,
       "total_size": "1.2 GB",
       "total_size_bytes": 1288490188,
-      "data_size": "1.0 GB",
+      "table_size": "1.0 GB",
+      "table_size_bytes": 1073741824,
       "index_size": "150 MB",
+      "index_size_bytes": 157286400,
       "toast_size": "50 MB",
+      "toast_size_bytes": 52428800,
       "last_vacuum": "2025-12-20T03:00:00Z",
       "last_autovacuum": "2025-12-21T04:15:00Z",
       "last_analyze": "2025-12-20T03:00:00Z",
       "last_autoanalyze": "2025-12-21T04:15:00Z",
-      "seq_scan": 1250,
-      "idx_scan": 45000
+      "seq_scans": 1250,
+      "idx_scans": 45000
     }
   ],
   "recommendations": [
     "Tabel 'playlistitem' heeft 15.2% bloat - VACUUM aanbevolen",
     "Tabel 'artist' heeft 12500 dead tuples - VACUUM aanbevolen"
-  ]
+  ],
+  "checked_at": "2025-12-22T14:30:00Z"
 }
 ```
 
@@ -589,21 +594,32 @@ Voer VACUUM uit op tabellen om ruimte terug te winnen en prestaties te verbetere
 **Response:** `200 OK`
 ```json
 {
+  "dry_run": false,
+  "tables_total": 2,
+  "tables_success": 2,
+  "tables_failed": 0,
+  "tables_skipped": 0,
   "results": [
     {
       "table": "track",
       "success": true,
-      "duration_ms": 1250,
-      "message": "VACUUM succesvol uitgevoerd"
+      "message": "VACUUM succesvol uitgevoerd",
+      "dead_tuples_before": 4500,
+      "bloat_percent_before": 3.5,
+      "duration": "1.25s",
+      "analyzed": false
     },
     {
       "table": "artist",
       "success": true,
-      "duration_ms": 340,
-      "message": "VACUUM succesvol uitgevoerd"
+      "message": "VACUUM succesvol uitgevoerd",
+      "dead_tuples_before": 1200,
+      "bloat_percent_before": 2.1,
+      "duration": "340ms",
+      "analyzed": false
     }
   ],
-  "dry_run": false
+  "executed_at": "2025-12-22T14:30:00Z"
 }
 ```
 
@@ -629,15 +645,20 @@ Werk tabelstatistieken bij voor de PostgreSQL query optimizer.
 **Response:** `200 OK`
 ```json
 {
+  "dry_run": false,
+  "tables_total": 1,
+  "tables_success": 1,
+  "tables_failed": 0,
+  "tables_skipped": 0,
   "results": [
     {
       "table": "track",
       "success": true,
-      "duration_ms": 890,
-      "message": "ANALYZE succesvol uitgevoerd"
+      "message": "ANALYZE succesvol uitgevoerd",
+      "duration": "890ms"
     }
   ],
-  "dry_run": false
+  "executed_at": "2025-12-22T14:30:00Z"
 }
 ```
 
@@ -646,6 +667,34 @@ Werk tabelstatistieken bij voor de PostgreSQL query optimizer.
 ## Backup-endpoints
 
 > **Let op:** Backup-endpoints zijn alleen beschikbaar indien `backup.enabled: true` in de configuratie.
+
+### Automatische backups
+
+Backups kunnen automatisch worden uitgevoerd via de ingebouwde scheduler. Configureer dit in `config.json`:
+
+```json
+"backup": {
+  "scheduler": {
+    "enabled": true,
+    "schedule": "0 3 * * *",
+    "timezone": "Europe/Amsterdam"
+  }
+}
+```
+
+**Parameters:**
+- `enabled`: Schakel automatische backups in/uit
+- `schedule`: Cron-expressie voor het backup-schema
+- `timezone`: IANA-tijdzone (optioneel, standaard: systeemtijd)
+
+**Cron-expressieformaat:** `minuut uur dag maand weekdag`
+
+| Expressie | Betekenis |
+|-----------|-----------|
+| `0 3 * * *` | Elke dag om 3:00 |
+| `0 */6 * * *` | Elke 6 uur |
+| `0 3 * * 0` | Elke zondag om 3:00 |
+| `0 3 1 * *` | 1e van elke maand om 3:00 |
 
 ### Backup aanmaken
 
@@ -669,11 +718,11 @@ Maak een nieuwe database backup.
 **Response:** `200 OK`
 ```json
 {
-  "filename": "aeron-backup-2025-12-22T14-30-00.dump",
+  "filename": "aeron-backup-2025-12-22-143000.dump",
   "format": "custom",
-  "size": 52428800,
-  "size_formatted": "50.0 MB",
-  "duration_ms": 12500,
+  "size_bytes": 52428800,
+  "size": "50.0 MB",
+  "duration": "12.5s",
   "created_at": "2025-12-22T14:30:00Z"
 }
 ```
@@ -716,21 +765,21 @@ Verkrijg een overzicht van alle beschikbare backups.
 {
   "backups": [
     {
-      "filename": "aeron-backup-2025-12-22T14-30-00.dump",
+      "filename": "aeron-backup-2025-12-22-143000.dump",
       "format": "custom",
-      "size": 52428800,
-      "size_formatted": "50.0 MB",
+      "size_bytes": 52428800,
+      "size": "50.0 MB",
       "created_at": "2025-12-22T14:30:00Z"
     },
     {
-      "filename": "aeron-backup-2025-12-21T14-30-00.sql",
+      "filename": "aeron-backup-2025-12-21-143000.sql",
       "format": "plain",
-      "size": 125829120,
-      "size_formatted": "120.0 MB",
+      "size_bytes": 125829120,
+      "size": "120.0 MB",
       "created_at": "2025-12-21T14:30:00Z"
     }
   ],
-  "total_size": 178257920,
+  "total_size_bytes": 178257920,
   "total_count": 2
 }
 ```
@@ -988,7 +1037,12 @@ Het gedrag van de API kan worden geconfigureerd via `config.json`:
     "retention_days": 30,
     "max_backups": 10,
     "default_format": "custom",
-    "default_compression": 9
+    "default_compression": 9,
+    "scheduler": {
+      "enabled": false,
+      "schedule": "0 3 * * *",
+      "timezone": ""
+    }
   }
 }
 ```
