@@ -12,17 +12,12 @@ import (
 )
 
 // Response is the standard response format for all API endpoints.
-// It provides a consistent structure for both successful and error responses.
-// The Data field uses any to allow flexible response types (artists, tracks, stats, etc.)
-// that are dynamically determined at runtime based on the endpoint.
 type Response struct {
-	Success bool   `json:"success"`         // Whether the operation was successful
-	Data    any    `json:"data,omitempty"`  // Response data for successful operations
-	Error   string `json:"error,omitempty"` // Error message for failed operations
+	Success bool   `json:"success"`
+	Data    any    `json:"data,omitempty"`
+	Error   string `json:"error,omitempty"`
 }
 
-// respondJSON sends a successful JSON response with the specified status code and data.
-// It automatically sets the success field to true and includes the provided data.
 func respondJSON(w http.ResponseWriter, statusCode int, data any) {
 	w.WriteHeader(statusCode)
 	if err := json.NewEncoder(w).Encode(Response{
@@ -33,8 +28,6 @@ func respondJSON(w http.ResponseWriter, statusCode int, data any) {
 	}
 }
 
-// respondError sends an error JSON response with the specified status code and error message.
-// It automatically sets the success field to false and includes the error message.
 func respondError(w http.ResponseWriter, statusCode int, errorMsg string) {
 	w.WriteHeader(statusCode)
 	if err := json.NewEncoder(w).Encode(Response{
@@ -45,15 +38,11 @@ func respondError(w http.ResponseWriter, statusCode int, errorMsg string) {
 	}
 }
 
-// errorCode determines the appropriate HTTP status code based on the error type.
-// It first checks custom error types using errors.As(), then falls back to string
-// matching for backwards compatibility during the migration period.
 func errorCode(err error) int {
 	if err == nil {
 		return http.StatusOK
 	}
 
-	// Check custom error types first (preferred method)
 	var notFound *types.NotFoundError
 	if errors.As(err, &notFound) {
 		return http.StatusNotFound
@@ -89,16 +78,13 @@ func errorCode(err error) int {
 		return http.StatusInternalServerError
 	}
 
-	// Fallback to string matching for backwards compatibility during migration
 	errorMsg := err.Error()
 
-	// 404 Not Found errors
 	if strings.Contains(errorMsg, "bestaat niet") ||
 		strings.Contains(errorMsg, "heeft geen afbeelding") {
 		return http.StatusNotFound
 	}
 
-	// 400 Bad Request errors
 	if errorMsg == "afbeelding is verplicht" ||
 		errorMsg == "gebruik óf URL óf upload, niet beide" ||
 		strings.Contains(errorMsg, "ongeldig type") ||
@@ -108,6 +94,5 @@ func errorCode(err error) int {
 		return http.StatusBadRequest
 	}
 
-	// 500 Internal Server Error for everything else
 	return http.StatusInternalServerError
 }

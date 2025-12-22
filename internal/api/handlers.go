@@ -15,28 +15,25 @@ import (
 )
 
 // ImageUploadRequest represents the JSON request body for image upload operations.
-// Either URL or Image should be provided, but not both.
 type ImageUploadRequest struct {
-	URL   string `json:"url"`   // URL of the image to download and process
-	Image string `json:"image"` // Base64-encoded image data
+	URL   string `json:"url"`
+	Image string `json:"image"`
 }
 
 // ImageStatsResponse represents the response format for statistics endpoints.
-// It provides counts of entities with and without images.
 type ImageStatsResponse struct {
-	Total         int `json:"total"`          // Total number of entities
-	WithImages    int `json:"with_images"`    // Number of entities with images
-	WithoutImages int `json:"without_images"` // Number of entities without images
+	Total         int `json:"total"`
+	WithImages    int `json:"with_images"`
+	WithoutImages int `json:"without_images"`
 }
 
 // BlockWithTracks represents a playlist block with its associated tracks.
-// Used when returning the full playlist structure grouped by blocks.
 type BlockWithTracks struct {
 	database.PlaylistBlock
 	Tracks []database.PlaylistItem `json:"tracks"`
 }
 
-// HealthResponse represents the response format for the health check endpoint.
+// HealthResponse represents the response for the health check endpoint.
 type HealthResponse struct {
 	Status         string `json:"status"`
 	Version        string `json:"version"`
@@ -44,7 +41,7 @@ type HealthResponse struct {
 	DatabaseStatus string `json:"database_status"`
 }
 
-// ImageUploadResponse represents the response format for image upload operations.
+// ImageUploadResponse represents the response for image upload operations.
 type ImageUploadResponse struct {
 	Artist               string  `json:"artist"`
 	Track                string  `json:"track,omitempty"`
@@ -53,13 +50,13 @@ type ImageUploadResponse struct {
 	SizeReductionPercent float64 `json:"savings_percent"`
 }
 
-// BulkDeleteResponse represents the response format for bulk delete operations.
+// BulkDeleteResponse represents the response for bulk delete operations.
 type BulkDeleteResponse struct {
 	Deleted int64  `json:"deleted"`
 	Message string `json:"message"`
 }
 
-// ImageDeleteResponse represents the response format for image delete operations.
+// ImageDeleteResponse represents the response for image delete operations.
 type ImageDeleteResponse struct {
 	Message  string `json:"message"`
 	ArtistID string `json:"artist_id,omitempty"`
@@ -67,7 +64,6 @@ type ImageDeleteResponse struct {
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
-	// Ping database to verify connectivity
 	dbStatus := "connected"
 	if err := s.service.DB().PingContext(r.Context()); err != nil {
 		dbStatus = "disconnected"
@@ -82,7 +78,6 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleStats returns a handler for statistics requests
 func (s *Server) handleStats(entityType types.EntityType) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		stats, err := s.service.GetStatistics(r.Context(), entityType)
@@ -101,7 +96,6 @@ func (s *Server) handleStats(entityType types.EntityType) http.HandlerFunc {
 	}
 }
 
-// handleEntityByID returns a handler for retrieving entity details
 func (s *Server) handleEntityByID(entityType types.EntityType) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		entityID := chi.URLParam(r, "id")
@@ -132,7 +126,6 @@ func (s *Server) handleEntityByID(entityType types.EntityType) http.HandlerFunc 
 	}
 }
 
-// uploadResponse creates the response object for upload results
 func (s *Server) uploadResponse(result *service.ImageUploadResult, entityType types.EntityType) ImageUploadResponse {
 	response := ImageUploadResponse{
 		Artist:               result.ArtistName,
@@ -148,7 +141,6 @@ func (s *Server) uploadResponse(result *service.ImageUploadResult, entityType ty
 	return response
 }
 
-// handleBulkDelete returns a handler for bulk image deletion
 func (s *Server) handleBulkDelete(entityType types.EntityType) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		const confirmHeader = "X-Confirm-Bulk-Delete"
@@ -175,7 +167,6 @@ func (s *Server) handleBulkDelete(entityType types.EntityType) http.HandlerFunc 
 	}
 }
 
-// handleGetImage returns a handler for retrieving images
 func (s *Server) handleGetImage(entityType types.EntityType) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		entityID := chi.URLParam(r, "id")
@@ -195,12 +186,10 @@ func (s *Server) handleGetImage(entityType types.EntityType) http.HandlerFunc {
 			return
 		}
 
-		// Override content type for image response
-		w.Header().Del("Content-Type") // Remove JSON header set by middleware
+		w.Header().Del("Content-Type")
 		w.Header().Set("Content-Type", detectImageContentType(imageData))
 		w.Header().Set("Content-Length", strconv.Itoa(len(imageData)))
 
-		// Write image data directly
 		w.WriteHeader(http.StatusOK)
 		if _, err := w.Write(imageData); err != nil {
 			slog.Debug("Schrijven afbeelding naar client mislukt", "error", err)
@@ -208,7 +197,6 @@ func (s *Server) handleGetImage(entityType types.EntityType) http.HandlerFunc {
 	}
 }
 
-// handleImageUpload returns a handler for image uploads
 func (s *Server) handleImageUpload(entityType types.EntityType) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		entityID := chi.URLParam(r, "id")
@@ -225,7 +213,6 @@ func (s *Server) handleImageUpload(entityType types.EntityType) http.HandlerFunc
 			return
 		}
 
-		// For image endpoint, we only use ID - ignore any name field
 		params := &service.ImageUploadParams{
 			EntityType: entityType,
 			ID:         entityID,
@@ -253,7 +240,6 @@ func (s *Server) handleImageUpload(entityType types.EntityType) http.HandlerFunc
 	}
 }
 
-// handleDeleteImage returns a handler for deleting images
 func (s *Server) handleDeleteImage(entityType types.EntityType) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		entityID := chi.URLParam(r, "id")
@@ -294,12 +280,10 @@ func (s *Server) handlePlaylist(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 	blockID := query.Get("block_id")
 
-	// If block_id is provided, return tracks for that specific block
 	if blockID != "" {
 		opts := database.DefaultPlaylistOptions()
 		opts.BlockID = blockID
 
-		// Limit and offset
 		if limit := query.Get("limit"); limit != "" {
 			if l, err := strconv.Atoi(limit); err == nil && l > 0 {
 				opts.Limit = l
@@ -311,17 +295,14 @@ func (s *Server) handlePlaylist(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		// Track image filter
 		if trackImage := query.Get("track_image"); trackImage != "" {
 			opts.TrackImage = parseQueryBoolParam(trackImage)
 		}
 
-		// Artist image filter
 		if artistImage := query.Get("artist_image"); artistImage != "" {
 			opts.ArtistImage = parseQueryBoolParam(artistImage)
 		}
 
-		// Sort options
 		if sort := query.Get("sort"); sort != "" {
 			opts.SortBy = sort
 		}
@@ -339,17 +320,14 @@ func (s *Server) handlePlaylist(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// No block_id: return all blocks with their tracks for today (or specified date)
 	date := query.Get("date")
 
-	// Get all blocks and tracks in just 2 queries (optimized)
 	blocks, tracksByBlock, err := database.GetPlaylistBlocksWithTracks(r.Context(), s.service.DB(), s.config.Database.Schema, date)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	// Build the response
 	result := make([]BlockWithTracks, len(blocks))
 	for i, block := range blocks {
 		tracks := tracksByBlock[block.BlockID]

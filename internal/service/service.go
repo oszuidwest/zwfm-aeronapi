@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"strings"
 
 	"github.com/oszuidwest/zwfm-aeronapi/internal/config"
@@ -17,33 +18,43 @@ import (
 )
 
 // DB defines the database interface required by the service layer.
-// It extends the database package's interface with PingContext for health monitoring.
-// This interface follows the Interface Segregation Principle - the service layer
-// needs health checks while the database package does not.
-// The *sqlx.DB type satisfies this interface.
 type DB interface {
-	GetContext(ctx context.Context, dest interface{}, query string, args ...interface{}) error
-	SelectContext(ctx context.Context, dest interface{}, query string, args ...interface{}) error
-	ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
-	PingContext(ctx context.Context) error // Used by health endpoint to verify database connectivity
+	GetContext(ctx context.Context, dest any, query string, args ...any) error
+	SelectContext(ctx context.Context, dest any, query string, args ...any) error
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+	PingContext(ctx context.Context) error
 }
 
-// AeronService provides business logic for managing images in the Aeron radio automation system.
-// It orchestrates image processing, database operations, and validation workflows.
+// AeronService provides business logic for the Aeron radio automation system.
 type AeronService struct {
-	db     DB
-	config *config.Config
-	schema string // Cached schema name for convenience
+	db         DB
+	config     *config.Config
+	schema     string
+	backupRoot *os.Root
 }
 
-// New creates a new AeronService instance with the provided database connection and configuration.
-// The service uses the database for entity operations and config for image processing settings.
-func New(db DB, cfg *config.Config) *AeronService {
-	return &AeronService{
+// New creates a new AeronService instance.
+func New(db DB, cfg *config.Config) (*AeronService, error) {
+	svc := &AeronService{
 		db:     db,
 		config: cfg,
 		schema: cfg.Database.Schema,
 	}
+
+	if cfg.Backup.Enabled {
+		backupPath := cfg.Backup.GetPath()
+		if err := os.MkdirAll(backupPath, 0750); err != nil {
+			return nil, &types.ConfigurationError{Field: "backup.path", Message: fmt.Sprintf("backup directory niet toegankelijk: %v", err)}
+		}
+
+		root, err := os.OpenRoot(backupPath)
+		if err != nil {
+			return nil, &types.ConfigurationError{Field: "backup.path", Message: fmt.Sprintf("backup directory niet te openen: %v", err)}
+		}
+		svc.backupRoot = root
+	}
+
+	return svc, nil
 }
 
 // Config returns the service configuration.
@@ -56,34 +67,29 @@ func (s *AeronService) DB() DB {
 	return s.db
 }
 
-// ImageUploadParams contains the parameters required for uploading an image to an entity.
-// Either ImageURL or ImageData should be provided, but not both.
+// ImageUploadParams contains the parameters for image upload operations.
 type ImageUploadParams struct {
-	EntityType types.EntityType // Entity type: EntityTypeArtist or EntityTypeTrack
-	ID         string           // UUID of the entity to update
-	ImageURL   string           // URL of the image to download (optional)
-	ImageData  []byte           // Raw image data (optional)
+	EntityType types.EntityType
+	ID         string
+	ImageURL   string
+	ImageData  []byte
 }
 
 // ImageUploadResult contains the results of an image upload operation.
-// It provides information about the processed image and optimization statistics.
 type ImageUploadResult struct {
-	ArtistName           string  // Artist name (always populated)
-	TrackTitle           string  // Track title (empty for artists)
-	OriginalSize         int     // Size of original image in bytes
-	OptimizedSize        int     // Size of optimized image in bytes
-	SizeReductionPercent float64 // Percentage of size reduction achieved
+	ArtistName           string
+	TrackTitle           string
+	OriginalSize         int
+	OptimizedSize        int
+	SizeReductionPercent float64
 }
 
 // UploadImage processes and uploads an image for the specified entity.
-// It validates the entity exists, downloads/processes the image, optimizes it,
-// and stores it in the database. Returns optimization statistics on success.
 func (s *AeronService) UploadImage(ctx context.Context, params *ImageUploadParams) (*ImageUploadResult, error) {
 	if err := validateImageUploadParams(params); err != nil {
 		return nil, err
 	}
 
-	// First check if the artist/track exists before downloading/processing the image
 	var name, title string
 
 	if params.EntityType == types.EntityTypeArtist {
@@ -103,7 +109,6 @@ func (s *AeronService) UploadImage(ctx context.Context, params *ImageUploadParam
 		title = track.TrackTitle
 	}
 
-	// Now download/get the image data
 	var imageData []byte
 	var err error
 	if params.ImageURL != "" {
@@ -116,7 +121,6 @@ func (s *AeronService) UploadImage(ctx context.Context, params *ImageUploadParam
 		imageData = params.ImageData
 	}
 
-	// Process image
 	imgConfig := image.Config{
 		TargetWidth:   s.config.Image.TargetWidth,
 		TargetHeight:  s.config.Image.TargetHeight,
@@ -129,7 +133,6 @@ func (s *AeronService) UploadImage(ctx context.Context, params *ImageUploadParam
 		return nil, &types.ImageProcessingError{Message: fmt.Sprintf("verwerken mislukt: %v", err)}
 	}
 
-	// Update the database
 	table := types.TableForEntityType(params.EntityType)
 	if err := database.UpdateEntityImage(ctx, s.db, s.schema, table, params.ID, processingResult.Data); err != nil {
 		slog.Error("Afbeelding opslaan mislukt", "entityType", params.EntityType, "id", params.ID, "error", err)
@@ -146,21 +149,19 @@ func (s *AeronService) UploadImage(ctx context.Context, params *ImageUploadParam
 }
 
 // ImageStats represents statistics about images in the database.
-// It provides counts of entities with and without images.
 type ImageStats struct {
-	Total         int // Total number of entities
-	WithImages    int // Number of entities with images
-	WithoutImages int // Number of entities without images
+	Total         int
+	WithImages    int
+	WithoutImages int
 }
 
 // DeleteResult contains the results of a bulk image deletion operation.
 type DeleteResult struct {
-	CountBefore  int   // Number of entities that had images before deletion
-	DeletedCount int64 // Number of images actually deleted
+	CountBefore  int
+	DeletedCount int64
 }
 
 // DeleteAllImages removes all images for entities of the specified type.
-// It returns the number of images that were deleted.
 func (s *AeronService) DeleteAllImages(ctx context.Context, entityType types.EntityType) (*DeleteResult, error) {
 	if err := validateEntityType(entityType); err != nil {
 		return nil, err
@@ -201,9 +202,7 @@ func (s *AeronService) DeleteAllImages(ctx context.Context, entityType types.Ent
 }
 
 // DecodeBase64 decodes a base64-encoded string into raw bytes.
-// It automatically handles data URL prefixes (e.g., "data:image/jpeg;base64,").
 func DecodeBase64(data string) ([]byte, error) {
-	// Remove data URL prefix if present (e.g., "data:image/jpeg;base64,")
 	if _, after, found := strings.Cut(data, ","); found {
 		data = after
 	}
@@ -211,7 +210,6 @@ func DecodeBase64(data string) ([]byte, error) {
 }
 
 // GetStatistics returns image statistics for entities of the specified type.
-// It counts total entities, those with images, and those without images.
 func (s *AeronService) GetStatistics(ctx context.Context, entityType types.EntityType) (*ImageStats, error) {
 	if err := validateEntityType(entityType); err != nil {
 		return nil, err
@@ -219,7 +217,6 @@ func (s *AeronService) GetStatistics(ctx context.Context, entityType types.Entit
 
 	table := types.TableForEntityType(entityType)
 
-	// Get counts
 	withImages, err := database.CountItems(ctx, s.db, s.schema, table, true)
 	if err != nil {
 		slog.Error("Tellen items met afbeeldingen mislukt", "entityType", entityType, "error", err)
@@ -241,7 +238,6 @@ func (s *AeronService) GetStatistics(ctx context.Context, entityType types.Entit
 	}, nil
 }
 
-// validateEntityType checks if the provided entity type is valid.
 func validateEntityType(entityType types.EntityType) error {
 	if entityType != types.EntityTypeArtist && entityType != types.EntityTypeTrack {
 		return types.NewValidationError("entityType", fmt.Sprintf("ongeldig type: gebruik '%s' of '%s'", types.EntityTypeArtist, types.EntityTypeTrack))
@@ -249,13 +245,11 @@ func validateEntityType(entityType types.EntityType) error {
 	return nil
 }
 
-// validateImageUploadParams validates all parameters required for image upload operations.
 func validateImageUploadParams(params *ImageUploadParams) error {
 	if err := validateEntityType(params.EntityType); err != nil {
 		return err
 	}
 
-	// Check that we have either ImageURL or image data, but not both
 	hasURL := params.ImageURL != ""
 	hasImageData := len(params.ImageData) > 0
 

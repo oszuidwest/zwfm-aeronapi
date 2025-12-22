@@ -70,7 +70,11 @@ func run() error {
 	}()
 
 	// Create service and API server
-	svc := service.New(db, cfg)
+	svc, err := service.New(db, cfg)
+	if err != nil {
+		slog.Error("Service initialisatie mislukt", "error", err)
+		return err
+	}
 	api.Version = Version
 	apiServer := api.New(svc, cfg)
 

@@ -10,50 +10,45 @@ import (
 )
 
 // PlaylistBlock represents a programming block in the Aeron playlist system.
-// Blocks group playlist items by time periods (e.g., morning show, afternoon music).
 type PlaylistBlock struct {
-	BlockID        string `db:"blockid" json:"blockid"`       // UUID of the playlist block
-	Name           string `db:"name" json:"name"`             // Block name (e.g., "Morning Show")
-	StartTimeOfDay string `db:"start_time" json:"start_time"` // Block start time of day (HH:MM:SS format)
-	EndTimeOfDay   string `db:"end_time" json:"end_time"`     // Block end time of day (HH:MM:SS format)
-	Date           string `db:"date" json:"date"`             // Block date (YYYY-MM-DD format)
+	BlockID        string `db:"blockid" json:"blockid"`
+	Name           string `db:"name" json:"name"`
+	StartTimeOfDay string `db:"start_time" json:"start_time"`
+	EndTimeOfDay   string `db:"end_time" json:"end_time"`
+	Date           string `db:"date" json:"date"`
 }
 
 // PlaylistItem represents a single item in the Aeron playlist.
-// Items can be music tracks, voice tracks, commercials, or other content.
 type PlaylistItem struct {
-	TrackID        string `db:"trackid" json:"trackid"`                   // UUID of the track
-	TrackTitle     string `db:"tracktitle" json:"tracktitle"`             // Track title
-	ArtistID       string `db:"artistid" json:"artistid"`                 // UUID of the artist
-	ArtistName     string `db:"artistname" json:"artistname"`             // Artist name
-	StartTime      string `db:"start_time" json:"start_time"`             // Scheduled start time (HH:MM:SS format)
-	EndTime        string `db:"end_time" json:"end_time"`                 // Calculated end time (HH:MM:SS format)
-	Duration       int    `db:"duration" json:"duration"`                 // Duration in milliseconds
-	HasTrackImage  bool   `db:"has_track_image" json:"has_track_image"`   // Whether the track has an image
-	HasArtistImage bool   `db:"has_artist_image" json:"has_artist_image"` // Whether the artist has an image
-	ExportType     int    `db:"exporttype" json:"exporttype"`             // Export type classification
-	Mode           int    `db:"mode" json:"mode"`                         // Playback mode
-	IsVoicetrack   bool   `db:"is_voicetrack" json:"is_voicetrack"`       // Whether this is a voice track
-	IsCommblock    bool   `db:"is_commblock" json:"is_commblock"`         // Whether this is a commercial block
+	TrackID        string `db:"trackid" json:"trackid"`
+	TrackTitle     string `db:"tracktitle" json:"tracktitle"`
+	ArtistID       string `db:"artistid" json:"artistid"`
+	ArtistName     string `db:"artistname" json:"artistname"`
+	StartTime      string `db:"start_time" json:"start_time"`
+	EndTime        string `db:"end_time" json:"end_time"`
+	Duration       int    `db:"duration" json:"duration"`
+	HasTrackImage  bool   `db:"has_track_image" json:"has_track_image"`
+	HasArtistImage bool   `db:"has_artist_image" json:"has_artist_image"`
+	ExportType     int    `db:"exporttype" json:"exporttype"`
+	Mode           int    `db:"mode" json:"mode"`
+	IsVoicetrack   bool   `db:"is_voicetrack" json:"is_voicetrack"`
+	IsCommblock    bool   `db:"is_commblock" json:"is_commblock"`
 }
 
-// PlaylistOptions configures playlist queries with filtering and pagination options.
-// It provides flexible control over which playlist items are returned.
+// PlaylistOptions configures playlist queries with filtering and pagination.
 type PlaylistOptions struct {
-	BlockID     string // Filter by specific block ID (required for playlist items)
-	Date        string // Specific date (YYYY-MM-DD) for blocks endpoint
-	ExportTypes []int  // Export types to exclude from results
-	Limit       int    // Max items to return (0 = all)
-	Offset      int    // Pagination offset
-	SortBy      string // Sort field (default: "starttime")
-	SortDesc    bool   // Sort descending
-	// Image filters
-	TrackImage  *bool // Filter by track image: true (has), false (no), nil (all)
-	ArtistImage *bool // Filter by artist image: true (has), false (no), nil (all)
+	BlockID     string
+	Date        string
+	ExportTypes []int
+	Limit       int
+	Offset      int
+	SortBy      string
+	SortDesc    bool
+	TrackImage  *bool
+	ArtistImage *bool
 }
 
-// DefaultPlaylistOptions returns default playlist options with sensible defaults.
-// It excludes no export types and sorts by start time in ascending order.
+// DefaultPlaylistOptions returns default playlist query options.
 func DefaultPlaylistOptions() PlaylistOptions {
 	return PlaylistOptions{
 		ExportTypes: []int{},
@@ -62,28 +57,23 @@ func DefaultPlaylistOptions() PlaylistOptions {
 }
 
 // BuildPlaylistQuery creates a parameterized SQL query for playlist items.
-// It builds the query based on the provided options and returns the query string and parameters.
-func BuildPlaylistQuery(schema string, opts PlaylistOptions) (string, []interface{}, error) {
+func BuildPlaylistQuery(schema string, opts PlaylistOptions) (string, []any, error) {
 	var conditions []string
-	var params []interface{}
+	var params []any
 	paramCount := 0
 
-	// Helper function to get next parameter placeholder
 	nextParam := func() string {
 		paramCount++
 		return fmt.Sprintf("$%d", paramCount)
 	}
 
-	// Block filter is required - always use block-centric approach
 	if opts.BlockID != "" {
 		conditions = append(conditions, fmt.Sprintf("pi.blockid = %s", nextParam()))
 		params = append(params, opts.BlockID)
 	} else {
-		// If no block specified, return empty result
-		return "", []interface{}{}, nil
+		return "", []any{}, nil
 	}
 
-	// Export type filter
 	if len(opts.ExportTypes) > 0 {
 		placeholders := make([]string, len(opts.ExportTypes))
 		for i, t := range opts.ExportTypes {
@@ -93,7 +83,6 @@ func BuildPlaylistQuery(schema string, opts PlaylistOptions) (string, []interfac
 		conditions = append(conditions, fmt.Sprintf("COALESCE(t.exporttype, 1) NOT IN (%s)", strings.Join(placeholders, ",")))
 	}
 
-	// Track image filter
 	if opts.TrackImage != nil {
 		if *opts.TrackImage {
 			conditions = append(conditions, "t.picture IS NOT NULL")
@@ -102,7 +91,6 @@ func BuildPlaylistQuery(schema string, opts PlaylistOptions) (string, []interfac
 		}
 	}
 
-	// Artist image filter
 	if opts.ArtistImage != nil {
 		if *opts.ArtistImage {
 			conditions = append(conditions, "a.picture IS NOT NULL")
@@ -111,10 +99,8 @@ func BuildPlaylistQuery(schema string, opts PlaylistOptions) (string, []interfac
 		}
 	}
 
-	// Build WHERE clause
 	whereClause := strings.Join(conditions, " AND ")
 
-	// Sort order - validate to prevent injection
 	orderBy := "pi.startdatetime"
 	switch opts.SortBy {
 	case "artist":
@@ -123,13 +109,11 @@ func BuildPlaylistQuery(schema string, opts PlaylistOptions) (string, []interfac
 		orderBy = "t.tracktitle"
 	case "start_time":
 		orderBy = "pi.startdatetime"
-		// Only allow whitelisted sort columns
 	}
 	if opts.SortDesc {
 		orderBy += " DESC"
 	}
 
-	// Validate schema name to prevent SQL injection
 	if !types.IsValidIdentifier(schema) {
 		return "", nil, types.NewValidationError("schema", fmt.Sprintf("ongeldige schema naam: %s", schema))
 	}
@@ -156,7 +140,6 @@ func BuildPlaylistQuery(schema string, opts PlaylistOptions) (string, []interfac
 		ORDER BY %s
 	`, types.VoicetrackUserID, schema, schema, schema, whereClause, orderBy)
 
-	// Add limit/offset with parameters
 	if opts.Limit > 0 {
 		query += fmt.Sprintf(" LIMIT %s", nextParam())
 		params = append(params, opts.Limit)
@@ -169,9 +152,8 @@ func BuildPlaylistQuery(schema string, opts PlaylistOptions) (string, []interfac
 	return query, params, nil
 }
 
-// ExecutePlaylistQuery executes a parameterized playlist query and returns the results.
-// It takes a prepared query string and its parameters, returning playlist items.
-func ExecutePlaylistQuery(ctx context.Context, db DB, query string, params []interface{}) ([]PlaylistItem, error) {
+// ExecutePlaylistQuery executes a playlist query and returns items.
+func ExecutePlaylistQuery(ctx context.Context, db DB, query string, params []any) ([]PlaylistItem, error) {
 	var items []PlaylistItem
 	err := db.SelectContext(ctx, &items, query, params...)
 	if err != nil {
@@ -181,8 +163,7 @@ func ExecutePlaylistQuery(ctx context.Context, db DB, query string, params []int
 	return items, nil
 }
 
-// GetPlaylist retrieves playlist items from the database based on the provided options.
-// It builds and executes a query filtered by the playlist options.
+// GetPlaylist retrieves playlist items based on the provided options.
 func GetPlaylist(ctx context.Context, db DB, schema string, opts PlaylistOptions) ([]PlaylistItem, error) {
 	query, params, err := BuildPlaylistQuery(schema, opts)
 	if err != nil {
@@ -192,17 +173,14 @@ func GetPlaylist(ctx context.Context, db DB, schema string, opts PlaylistOptions
 }
 
 // GetPlaylistBlocks retrieves all playlist blocks for a specific date.
-// If no date is provided, it returns blocks for the current date.
 func GetPlaylistBlocks(ctx context.Context, db DB, schema string, date string) ([]PlaylistBlock, error) {
 	var dateFilter string
-	params := []interface{}{}
+	params := []any{}
 
 	if date != "" {
-		// Use range query for better index usage
 		dateFilter = "pb.startdatetime >= $1::date AND pb.startdatetime < $1::date + INTERVAL '1 day'"
 		params = append(params, date)
 	} else {
-		// Use range query for current date
 		dateFilter = "pb.startdatetime >= CURRENT_DATE AND pb.startdatetime < CURRENT_DATE + INTERVAL '1 day'"
 	}
 
@@ -227,10 +205,8 @@ func GetPlaylistBlocks(ctx context.Context, db DB, schema string, date string) (
 	return blocks, nil
 }
 
-// GetPlaylistBlocksWithTracks efficiently fetches all blocks and their tracks for a date.
-// It uses only 2 database queries to retrieve all data and returns blocks with their associated tracks.
+// GetPlaylistBlocksWithTracks fetches all blocks and their tracks for a date.
 func GetPlaylistBlocksWithTracks(ctx context.Context, db DB, schema string, date string) ([]PlaylistBlock, map[string][]PlaylistItem, error) {
-	// First get all blocks
 	blocks, err := GetPlaylistBlocks(ctx, db, schema, date)
 	if err != nil {
 		return nil, nil, err
@@ -240,28 +216,22 @@ func GetPlaylistBlocksWithTracks(ctx context.Context, db DB, schema string, date
 		return blocks, make(map[string][]PlaylistItem), nil
 	}
 
-	// Collect all block IDs
 	blockIDs := make([]string, len(blocks))
 	for i, block := range blocks {
 		blockIDs[i] = block.BlockID
 	}
 
-	// Build the query for all tracks in all blocks
 	var dateFilter string
-	params := []interface{}{}
+	params := []any{}
 	paramCount := 0
 
 	if date != "" {
-		// Use range query for better index usage
 		dateFilter = "pi.startdatetime >= $1::date AND pi.startdatetime < $1::date + INTERVAL '1 day'"
 		params = append(params, date)
 		paramCount = 1
 	} else {
-		// Use range query for current date
 		dateFilter = "pi.startdatetime >= CURRENT_DATE AND pi.startdatetime < CURRENT_DATE + INTERVAL '1 day'"
 	}
-
-	// Build placeholders for block IDs
 	placeholders := make([]string, len(blockIDs))
 	for i, id := range blockIDs {
 		paramCount++
@@ -304,7 +274,6 @@ func GetPlaylistBlocksWithTracks(ctx context.Context, db DB, schema string, date
 		return nil, nil, &types.DatabaseError{Operation: "ophalen van playlist items", Err: err}
 	}
 
-	// Group items by block ID
 	tracksByBlock := make(map[string][]PlaylistItem)
 	for _, temp := range tempItems {
 		tracksByBlock[temp.TempBlockID] = append(tracksByBlock[temp.TempBlockID], temp.PlaylistItem)
