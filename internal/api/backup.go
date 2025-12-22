@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/oszuidwest/zwfm-aeronapi/internal/service"
+	"github.com/oszuidwest/zwfm-aerontoolbox/internal/service"
 )
 
 // BackupDeleteResponse represents the response format for backup delete operations.

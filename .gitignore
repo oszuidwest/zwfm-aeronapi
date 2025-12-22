@@ -1,6 +1,6 @@
 # Binaries
-zwfm-aeronapi
-zwfm-aeronapi.exe
+zwfm-aerontoolbox
+zwfm-aerontoolbox.exe
 
 # Don't ignore the installer
 !install.ps1
@@ -44,7 +44,7 @@ test_report.md
 test_*.png
 
 # Build artifacts and releases
-zwfm-aeronapi-*
+zwfm-aerontoolbox-*
 release-assets/
 artifacts/
 /docker

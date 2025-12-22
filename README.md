@@ -20,28 +20,28 @@ Een **onofficiële** REST API voor het Aeron-radioautomatiseringssysteem met too
 
 ```bash
 # Download en pas configuratie aan
-wget https://raw.githubusercontent.com/oszuidwest/zwfm-aeronapi/main/config.example.json -O config.json
+wget https://raw.githubusercontent.com/oszuidwest/zwfm-aerontoolbox/main/config.example.json -O config.json
 
 # Start container
 docker run -d -p 8080:8080 \
   -v $(pwd)/config.json:/config.json \
-  --name zwfm-aeronapi \
+  --name zwfm-aerontoolbox \
   --restart unless-stopped \
-  ghcr.io/oszuidwest/zwfm-aeronapi:latest
+  ghcr.io/oszuidwest/zwfm-aerontoolbox:latest
 ```
 
 ### Binaries
 
-Download voor je platform via de [releases-pagina](https://github.com/oszuidwest/zwfm-aeronapi/releases).
+Download voor je platform via de [releases-pagina](https://github.com/oszuidwest/zwfm-aerontoolbox/releases).
 
 ### Vanaf broncode
 
 ```bash
-git clone https://github.com/oszuidwest/zwfm-aeronapi.git
-cd zwfm-aeronapi
+git clone https://github.com/oszuidwest/zwfm-aerontoolbox.git
+cd zwfm-aerontoolbox
 cp config.example.json config.json
-go build -o zwfm-aeronapi .
-./zwfm-aeronapi -config=config.json -port=8080
+go build -o zwfm-aerontoolbox .
+./zwfm-aerontoolbox -config=config.json -port=8080
 ```
 
 ## Configuratie
@@ -81,7 +81,7 @@ Volledige API-documentatie: [API.md](API.md)
 **Vereisten:** Go 1.25+, PostgreSQL
 
 ```bash
-go build -o zwfm-aeronapi .
+go build -o zwfm-aerontoolbox .
 go test ./...
 ```
 

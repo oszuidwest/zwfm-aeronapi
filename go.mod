@@ -1,4 +1,4 @@
-module github.com/oszuidwest/zwfm-aeronapi
+module github.com/oszuidwest/zwfm-aerontoolbox
 
 go 1.25.0
 

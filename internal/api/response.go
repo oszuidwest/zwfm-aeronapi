@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/oszuidwest/zwfm-aeronapi/internal/types"
+	"github.com/oszuidwest/zwfm-aerontoolbox/internal/types"
 )
 
 // Response is the standard response format for all API endpoints.

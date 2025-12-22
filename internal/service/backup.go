@@ -15,8 +15,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/oszuidwest/zwfm-aeronapi/internal/types"
-	"github.com/oszuidwest/zwfm-aeronapi/internal/util"
+	"github.com/oszuidwest/zwfm-aerontoolbox/internal/types"
+	"github.com/oszuidwest/zwfm-aerontoolbox/internal/util"
 )
 
 // BackupFormat represents the pg_dump output format.

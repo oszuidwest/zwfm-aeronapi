@@ -9,7 +9,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/oszuidwest/zwfm-aeronapi/internal/types"
+	"github.com/oszuidwest/zwfm-aerontoolbox/internal/types"
 )
 
 // DatabaseConfig contains PostgreSQL database connection parameters.

@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/oszuidwest/zwfm-aeronapi/internal/types"
+	"github.com/oszuidwest/zwfm-aerontoolbox/internal/types"
 )
 
 // VacuumOptions configures vacuum operation parameters.

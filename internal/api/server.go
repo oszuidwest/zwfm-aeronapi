@@ -9,9 +9,9 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
-	"github.com/oszuidwest/zwfm-aeronapi/internal/config"
-	"github.com/oszuidwest/zwfm-aeronapi/internal/service"
-	"github.com/oszuidwest/zwfm-aeronapi/internal/types"
+	"github.com/oszuidwest/zwfm-aerontoolbox/internal/config"
+	"github.com/oszuidwest/zwfm-aerontoolbox/internal/service"
+	"github.com/oszuidwest/zwfm-aerontoolbox/internal/types"
 )
 
 // Version is the application version, set at build time.

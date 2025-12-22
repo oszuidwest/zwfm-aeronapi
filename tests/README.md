@@ -37,8 +37,8 @@ This starts a PostgreSQL container on port 5433 with mock data.
 cp config.example.json test_config.json
 # Edit test_config.json: set port to "5433"
 
-go build -o zwfm-aeronapi .
-./zwfm-aeronapi -config=test_config.json -port=8080
+go build -o zwfm-aerontoolbox .
+./zwfm-aerontoolbox -config=test_config.json -port=8080
 ```
 
 ## Test Data

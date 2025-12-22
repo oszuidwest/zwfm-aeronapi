@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/oszuidwest/zwfm-aeronapi/internal/service"
+	"github.com/oszuidwest/zwfm-aerontoolbox/internal/service"
 )
 
 // VacuumRequest represents the JSON request body for vacuum operations.

@@ -22,9 +22,9 @@ import (
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
 
-	"github.com/oszuidwest/zwfm-aeronapi/internal/api"
-	"github.com/oszuidwest/zwfm-aeronapi/internal/config"
-	"github.com/oszuidwest/zwfm-aeronapi/internal/service"
+	"github.com/oszuidwest/zwfm-aerontoolbox/internal/api"
+	"github.com/oszuidwest/zwfm-aerontoolbox/internal/config"
+	"github.com/oszuidwest/zwfm-aerontoolbox/internal/service"
 )
 
 func main() {

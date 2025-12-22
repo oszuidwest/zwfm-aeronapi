@@ -73,8 +73,8 @@ jobs:
       # ==========================================
       - name: Build application
         run: |
-          go build -ldflags="-X main.Version=test -X main.Commit=${{ github.sha }} -X main.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)" -o zwfm-aeronapi .
-          ./zwfm-aeronapi -version
+          go build -ldflags="-X main.Version=test -X main.Commit=${{ github.sha }} -X main.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)" -o zwfm-aerontoolbox .
+          ./zwfm-aerontoolbox -version
 
       # ==========================================
       # DATABASE SETUP
@@ -223,7 +223,7 @@ jobs:
 
       - name: Start API server
         run: |
-          ./zwfm-aeronapi -config=test_config.json -port=8888 &
+          ./zwfm-aerontoolbox -config=test_config.json -port=8888 &
           echo $! > api.pid
           sleep 3
 
@@ -339,7 +339,7 @@ jobs:
 
       - name: Start API server for artist tests
         run: |
-          ./zwfm-aeronapi -config=test_config.json -port=8888 &
+          ./zwfm-aerontoolbox -config=test_config.json -port=8888 &
           echo $! > api.pid
           sleep 3
 
@@ -480,7 +480,7 @@ jobs:
 
       - name: Start API server for track tests
         run: |
-          ./zwfm-aeronapi -config=test_config.json -port=8888 &
+          ./zwfm-aerontoolbox -config=test_config.json -port=8888 &
           echo $! > api.pid
           sleep 3
 
@@ -599,7 +599,7 @@ jobs:
 
       - name: Start API server for optimization tests
         run: |
-          ./zwfm-aeronapi -config=test_config.json -port=8892 &
+          ./zwfm-aerontoolbox -config=test_config.json -port=8892 &
           echo $! > api_opt.pid
           sleep 3
 
@@ -638,7 +638,7 @@ jobs:
 
       - name: Start API server for concurrent tests
         run: |
-          ./zwfm-aeronapi -config=test_config.json -port=8893 &
+          ./zwfm-aerontoolbox -config=test_config.json -port=8893 &
           echo $! > api_concurrent.pid
           sleep 3
 
@@ -701,7 +701,7 @@ jobs:
 
       - name: Start API server for edge case tests
         run: |
-          ./zwfm-aeronapi -config=test_config.json -port=8894 &
+          ./zwfm-aerontoolbox -config=test_config.json -port=8894 &
           echo $! > api_edge.pid
           sleep 3
 
@@ -825,7 +825,7 @@ jobs:
 
       - name: API Auth Test - Start server with auth
         run: |
-          ./zwfm-aeronapi -config=test_auth_config.json -port=8890 &
+          ./zwfm-aerontoolbox -config=test_auth_config.json -port=8890 &
           echo $! > api_auth.pid
           sleep 3
 
@@ -894,7 +894,7 @@ jobs:
 
       - name: API Auth Test - Start server without auth
         run: |
-          ./zwfm-aeronapi -config=test_no_auth_config.json -port=8891 &
+          ./zwfm-aerontoolbox -config=test_no_auth_config.json -port=8891 &
           echo $! > api_no_auth.pid
           sleep 3
 
@@ -919,7 +919,7 @@ jobs:
 
       - name: Start API server for bulk delete tests
         run: |
-          ./zwfm-aeronapi -config=test_config.json -port=8895 &
+          ./zwfm-aerontoolbox -config=test_config.json -port=8895 &
           echo $! > api_bulk.pid
           sleep 3
 
@@ -952,7 +952,7 @@ jobs:
 
       - name: Start API server for maintenance tests
         run: |
-          ./zwfm-aeronapi -config=test_config.json -port=8896 &
+          ./zwfm-aerontoolbox -config=test_config.json -port=8896 &
           echo $! > api_maint.pid
           sleep 3
 
@@ -1126,7 +1126,7 @@ jobs:
 
       - name: Start API server for backup tests
         run: |
-          ./zwfm-aeronapi -config=test_backup_config.json -port=8897 &
+          ./zwfm-aerontoolbox -config=test_backup_config.json -port=8897 &
           echo $! > api_backup.pid
           sleep 3
 

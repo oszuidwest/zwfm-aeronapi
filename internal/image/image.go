@@ -8,8 +8,8 @@ import (
 	"image/jpeg"
 	"image/png"
 
-	"github.com/oszuidwest/zwfm-aeronapi/internal/types"
-	"github.com/oszuidwest/zwfm-aeronapi/internal/util"
+	"github.com/oszuidwest/zwfm-aerontoolbox/internal/types"
+	"github.com/oszuidwest/zwfm-aerontoolbox/internal/util"
 	"golang.org/x/image/draw"
 )
 

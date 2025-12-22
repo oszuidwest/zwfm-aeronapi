@@ -8,10 +8,10 @@ import (
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/oszuidwest/zwfm-aeronapi/internal/database"
-	"github.com/oszuidwest/zwfm-aeronapi/internal/service"
-	"github.com/oszuidwest/zwfm-aeronapi/internal/types"
-	"github.com/oszuidwest/zwfm-aeronapi/internal/util"
+	"github.com/oszuidwest/zwfm-aerontoolbox/internal/database"
+	"github.com/oszuidwest/zwfm-aerontoolbox/internal/service"
+	"github.com/oszuidwest/zwfm-aerontoolbox/internal/types"
+	"github.com/oszuidwest/zwfm-aerontoolbox/internal/util"
 )
 
 // ImageUploadRequest represents the JSON request body for image upload operations.

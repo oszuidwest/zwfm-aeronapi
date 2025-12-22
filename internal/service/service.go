@@ -11,10 +11,10 @@ import (
 	"os"
 	"strings"
 
-	"github.com/oszuidwest/zwfm-aeronapi/internal/config"
-	"github.com/oszuidwest/zwfm-aeronapi/internal/database"
-	"github.com/oszuidwest/zwfm-aeronapi/internal/image"
-	"github.com/oszuidwest/zwfm-aeronapi/internal/types"
+	"github.com/oszuidwest/zwfm-aerontoolbox/internal/config"
+	"github.com/oszuidwest/zwfm-aerontoolbox/internal/database"
+	"github.com/oszuidwest/zwfm-aerontoolbox/internal/image"
+	"github.com/oszuidwest/zwfm-aerontoolbox/internal/types"
 )
 
 // DB defines the database interface required by the service layer.

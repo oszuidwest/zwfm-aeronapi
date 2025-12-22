@@ -15,7 +15,7 @@ on:
       - 'v*'
 env:
   GO_VERSION: '1.25'  # Also update in test.yml and comprehensive-test.yml
-  APP_NAME: 'zwfm-aeronapi'
+  APP_NAME: 'zwfm-aerontoolbox'
 jobs:
   # Run comprehensive tests first
   comprehensive-test:
