@@ -92,27 +92,7 @@ func NewNoImageError(entity, id string) *NoImageError {
 	return &NoImageError{Entity: entity, ID: id}
 }
 
-// NewValidationError creates a new ValidationError
+// NewValidationError creates a new ValidationError.
 func NewValidationError(field, message string) *ValidationError {
 	return &ValidationError{Field: field, Message: message}
-}
-
-// NewImageProcessingError creates a new ImageProcessingError
-func NewImageProcessingError(message string) *ImageProcessingError {
-	return &ImageProcessingError{Message: message}
-}
-
-// NewDatabaseError creates a new DatabaseError
-func NewDatabaseError(operation string, err error) *DatabaseError {
-	return &DatabaseError{Operation: operation, Err: err}
-}
-
-// NewConfigurationError creates a new ConfigurationError
-func NewConfigurationError(field, message string) *ConfigurationError {
-	return &ConfigurationError{Field: field, Message: message}
-}
-
-// NewBackupError creates a new BackupError
-func NewBackupError(operation string, err error) *BackupError {
-	return &BackupError{Operation: operation, Err: err}
 }
