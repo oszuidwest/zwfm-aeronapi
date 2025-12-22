@@ -4,6 +4,7 @@ package config
 import (
 	"cmp"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"time"
@@ -12,72 +13,66 @@ import (
 )
 
 // DatabaseConfig contains PostgreSQL database connection parameters.
-// All fields are required for establishing a connection to the Aeron database.
 type DatabaseConfig struct {
-	Host                   string `json:"host"`                      // Database host address
-	Port                   string `json:"port"`                      // Database port number
-	Name                   string `json:"name"`                      // Database name
-	User                   string `json:"user"`                      // Database username
-	Password               string `json:"password"`                  // Database password
-	Schema                 string `json:"schema"`                    // Database schema name (typically "aeron")
-	SSLMode                string `json:"sslmode"`                   // SSL connection mode
-	MaxOpenConns           int    `json:"max_open_conns"`            // Maximum number of open connections (default: 25)
-	MaxIdleConns           int    `json:"max_idle_conns"`            // Maximum number of idle connections (default: 5)
-	ConnMaxLifetimeMinutes int    `json:"conn_max_lifetime_minutes"` // Connection max lifetime in minutes (default: 5)
+	Host                   string `json:"host"`
+	Port                   string `json:"port"`
+	Name                   string `json:"name"`
+	User                   string `json:"user"`
+	Password               string `json:"password"`
+	Schema                 string `json:"schema"`
+	SSLMode                string `json:"sslmode"`
+	MaxOpenConns           int    `json:"max_open_conns"`
+	MaxIdleConns           int    `json:"max_idle_conns"`
+	ConnMaxLifetimeMinutes int    `json:"conn_max_lifetime_minutes"`
 }
 
 // ImageConfig contains image processing and optimization settings.
-// It defines how uploaded images should be resized and compressed.
 type ImageConfig struct {
-	TargetWidth               int   `json:"target_width"`                  // Target width for image resizing
-	TargetHeight              int   `json:"target_height"`                 // Target height for image resizing
-	Quality                   int   `json:"quality"`                       // JPEG quality (1-100)
-	RejectSmaller             bool  `json:"reject_smaller"`                // Whether to reject images smaller than target dimensions
-	MaxImageDownloadSizeBytes int64 `json:"max_image_download_size_bytes"` // Maximum download size in bytes (default: 50MB)
+	TargetWidth               int   `json:"target_width"`
+	TargetHeight              int   `json:"target_height"`
+	Quality                   int   `json:"quality"`
+	RejectSmaller             bool  `json:"reject_smaller"`
+	MaxImageDownloadSizeBytes int64 `json:"max_image_download_size_bytes"`
 }
 
 // APIConfig contains API authentication and server settings.
-// When enabled, all API endpoints require a valid API key in the X-API-Key header.
 type APIConfig struct {
-	Enabled               bool     `json:"enabled"`                 // Whether API key authentication is enabled
-	Keys                  []string `json:"keys"`                    // List of valid API keys
-	RequestTimeoutSeconds int      `json:"request_timeout_seconds"` // Request timeout in seconds (default: 30)
+	Enabled               bool     `json:"enabled"`
+	Keys                  []string `json:"keys"`
+	RequestTimeoutSeconds int      `json:"request_timeout_seconds"`
 }
 
 // MaintenanceConfig contains thresholds for database maintenance recommendations.
 type MaintenanceConfig struct {
-	BloatThreshold     float64 `json:"bloat_threshold"`      // Bloat percentage threshold for vacuum recommendation (default: 10.0)
-	DeadTupleThreshold int64   `json:"dead_tuple_threshold"` // Dead tuple count threshold for vacuum recommendation (default: 10000)
+	BloatThreshold     float64 `json:"bloat_threshold"`
+	DeadTupleThreshold int64   `json:"dead_tuple_threshold"`
 }
 
 // BackupConfig contains settings for database backup functionality.
 type BackupConfig struct {
-	Enabled            bool   `json:"enabled"`             // Whether backup endpoints are enabled
-	Path               string `json:"path"`                // Directory for storing backups
-	RetentionDays      int    `json:"retention_days"`      // Auto-delete backups older than this (default: 30)
-	MaxBackups         int    `json:"max_backups"`         // Maximum number of backups to keep (default: 10)
-	DefaultFormat      string `json:"default_format"`      // Default backup format: "custom" or "plain" (default: "custom")
-	DefaultCompression int    `json:"default_compression"` // Default compression level 0-9 (default: 9)
+	Enabled            bool   `json:"enabled"`
+	Path               string `json:"path"`
+	RetentionDays      int    `json:"retention_days"`
+	MaxBackups         int    `json:"max_backups"`
+	DefaultFormat      string `json:"default_format"`
+	DefaultCompression int    `json:"default_compression"`
 }
 
 // Config represents the complete application configuration loaded from JSON.
-// It contains all settings needed for database connectivity, image processing, and API authentication.
-// The zero value is not usable; all fields must be properly configured.
 type Config struct {
-	Database    DatabaseConfig    `json:"database"`    // Database connection settings
-	Image       ImageConfig       `json:"image"`       // Image processing settings
-	API         APIConfig         `json:"api"`         // API authentication settings
-	Maintenance MaintenanceConfig `json:"maintenance"` // Maintenance thresholds
-	Backup      BackupConfig      `json:"backup"`      // Backup settings
+	Database    DatabaseConfig    `json:"database"`
+	Image       ImageConfig       `json:"image"`
+	API         APIConfig         `json:"api"`
+	Maintenance MaintenanceConfig `json:"maintenance"`
+	Backup      BackupConfig      `json:"backup"`
 }
 
-// Default configuration values
 const (
 	DefaultMaxOpenConnections        = 25
 	DefaultMaxIdleConnections        = 5
-	DefaultConnMaxLifetimeMinutes    = 5                // minutes
-	DefaultMaxImageDownloadSizeBytes = 50 * 1024 * 1024 // 50MB
-	DefaultRequestTimeoutSeconds     = 30               // seconds
+	DefaultConnMaxLifetimeMinutes    = 5
+	DefaultMaxImageDownloadSizeBytes = 50 * 1024 * 1024
+	DefaultRequestTimeoutSeconds     = 30
 	DefaultBloatThreshold            = 10.0
 	DefaultDeadTupleThreshold        = 10000
 	DefaultBackupRetentionDays       = 30
@@ -87,7 +82,7 @@ const (
 	DefaultBackupPath                = "./backups"
 )
 
-// GetMaxDownloadBytes returns the maximum download size, using default if not configured.
+// GetMaxDownloadBytes returns the maximum download size.
 func (c *ImageConfig) GetMaxDownloadBytes() int64 {
 	return cmp.Or(c.MaxImageDownloadSizeBytes, DefaultMaxImageDownloadSizeBytes)
 }
@@ -97,12 +92,12 @@ func (c *APIConfig) GetRequestTimeout() time.Duration {
 	return time.Duration(cmp.Or(c.RequestTimeoutSeconds, DefaultRequestTimeoutSeconds)) * time.Second
 }
 
-// GetMaxOpenConns returns the max open connections, using default if not configured.
+// GetMaxOpenConns returns the max open connections.
 func (c *DatabaseConfig) GetMaxOpenConns() int {
 	return cmp.Or(c.MaxOpenConns, DefaultMaxOpenConnections)
 }
 
-// GetMaxIdleConns returns the max idle connections, using default if not configured.
+// GetMaxIdleConns returns the max idle connections.
 func (c *DatabaseConfig) GetMaxIdleConns() int {
 	return cmp.Or(c.MaxIdleConns, DefaultMaxIdleConnections)
 }
@@ -112,44 +107,42 @@ func (c *DatabaseConfig) GetConnMaxLifetime() time.Duration {
 	return time.Duration(cmp.Or(c.ConnMaxLifetimeMinutes, DefaultConnMaxLifetimeMinutes)) * time.Minute
 }
 
-// GetBloatThreshold returns the bloat percentage threshold for vacuum recommendations.
+// GetBloatThreshold returns the bloat percentage threshold.
 func (c *MaintenanceConfig) GetBloatThreshold() float64 {
 	return cmp.Or(c.BloatThreshold, DefaultBloatThreshold)
 }
 
-// GetDeadTupleThreshold returns the dead tuple count threshold for vacuum recommendations.
+// GetDeadTupleThreshold returns the dead tuple count threshold.
 func (c *MaintenanceConfig) GetDeadTupleThreshold() int64 {
 	return cmp.Or(c.DeadTupleThreshold, DefaultDeadTupleThreshold)
 }
 
-// GetPath returns the backup path, using default if not configured.
+// GetPath returns the backup path.
 func (c *BackupConfig) GetPath() string {
 	return cmp.Or(c.Path, DefaultBackupPath)
 }
 
-// GetRetentionDays returns the backup retention period in days.
+// GetRetentionDays returns the backup retention period.
 func (c *BackupConfig) GetRetentionDays() int {
 	return cmp.Or(c.RetentionDays, DefaultBackupRetentionDays)
 }
 
-// GetMaxBackups returns the maximum number of backups to keep.
+// GetMaxBackups returns the maximum number of backups.
 func (c *BackupConfig) GetMaxBackups() int {
 	return cmp.Or(c.MaxBackups, DefaultBackupMaxBackups)
 }
 
-// GetDefaultFormat returns the default backup format ("custom" or "plain").
+// GetDefaultFormat returns the default backup format.
 func (c *BackupConfig) GetDefaultFormat() string {
 	return cmp.Or(c.DefaultFormat, DefaultBackupFormat)
 }
 
-// GetDefaultCompression returns the default compression level (0-9).
+// GetDefaultCompression returns the default compression level.
 func (c *BackupConfig) GetDefaultCompression() int {
 	return min(cmp.Or(c.DefaultCompression, DefaultBackupCompression), 9)
 }
 
 // Load loads and validates application configuration from a JSON file.
-// If configPath is empty, it attempts to load "config.json" from the current directory.
-// Returns an error if the file cannot be read or contains invalid configuration.
 func Load(configPath string) (*Config, error) {
 	config := &Config{}
 
@@ -177,55 +170,43 @@ func Load(configPath string) (*Config, error) {
 	return config, nil
 }
 
-// validate ensures that all required configuration fields are present and valid.
-// It checks database connection parameters, image settings, and returns an error
-// listing any missing or invalid configuration values.
 func validate(config *Config) error {
-	var missing []string
+	var errs []error
 
-	// Database validation
-	if config.Database.Host == "" {
-		missing = append(missing, "database.host")
-	}
-	if config.Database.Port == "" {
-		missing = append(missing, "database.port")
-	}
-	if config.Database.Name == "" {
-		missing = append(missing, "database.name")
-	}
-	if config.Database.User == "" {
-		missing = append(missing, "database.user")
-	}
-	if config.Database.Password == "" {
-		missing = append(missing, "database.password")
-	}
-	if config.Database.Schema == "" {
-		missing = append(missing, "database.schema")
-	}
-	if config.Database.SSLMode == "" {
-		missing = append(missing, "database.sslmode")
+	requiredStrings := []struct {
+		value string
+		field string
+	}{
+		{config.Database.Host, "database.host"},
+		{config.Database.Port, "database.port"},
+		{config.Database.Name, "database.name"},
+		{config.Database.User, "database.user"},
+		{config.Database.Password, "database.password"},
+		{config.Database.Schema, "database.schema"},
+		{config.Database.SSLMode, "database.sslmode"},
 	}
 
-	// Validate schema name for SQL safety
+	for _, req := range requiredStrings {
+		if req.value == "" {
+			errs = append(errs, fmt.Errorf("%s is verplicht", req.field))
+		}
+	}
+
 	if config.Database.Schema != "" && !types.IsValidIdentifier(config.Database.Schema) {
-		return fmt.Errorf("database.schema bevat ongeldige tekens")
+		errs = append(errs, fmt.Errorf("database.schema bevat ongeldige tekens"))
 	}
 
-	// Image validation
 	if config.Image.TargetWidth <= 0 {
-		missing = append(missing, "image.target_width")
+		errs = append(errs, fmt.Errorf("image.target_width is verplicht"))
 	}
 	if config.Image.TargetHeight <= 0 {
-		missing = append(missing, "image.target_height")
+		errs = append(errs, fmt.Errorf("image.target_height is verplicht"))
 	}
 	if config.Image.Quality <= 0 || config.Image.Quality > 100 {
-		missing = append(missing, "image.quality (1-100)")
+		errs = append(errs, fmt.Errorf("image.quality moet tussen 1-100 zijn"))
 	}
 
-	if len(missing) > 0 {
-		return fmt.Errorf("configuratie mist de volgende velden: %v", missing)
-	}
-	return nil
+	return errors.Join(errs...)
 }
 
 // ConnectionString returns a PostgreSQL connection string.

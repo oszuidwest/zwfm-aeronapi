@@ -13,7 +13,7 @@ import (
 	"golang.org/x/image/draw"
 )
 
-// Config contains settings for image processing operations.
+// Config contains image processing settings.
 type Config struct {
 	TargetWidth   int
 	TargetHeight  int
@@ -21,38 +21,32 @@ type Config struct {
 	RejectSmaller bool
 }
 
-// ProcessingResult contains the complete results of image processing operations.
-// It includes both the processed image data and detailed statistics about the optimization.
+// ProcessingResult contains the results of image processing operations.
 type ProcessingResult struct {
-	Data      []byte  // The processed image data as bytes
-	Format    string  // The output format (typically "jpeg")
-	Encoder   string  // Description of which encoder was used
-	Original  Info    // Information about the original image
-	Optimized Info    // Information about the processed image
-	Savings   float64 // Percentage of size reduction achieved
+	Data      []byte
+	Format    string
+	Encoder   string
+	Original  Info
+	Optimized Info
+	Savings   float64
 }
 
-// Info contains metadata about an image including dimensions and file size.
-// It is used to track image properties before and after processing.
+// Info contains image metadata.
 type Info struct {
-	Format string // Image format (e.g., "jpeg", "png")
-	Width  int    // Image width in pixels
-	Height int    // Image height in pixels
-	Size   int    // File size in bytes
+	Format string
+	Width  int
+	Height int
+	Size   int
 }
 
-// Optimizer handles image optimization operations using configurable settings.
-// It provides methods to resize, compress, and optimize images for storage efficiency.
+// Optimizer handles image optimization operations.
 type Optimizer struct {
-	Config Config // Configuration settings for optimization
+	Config Config
 }
 
 // NewOptimizer creates a new Optimizer with the specified configuration.
-// The optimizer will use the provided settings for all image processing operations.
 func NewOptimizer(config Config) *Optimizer {
-	return &Optimizer{
-		Config: config,
-	}
+	return &Optimizer{Config: config}
 }
 
 // DownloadImage downloads an image from a URL with SSRF protection.
@@ -69,7 +63,6 @@ func getImageInfo(data []byte) (format string, width, height int, err error) {
 }
 
 // OptimizeImage processes and optimizes image data according to the configured settings.
-// It returns the optimized image data, format, encoder description, and any error encountered.
 func (o *Optimizer) OptimizeImage(data []byte) ([]byte, string, string, error) {
 	_, format, err := image.DecodeConfig(bytes.NewReader(data))
 	if err != nil {
@@ -105,7 +98,6 @@ func (o *Optimizer) convertPNGToJPEG(data []byte) ([]byte, string, string, error
 }
 
 func (o *Optimizer) processImage(sourceImage image.Image, originalData []byte, outputFormat string) ([]byte, string, string, error) {
-	// Resize if image exceeds target dimensions to reduce memory usage
 	bounds := sourceImage.Bounds()
 	width, height := bounds.Dx(), bounds.Dy()
 
@@ -113,14 +105,12 @@ func (o *Optimizer) processImage(sourceImage image.Image, originalData []byte, o
 		sourceImage = o.resizeImage(sourceImage, o.Config.TargetWidth, o.Config.TargetHeight)
 	}
 
-	// Encode to JPEG
 	var jpegBuffer bytes.Buffer
 	if err := jpeg.Encode(&jpegBuffer, sourceImage, &jpeg.Options{Quality: o.Config.Quality}); err != nil {
 		return nil, "", "", &types.ImageProcessingError{Message: fmt.Sprintf("JPEG encoding mislukt: %v", err)}
 	}
 	optimizedData := jpegBuffer.Bytes()
 
-	// Return optimized data only if it's smaller than original
 	if len(optimizedData) < len(originalData) {
 		return optimizedData, outputFormat, "geoptimaliseerd", nil
 	}
@@ -128,18 +118,14 @@ func (o *Optimizer) processImage(sourceImage image.Image, originalData []byte, o
 	return originalData, outputFormat, "origineel", nil
 }
 
-// resizeImage resizes an image to fit within the specified maximum dimensions while maintaining aspect ratio.
-// It uses high-quality CatmullRom scaling and will not upscale images that are already smaller than the target size.
 func (o *Optimizer) resizeImage(sourceImage image.Image, maxWidth, maxHeight int) image.Image {
 	bounds := sourceImage.Bounds()
 	width, height := bounds.Dx(), bounds.Dy()
 
-	// Calculate scale factor to fit within bounds while maintaining aspect ratio
 	scaleFactorX := float64(maxWidth) / float64(width)
 	scaleFactorY := float64(maxHeight) / float64(height)
 	scale := min(scaleFactorX, scaleFactorY)
 
-	// If image is already smaller, don't upscale
 	if scale >= 1 {
 		return sourceImage
 	}
@@ -147,10 +133,7 @@ func (o *Optimizer) resizeImage(sourceImage image.Image, maxWidth, maxHeight int
 	newWidth := int(float64(width) * scale)
 	newHeight := int(float64(height) * scale)
 
-	// Create destination image
 	dst := image.NewRGBA(image.Rect(0, 0, newWidth, newHeight))
-
-	// Use CatmullRom for high-quality resizing (slower but best quality)
 	draw.CatmullRom.Scale(dst, dst.Bounds(), sourceImage, sourceImage.Bounds(), draw.Over, nil)
 
 	return dst
@@ -163,12 +146,10 @@ func Process(imageData []byte, config Config) (*ProcessingResult, error) {
 		return nil, err
 	}
 
-	// Validate image
 	if err := validateImage(originalInfo, config); err != nil {
 		return nil, err
 	}
 
-	// Skip optimization if already at target size
 	if isAlreadyTargetSize(originalInfo, config) {
 		return createSkippedResult(imageData, originalInfo), nil
 	}
@@ -240,7 +221,6 @@ func optimizeImageData(imageData []byte, originalInfo *Info, config Config) (*Pr
 		}
 	}
 
-	// If the "optimized" version is larger, use the original
 	if len(optimizedData) >= len(imageData) {
 		return &ProcessingResult{
 			Data:      imageData,

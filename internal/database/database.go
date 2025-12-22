@@ -11,73 +11,65 @@ import (
 	_ "github.com/lib/pq"
 )
 
-// DB defines the minimal database interface required for data access operations.
-// This interface follows the Interface Segregation Principle - it only includes
-// the methods needed by this package (query and exec), not health monitoring.
-// The *sqlx.DB type satisfies this interface.
+// DB defines the database interface for data access operations.
 type DB interface {
-	GetContext(ctx context.Context, dest interface{}, query string, args ...interface{}) error
-	SelectContext(ctx context.Context, dest interface{}, query string, args ...interface{}) error
-	ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
+	GetContext(ctx context.Context, dest any, query string, args ...any) error
+	SelectContext(ctx context.Context, dest any, query string, args ...any) error
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 }
 
 // Artist represents a basic artist entity from the database.
-// It contains minimal information used for listing operations.
 type Artist struct {
-	ID         string `db:"artistid"`  // UUID of the artist
-	ArtistName string `db:"artist"`    // Artist name
-	HasImage   bool   `db:"has_image"` // Whether the artist has an associated image
+	ID         string `db:"artistid"`
+	ArtistName string `db:"artist"`
+	HasImage   bool   `db:"has_image"`
 }
 
 // ArtistDetails represents complete artist information from the database.
-// It includes all metadata fields available for an artist entity.
 type ArtistDetails struct {
-	ID          string `db:"artistid" json:"artistid"`         // UUID of the artist
-	ArtistName  string `db:"artist" json:"artist"`             // Artist name
-	Info        string `db:"info" json:"info"`                 // Artist biography or information
-	Website     string `db:"website" json:"website"`           // Artist website URL
-	Twitter     string `db:"twitter" json:"twitter"`           // Twitter handle
-	Instagram   string `db:"instagram" json:"instagram"`       // Instagram handle
-	HasImage    bool   `db:"has_image" json:"has_image"`       // Whether the artist has an associated image
-	RepeatValue int    `db:"repeat_value" json:"repeat_value"` // Repeat restriction value
+	ID          string `db:"artistid" json:"artistid"`
+	ArtistName  string `db:"artist" json:"artist"`
+	Info        string `db:"info" json:"info"`
+	Website     string `db:"website" json:"website"`
+	Twitter     string `db:"twitter" json:"twitter"`
+	Instagram   string `db:"instagram" json:"instagram"`
+	HasImage    bool   `db:"has_image" json:"has_image"`
+	RepeatValue int    `db:"repeat_value" json:"repeat_value"`
 }
 
 // Track represents a basic track entity from the database.
-// It contains minimal information used for listing operations.
 type Track struct {
-	ID         string `db:"titleid"`    // UUID of the track
-	TrackTitle string `db:"tracktitle"` // Track title
-	Artist     string `db:"artist"`     // Artist name
-	HasImage   bool   `db:"has_image"`  // Whether the track has an associated image
+	ID         string `db:"titleid"`
+	TrackTitle string `db:"tracktitle"`
+	Artist     string `db:"artist"`
+	HasImage   bool   `db:"has_image"`
 }
 
 // TrackDetails represents complete track information from the database.
-// It includes all metadata fields available for a track entity.
 type TrackDetails struct {
-	ID            string `db:"titleid" json:"titleid"`           // UUID of the track
-	TrackTitle    string `db:"tracktitle" json:"tracktitle"`     // Track title
-	Artist        string `db:"artist" json:"artist"`             // Artist name
-	ArtistID      string `db:"artistid" json:"artistid"`         // UUID of the associated artist
-	Year          int    `db:"year" json:"year"`                 // Release year
-	KnownLengthMs int    `db:"knownlength" json:"knownlength"`   // Track length in milliseconds
-	IntroTimeMs   int    `db:"introtime" json:"introtime"`       // Intro length in milliseconds
-	OutroTimeMs   int    `db:"outrotime" json:"outrotime"`       // Outro length in milliseconds
-	Tempo         int    `db:"tempo" json:"tempo"`               // Tempo classification (values defined in Aeron system)
-	BPM           int    `db:"bpm" json:"bpm"`                   // Beats per minute
-	Gender        int    `db:"gender" json:"gender"`             // Vocalist gender classification
-	Language      int    `db:"language" json:"language"`         // Language classification
-	Mood          int    `db:"mood" json:"mood"`                 // Mood classification
-	ExportType    int    `db:"exporttype" json:"exporttype"`     // Export type (2 = excluded from operations)
-	RepeatValue   int    `db:"repeat_value" json:"repeat_value"` // Repeat restriction value
-	Rating        int    `db:"rating" json:"rating"`             // Track rating
-	HasImage      bool   `db:"has_image" json:"has_image"`       // Whether the track has an associated image
-	Website       string `db:"website" json:"website"`           // Related website URL
-	Conductor     string `db:"conductor" json:"conductor"`       // Conductor name (for classical music)
-	Orchestra     string `db:"orchestra" json:"orchestra"`       // Orchestra name (for classical music)
+	ID            string `db:"titleid" json:"titleid"`
+	TrackTitle    string `db:"tracktitle" json:"tracktitle"`
+	Artist        string `db:"artist" json:"artist"`
+	ArtistID      string `db:"artistid" json:"artistid"`
+	Year          int    `db:"year" json:"year"`
+	KnownLengthMs int    `db:"knownlength" json:"knownlength"`
+	IntroTimeMs   int    `db:"introtime" json:"introtime"`
+	OutroTimeMs   int    `db:"outrotime" json:"outrotime"`
+	Tempo         int    `db:"tempo" json:"tempo"`
+	BPM           int    `db:"bpm" json:"bpm"`
+	Gender        int    `db:"gender" json:"gender"`
+	Language      int    `db:"language" json:"language"`
+	Mood          int    `db:"mood" json:"mood"`
+	ExportType    int    `db:"exporttype" json:"exporttype"`
+	RepeatValue   int    `db:"repeat_value" json:"repeat_value"`
+	Rating        int    `db:"rating" json:"rating"`
+	HasImage      bool   `db:"has_image" json:"has_image"`
+	Website       string `db:"website" json:"website"`
+	Conductor     string `db:"conductor" json:"conductor"`
+	Orchestra     string `db:"orchestra" json:"orchestra"`
 }
 
-// CountItems counts entities in the specified table based on image presence.
-// It returns the number of entities that either have or don't have images.
+// CountItems counts entities by image presence in the specified table.
 func CountItems(ctx context.Context, db DB, schema string, table types.Table, hasImage bool) (int, error) {
 	condition := "IS NULL"
 	if hasImage {
@@ -99,8 +91,7 @@ func CountItems(ctx context.Context, db DB, schema string, table types.Table, ha
 	return count, nil
 }
 
-// UpdateEntityImage updates the image data for either an artist or track entity.
-// The table parameter determines whether to update the artist or track table.
+// UpdateEntityImage updates the image for an artist or track entity.
 func UpdateEntityImage(ctx context.Context, db DB, schema string, table types.Table, id string, imageData []byte) error {
 	qualifiedTableName, err := types.QualifiedTable(schema, table)
 	if err != nil {
@@ -118,8 +109,7 @@ func UpdateEntityImage(ctx context.Context, db DB, schema string, table types.Ta
 	return nil
 }
 
-// DeleteEntityImage removes the image data for either an artist or track entity.
-// It sets the picture column to NULL and returns an error if the entity doesn't exist.
+// DeleteEntityImage removes the image for an artist or track entity.
 func DeleteEntityImage(ctx context.Context, db DB, schema string, table types.Table, id string) error {
 	qualifiedTableName, err := types.QualifiedTable(schema, table)
 	if err != nil {
@@ -160,27 +150,6 @@ const artistDetailsQuery = `
 	FROM %s.artist
 	WHERE artistid = $1`
 
-// GetArtistByID retrieves complete artist details by UUID.
-// It returns an error if the artist doesn't exist in the database.
-func GetArtistByID(ctx context.Context, db DB, schema, artistID string) (*ArtistDetails, error) {
-	query := fmt.Sprintf(artistDetailsQuery, schema)
-
-	var artist ArtistDetails
-	err := db.GetContext(ctx, &artist, query, artistID)
-
-	if err == sql.ErrNoRows {
-		return nil, types.NewNotFoundError("artiest", artistID)
-	}
-	if err != nil {
-		return nil, &types.DatabaseError{Operation: "ophalen artiest", Err: err}
-	}
-
-	return &artist, nil
-}
-
-// trackDetailsQuery retrieves all track metadata from the Aeron database.
-// Note: "Year" and "Language" columns require quotes because they are case-sensitive
-// identifiers in the Aeron PostgreSQL schema (mixed-case column names).
 const trackDetailsQuery = `
 	SELECT
 		titleid,
@@ -206,26 +175,29 @@ const trackDetailsQuery = `
 	FROM %s.track
 	WHERE titleid = $1`
 
-// GetTrackByID retrieves complete track details by UUID.
-// It returns an error if the track doesn't exist in the database.
-func GetTrackByID(ctx context.Context, db DB, schema, trackID string) (*TrackDetails, error) {
-	query := fmt.Sprintf(trackDetailsQuery, schema)
-
-	var track TrackDetails
-	err := db.GetContext(ctx, &track, query, trackID)
-
-	if err == sql.ErrNoRows {
-		return nil, types.NewNotFoundError("track", trackID)
+func getEntityByID[T any](ctx context.Context, db DB, query, id, label, operation string) (*T, error) {
+	var entity T
+	if err := db.GetContext(ctx, &entity, query, id); err == sql.ErrNoRows {
+		return nil, types.NewNotFoundError(label, id)
+	} else if err != nil {
+		return nil, &types.DatabaseError{Operation: operation, Err: err}
 	}
-	if err != nil {
-		return nil, &types.DatabaseError{Operation: "ophalen track", Err: err}
-	}
-
-	return &track, nil
+	return &entity, nil
 }
 
-// GetEntityImage retrieves the image data for either an artist or track entity.
-// It returns the raw image bytes or an error if the entity doesn't exist or has no image.
+// GetArtistByID retrieves complete artist details by UUID.
+func GetArtistByID(ctx context.Context, db DB, schema, artistID string) (*ArtistDetails, error) {
+	query := fmt.Sprintf(artistDetailsQuery, schema)
+	return getEntityByID[ArtistDetails](ctx, db, query, artistID, "artiest", "ophalen artiest")
+}
+
+// GetTrackByID retrieves complete track details by UUID.
+func GetTrackByID(ctx context.Context, db DB, schema, trackID string) (*TrackDetails, error) {
+	query := fmt.Sprintf(trackDetailsQuery, schema)
+	return getEntityByID[TrackDetails](ctx, db, query, trackID, "track", "ophalen track")
+}
+
+// GetEntityImage retrieves the image for an artist or track entity.
 func GetEntityImage(ctx context.Context, db DB, schema string, table types.Table, id string) ([]byte, error) {
 	qualifiedTableName, err := types.QualifiedTable(schema, table)
 	if err != nil {

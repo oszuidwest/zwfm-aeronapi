@@ -1,10 +1,8 @@
-// Package util provides utility functions for input validation and HTTP operations.
 package util
 
 import "fmt"
 
-// FormatBytes converts bytes to a human-readable string.
-// It formats the value using binary prefixes (1024-based) with appropriate units.
+// FormatBytes converts bytes to a human-readable string with binary prefixes.
 func FormatBytes(bytes int64) string {
 	const (
 		KB = 1024

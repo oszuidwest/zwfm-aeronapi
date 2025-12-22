@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/oszuidwest/zwfm-aeronapi/internal/service"
@@ -96,7 +97,7 @@ func (s *Server) handleDownloadBackupFile(w http.ResponseWriter, r *http.Request
 
 	// Determine content type
 	w.Header().Del("Content-Type")
-	if len(filename) > 5 && filename[len(filename)-5:] == ".dump" {
+	if strings.HasSuffix(filename, ".dump") {
 		w.Header().Set("Content-Type", "application/octet-stream")
 	} else {
 		w.Header().Set("Content-Type", "application/sql")
