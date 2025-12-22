@@ -285,6 +285,7 @@ jobs:
           cat > test_no_auth.json << 'EOF'
           {
             "database": { "host": "localhost", "port": "5433", "name": "aeron_db", "user": "aeron", "password": "aeron123", "schema": "aeron", "sslmode": "disable" },
+            "image": { "target_width": 1280, "target_height": 1280, "quality": 90 },
             "api": { "enabled": false, "keys": [] }
           }
           EOF
@@ -371,12 +372,14 @@ jobs:
           RESPONSE=$(curl -sf -H "X-API-Key: ${{ env.API_KEY }}" http://localhost:${{ env.API_PORT }}/api/tracks)
           TOTAL=$(echo "$RESPONSE" | jq '.data.total')
           [ "$TOTAL" -eq 1100 ]
+          # Save TRACK_ID for subsequent tests
+          TRACK_ID=$(docker exec aeron-test-db psql -U aeron -d aeron_db -t -c "SELECT titleid FROM aeron.track LIMIT 1;" | tr -d ' ')
+          echo "TRACK_ID=$TRACK_ID" >> $GITHUB_ENV
 
       - name: "Track: Get single track"
         if: matrix.suite == 'tracks'
         run: |
-          TRACK_ID=$(docker exec aeron-test-db psql -U aeron -d aeron_db -t -c "SELECT titleid FROM aeron.track LIMIT 1;" | tr -d ' ')
-          RESPONSE=$(curl -sf -H "X-API-Key: ${{ env.API_KEY }}" "http://localhost:${{ env.API_PORT }}/api/tracks/$TRACK_ID")
+          RESPONSE=$(curl -sf -H "X-API-Key: ${{ env.API_KEY }}" "http://localhost:${{ env.API_PORT }}/api/tracks/${{ env.TRACK_ID }}")
           echo "$RESPONSE" | jq -e '.success == true and .data.titleid != null' > /dev/null
 
       - name: "Track: Non-existent returns 404"
@@ -389,10 +392,9 @@ jobs:
       - name: "Track: Upload image"
         if: matrix.suite == 'tracks'
         run: |
-          TRACK_ID=$(docker exec aeron-test-db psql -U aeron -d aeron_db -t -c "SELECT titleid FROM aeron.track LIMIT 1;" | tr -d ' ')
           BASE64_IMAGE=$(base64 -w 0 < test_large.png)
           RESPONSE=$(curl -sf -X POST -H "X-API-Key: ${{ env.API_KEY }}" \
-            "http://localhost:${{ env.API_PORT }}/api/tracks/$TRACK_ID/image" \
+            "http://localhost:${{ env.API_PORT }}/api/tracks/${{ env.TRACK_ID }}/image" \
             -H 'Content-Type: application/json' \
             -d "{\"image\":\"data:image/png;base64,$BASE64_IMAGE\"}")
           echo "$RESPONSE" | jq -e '.success == true' > /dev/null
@@ -400,17 +402,15 @@ jobs:
       - name: "Track: Get image"
         if: matrix.suite == 'tracks'
         run: |
-          TRACK_ID=$(docker exec aeron-test-db psql -U aeron -d aeron_db -t -c "SELECT titleid FROM aeron.track LIMIT 1;" | tr -d ' ')
           HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -H "X-API-Key: ${{ env.API_KEY }}" \
-            "http://localhost:${{ env.API_PORT }}/api/tracks/$TRACK_ID/image")
+            "http://localhost:${{ env.API_PORT }}/api/tracks/${{ env.TRACK_ID }}/image")
           [ "$HTTP_CODE" = "200" ]
 
       - name: "Track: Delete image"
         if: matrix.suite == 'tracks'
         run: |
-          TRACK_ID=$(docker exec aeron-test-db psql -U aeron -d aeron_db -t -c "SELECT titleid FROM aeron.track LIMIT 1;" | tr -d ' ')
           RESPONSE=$(curl -sf -X DELETE -H "X-API-Key: ${{ env.API_KEY }}" \
-            "http://localhost:${{ env.API_PORT }}/api/tracks/$TRACK_ID/image")
+            "http://localhost:${{ env.API_PORT }}/api/tracks/${{ env.TRACK_ID }}/image")
           echo "$RESPONSE" | jq -e '.success == true' > /dev/null
 
       # ==================== MAINTENANCE TESTS ====================
