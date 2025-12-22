@@ -74,6 +74,11 @@ func (s *AeronAPI) Start(port string) error {
 
 			// Playlist
 			r.Get("/playlist", s.handlePlaylist)
+
+			// Database maintenance
+			r.Route("/db", func(r chi.Router) {
+				r.Get("/health", s.handleDatabaseHealth)
+			})
 		})
 	})
 
@@ -349,6 +354,16 @@ func (s *AeronAPI) handleDeleteImage(scope string) http.HandlerFunc {
 			idField:   entityID,
 		})
 	}
+}
+
+func (s *AeronAPI) handleDatabaseHealth(w http.ResponseWriter, r *http.Request) {
+	health, err := s.service.GetDatabaseHealth()
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	respondJSON(w, http.StatusOK, health)
 }
 
 func (s *AeronAPI) handlePlaylist(w http.ResponseWriter, r *http.Request) {
