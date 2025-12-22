@@ -99,18 +99,10 @@ func (s *AeronService) GetDatabaseHealth(ctx context.Context) (*DatabaseHealth, 
 // getDatabaseSize returns the total database size.
 func getDatabaseSize(ctx context.Context, db DB) (string, int64, error) {
 	var sizeRaw int64
-	err := db.GetContext(ctx, &sizeRaw, "SELECT pg_database_size(current_database())")
-	if err != nil {
+	if err := db.GetContext(ctx, &sizeRaw, "SELECT pg_database_size(current_database())"); err != nil {
 		return "", 0, err
 	}
-
-	var sizePretty string
-	err = db.GetContext(ctx, &sizePretty, "SELECT pg_size_pretty(pg_database_size(current_database()))")
-	if err != nil {
-		return "", 0, err
-	}
-
-	return sizePretty, sizeRaw, nil
+	return util.FormatBytes(sizeRaw), sizeRaw, nil
 }
 
 // getTableHealth retrieves health statistics for all tables in the schema using a single combined query.
