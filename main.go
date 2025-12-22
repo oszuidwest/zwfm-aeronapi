@@ -74,6 +74,18 @@ func run() error {
 		slog.Error("Service initialisatie mislukt", "error", err)
 		return err
 	}
+
+	// Create and start backup scheduler if enabled
+	var scheduler *service.BackupScheduler
+	if cfg.Backup.Enabled && cfg.Backup.Scheduler.Enabled {
+		scheduler, err = service.NewBackupScheduler(svc)
+		if err != nil {
+			slog.Error("Backup scheduler initialisatie mislukt", "error", err)
+			return err
+		}
+		scheduler.Start()
+	}
+
 	api.Version = Version
 	apiServer := api.New(svc, cfg)
 
@@ -99,7 +111,18 @@ func run() error {
 		return err
 	}
 
-	// Graceful shutdown with timeout
+	// Stop scheduler first (before database closes)
+	if scheduler != nil {
+		ctx := scheduler.Stop()
+		select {
+		case <-ctx.Done():
+			slog.Info("Backup scheduler succesvol gestopt")
+		case <-time.After(35 * time.Second):
+			slog.Warn("Backup scheduler stop timeout, forceer afsluiten")
+		}
+	}
+
+	// Graceful shutdown API server
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
