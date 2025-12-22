@@ -40,8 +40,8 @@ type TableHealth struct {
 	IdxScans        int64      `json:"idx_scans"`
 }
 
-// tableStatsRow represents a row from pg_stat_user_tables.
-type tableStatsRow struct {
+// tableHealthRow represents a combined row from pg_stat_user_tables and pg_class.
+type tableHealthRow struct {
 	TableName       string     `db:"table_name"`
 	LiveTuples      int64      `db:"live_tuples"`
 	DeadTuples      int64      `db:"dead_tuples"`
@@ -51,22 +51,17 @@ type tableStatsRow struct {
 	LastAutoanalyze *time.Time `db:"last_autoanalyze"`
 	SeqScan         int64      `db:"seq_scan"`
 	IdxScan         int64      `db:"idx_scan"`
-}
-
-// tableSizeRow represents size information for a table.
-type tableSizeRow struct {
-	TableName string `db:"table_name"`
-	TotalSize int64  `db:"total_size"`
-	TableSize int64  `db:"table_size"`
-	IndexSize int64  `db:"index_size"`
-	ToastSize int64  `db:"toast_size"`
+	TotalSize       int64      `db:"total_size"`
+	TableSize       int64      `db:"table_size"`
+	IndexSize       int64      `db:"index_size"`
+	ToastSize       int64      `db:"toast_size"`
 }
 
 // GetDatabaseHealth retrieves comprehensive database health information.
 func (s *AeronService) GetDatabaseHealth() (*DatabaseHealth, error) {
 	health := &DatabaseHealth{
 		DatabaseName: s.config.Database.Name,
-		SchemaName:   s.config.Database.Schema,
+		SchemaName:   s.schema,
 		CheckedAt:    time.Now(),
 	}
 
@@ -78,15 +73,15 @@ func (s *AeronService) GetDatabaseHealth() (*DatabaseHealth, error) {
 	health.DatabaseSize = dbSize
 	health.DatabaseSizeRaw = dbSizeRaw
 
-	// Get table statistics
-	tables, err := getTableHealth(s.db, s.config.Database.Schema)
+	// Get table statistics (combined query)
+	tables, err := getTableHealth(s.db, s.schema)
 	if err != nil {
 		return nil, fmt.Errorf("ophalen tabel statistieken mislukt: %w", err)
 	}
 	health.Tables = tables
 
-	// Generate recommendations
-	health.Recommendations = generateRecommendations(tables)
+	// Generate recommendations using configurable thresholds
+	health.Recommendations = s.generateRecommendations(tables)
 
 	return health, nil
 }
@@ -108,86 +103,62 @@ func getDatabaseSize(db *sqlx.DB) (string, int64, error) {
 	return sizePretty, sizeRaw, nil
 }
 
-// getTableHealth retrieves health statistics for all tables in the schema.
+// getTableHealth retrieves health statistics for all tables in the schema using a single combined query.
 func getTableHealth(db *sqlx.DB, schema string) ([]TableHealth, error) {
-	// Get table statistics from pg_stat_user_tables
-	statsQuery := `
+	// Combined query that joins pg_stat_user_tables with pg_class for size info
+	query := `
 		SELECT
-			relname as table_name,
-			COALESCE(n_live_tup, 0) as live_tuples,
-			COALESCE(n_dead_tup, 0) as dead_tuples,
-			last_vacuum,
-			last_autovacuum,
-			last_analyze,
-			last_autoanalyze,
-			COALESCE(seq_scan, 0) as seq_scan,
-			COALESCE(idx_scan, 0) as idx_scan
-		FROM pg_stat_user_tables
-		WHERE schemaname = $1
-		ORDER BY n_live_tup DESC
+			s.relname as table_name,
+			COALESCE(s.n_live_tup, 0) as live_tuples,
+			COALESCE(s.n_dead_tup, 0) as dead_tuples,
+			s.last_vacuum,
+			s.last_autovacuum,
+			s.last_analyze,
+			s.last_autoanalyze,
+			COALESCE(s.seq_scan, 0) as seq_scan,
+			COALESCE(s.idx_scan, 0) as idx_scan,
+			COALESCE(pg_total_relation_size(c.oid), 0) as total_size,
+			COALESCE(pg_table_size(c.oid), 0) as table_size,
+			COALESCE(pg_indexes_size(c.oid), 0) as index_size,
+			COALESCE(pg_total_relation_size(c.reltoastrelid), 0) as toast_size
+		FROM pg_stat_user_tables s
+		JOIN pg_class c ON c.relname = s.relname
+		JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = s.schemaname
+		WHERE s.schemaname = $1 AND c.relkind = 'r'
+		ORDER BY s.n_live_tup DESC
 	`
 
-	var stats []tableStatsRow
-	if err := db.Select(&stats, statsQuery, schema); err != nil {
+	var rows []tableHealthRow
+	if err := db.Select(&rows, query, schema); err != nil {
 		return nil, fmt.Errorf("ophalen tabel statistieken mislukt: %w", err)
 	}
 
-	// Get table sizes
-	sizeQuery := `
-		SELECT
-			c.relname as table_name,
-			pg_total_relation_size(c.oid) as total_size,
-			pg_table_size(c.oid) as table_size,
-			pg_indexes_size(c.oid) as index_size,
-			COALESCE(pg_total_relation_size(c.reltoastrelid), 0) as toast_size
-		FROM pg_class c
-		JOIN pg_namespace n ON n.oid = c.relnamespace
-		WHERE n.nspname = $1 AND c.relkind = 'r'
-		ORDER BY pg_total_relation_size(c.oid) DESC
-	`
-
-	var sizes []tableSizeRow
-	if err := db.Select(&sizes, sizeQuery, schema); err != nil {
-		return nil, fmt.Errorf("ophalen tabel groottes mislukt: %w", err)
-	}
-
-	// Create a map for easy lookup
-	sizeMap := make(map[string]tableSizeRow)
-	for _, s := range sizes {
-		sizeMap[s.TableName] = s
-	}
-
-	// Combine stats and sizes
-	tables := make([]TableHealth, 0, len(stats))
-	for _, stat := range stats {
-		size, hasSize := sizeMap[stat.TableName]
-
+	// Convert to TableHealth structs
+	tables := make([]TableHealth, 0, len(rows))
+	for _, row := range rows {
 		table := TableHealth{
-			Name:            stat.TableName,
-			RowCount:        stat.LiveTuples,
-			DeadTuples:      stat.DeadTuples,
-			LastVacuum:      stat.LastVacuum,
-			LastAutovacuum:  stat.LastAutovacuum,
-			LastAnalyze:     stat.LastAnalyze,
-			LastAutoanalyze: stat.LastAutoanalyze,
-			SeqScans:        stat.SeqScan,
-			IdxScans:        stat.IdxScan,
-		}
-
-		if hasSize {
-			table.TotalSizeRaw = size.TotalSize
-			table.TotalSize = formatBytes(size.TotalSize)
-			table.TableSizeRaw = size.TableSize
-			table.TableSize = formatBytes(size.TableSize)
-			table.IndexSizeRaw = size.IndexSize
-			table.IndexSize = formatBytes(size.IndexSize)
-			table.ToastSizeRaw = size.ToastSize
-			table.ToastSize = formatBytes(size.ToastSize)
+			Name:            row.TableName,
+			RowCount:        row.LiveTuples,
+			DeadTuples:      row.DeadTuples,
+			LastVacuum:      row.LastVacuum,
+			LastAutovacuum:  row.LastAutovacuum,
+			LastAnalyze:     row.LastAnalyze,
+			LastAutoanalyze: row.LastAutoanalyze,
+			SeqScans:        row.SeqScan,
+			IdxScans:        row.IdxScan,
+			TotalSizeRaw:    row.TotalSize,
+			TotalSize:       formatBytes(row.TotalSize),
+			TableSizeRaw:    row.TableSize,
+			TableSize:       formatBytes(row.TableSize),
+			IndexSizeRaw:    row.IndexSize,
+			IndexSize:       formatBytes(row.IndexSize),
+			ToastSizeRaw:    row.ToastSize,
+			ToastSize:       formatBytes(row.ToastSize),
 		}
 
 		// Calculate bloat estimate based on dead tuples
-		if stat.LiveTuples > 0 {
-			table.BloatPercent = float64(stat.DeadTuples) / float64(stat.LiveTuples+stat.DeadTuples) * 100
+		if row.LiveTuples > 0 {
+			table.BloatPercent = float64(row.DeadTuples) / float64(row.LiveTuples+row.DeadTuples) * 100
 		}
 
 		tables = append(tables, table)
@@ -197,18 +168,20 @@ func getTableHealth(db *sqlx.DB, schema string) ([]TableHealth, error) {
 }
 
 // generateRecommendations creates actionable recommendations based on table health.
-func generateRecommendations(tables []TableHealth) []string {
+func (s *AeronService) generateRecommendations(tables []TableHealth) []string {
 	var recommendations []string
+	bloatThreshold := s.config.Maintenance.GetBloatThreshold()
+	deadTupleThreshold := s.config.Maintenance.GetDeadTupleThreshold()
 
 	for _, t := range tables {
 		// High bloat warning
-		if t.BloatPercent > 10 {
+		if t.BloatPercent > bloatThreshold {
 			recommendations = append(recommendations,
 				fmt.Sprintf("Tabel '%s' heeft %.1f%% bloat - VACUUM aanbevolen", t.Name, t.BloatPercent))
 		}
 
 		// Many dead tuples
-		if t.DeadTuples > 10000 {
+		if t.DeadTuples > deadTupleThreshold {
 			recommendations = append(recommendations,
 				fmt.Sprintf("Tabel '%s' heeft %d dead tuples - VACUUM aanbevolen", t.Name, t.DeadTuples))
 		}
@@ -307,8 +280,67 @@ type VacuumResponse struct {
 	ExecutedAt    time.Time      `json:"executed_at"`
 }
 
+// maintenanceContext holds shared context for vacuum/analyze operations.
+type maintenanceContext struct {
+	tables   []TableHealth
+	tableMap map[string]TableHealth
+	schema   string
+}
+
+// newMaintenanceContext creates a new maintenance context by fetching table health.
+func (s *AeronService) newMaintenanceContext() (*maintenanceContext, error) {
+	tables, err := getTableHealth(s.db, s.schema)
+	if err != nil {
+		return nil, fmt.Errorf("ophalen tabel statistieken mislukt: %w", err)
+	}
+
+	tableMap := make(map[string]TableHealth, len(tables))
+	for _, t := range tables {
+		tableMap[t.Name] = t
+	}
+
+	return &maintenanceContext{
+		tables:   tables,
+		tableMap: tableMap,
+		schema:   s.schema,
+	}, nil
+}
+
+// resolveTables resolves which tables to process based on user input or auto-selection.
+// Returns tables to process and any skipped table results.
+func (ctx *maintenanceContext) resolveTables(requestedTables []string, autoSelectFn func(TableHealth) bool) ([]TableHealth, []VacuumResult) {
+	var tablesToProcess []TableHealth
+	var skipped []VacuumResult
+
+	if len(requestedTables) > 0 {
+		// User specified specific tables
+		for _, tableName := range requestedTables {
+			if t, exists := ctx.tableMap[tableName]; exists {
+				tablesToProcess = append(tablesToProcess, t)
+			} else {
+				skipped = append(skipped, VacuumResult{
+					Table:         tableName,
+					Success:       false,
+					Message:       fmt.Sprintf("Tabel '%s' niet gevonden in schema '%s'", tableName, ctx.schema),
+					Skipped:       true,
+					SkippedReason: "niet gevonden",
+				})
+			}
+		}
+	} else {
+		// Auto-select tables based on criteria
+		for _, t := range ctx.tables {
+			if autoSelectFn(t) {
+				tablesToProcess = append(tablesToProcess, t)
+			}
+		}
+	}
+
+	return tablesToProcess, skipped
+}
+
 // VacuumTables performs VACUUM on tables in the schema.
-// If no tables are specified, it automatically selects tables with high bloat (>10%) or many dead tuples (>10000).
+// If no tables are specified, it automatically selects tables with high bloat or many dead tuples.
 func (s *AeronService) VacuumTables(opts VacuumOptions) (*VacuumResponse, error) {
 	response := &VacuumResponse{
 		DryRun:     opts.DryRun,
@@ -316,45 +348,23 @@ func (s *AeronService) VacuumTables(opts VacuumOptions) (*VacuumResponse, error)
 		Results:    []VacuumResult{},
 	}
 
-	// Get current table health to determine which tables need vacuum
-	tables, err := getTableHealth(s.db, s.config.Database.Schema)
+	ctx, err := s.newMaintenanceContext()
 	if err != nil {
-		return nil, fmt.Errorf("ophalen tabel statistieken mislukt: %w", err)
+		return nil, err
 	}
 
-	// Determine which tables to vacuum
-	var tablesToVacuum []TableHealth
-	if len(opts.Tables) > 0 {
-		// User specified specific tables
-		tableMap := make(map[string]TableHealth)
-		for _, t := range tables {
-			tableMap[t.Name] = t
-		}
-		for _, tableName := range opts.Tables {
-			if t, exists := tableMap[tableName]; exists {
-				tablesToVacuum = append(tablesToVacuum, t)
-			} else {
-				// Table not found in schema
-				response.Results = append(response.Results, VacuumResult{
-					Table:         tableName,
-					Success:       false,
-					Message:       fmt.Sprintf("Tabel '%s' niet gevonden in schema '%s'", tableName, s.config.Database.Schema),
-					Skipped:       true,
-					SkippedReason: "niet gevonden",
-				})
-				response.TablesSkipped++
-			}
-		}
-	} else {
-		// Auto-select tables with high bloat or many dead tuples
-		for _, t := range tables {
-			if t.BloatPercent > 10 || t.DeadTuples > 10000 {
-				tablesToVacuum = append(tablesToVacuum, t)
-			}
-		}
+	bloatThreshold := s.config.Maintenance.GetBloatThreshold()
+	deadTupleThreshold := s.config.Maintenance.GetDeadTupleThreshold()
+
+	// Auto-select criteria for vacuum
+	autoSelect := func(t TableHealth) bool {
+		return t.BloatPercent > bloatThreshold || t.DeadTuples > deadTupleThreshold
 	}
 
-	response.TablesTotal = len(tablesToVacuum) + response.TablesSkipped
+	tablesToVacuum, skipped := ctx.resolveTables(opts.Tables, autoSelect)
+	response.Results = append(response.Results, skipped...)
+	response.TablesSkipped = len(skipped)
+	response.TablesTotal = len(tablesToVacuum) + len(skipped)
 
 	// Process each table
 	for _, table := range tablesToVacuum {
@@ -374,7 +384,6 @@ func (s *AeronService) VacuumTables(opts VacuumOptions) (*VacuumResponse, error)
 			}
 			response.TablesSuccess++
 		} else {
-			// Execute the vacuum
 			start := time.Now()
 			err := s.executeVacuum(table.Name, opts.Analyze)
 			duration := time.Since(start)
@@ -403,18 +412,15 @@ func (s *AeronService) VacuumTables(opts VacuumOptions) (*VacuumResponse, error)
 
 // executeVacuum runs VACUUM on a single table.
 func (s *AeronService) executeVacuum(tableName string, analyze bool) error {
-	// Validate table name to prevent SQL injection
-	if !isValidTableName(tableName) {
+	if !isValidIdentifier(tableName) {
 		return fmt.Errorf("ongeldige tabelnaam: %s", tableName)
 	}
 
-	// Build the VACUUM command
-	// Note: VACUUM cannot be run inside a transaction, so we use Exec directly
 	var query string
 	if analyze {
-		query = fmt.Sprintf("VACUUM ANALYZE %s.%s", s.config.Database.Schema, tableName)
+		query = fmt.Sprintf("VACUUM ANALYZE %s.%s", s.schema, tableName)
 	} else {
-		query = fmt.Sprintf("VACUUM %s.%s", s.config.Database.Schema, tableName)
+		query = fmt.Sprintf("VACUUM %s.%s", s.schema, tableName)
 	}
 
 	_, err := s.db.Exec(query)
@@ -429,44 +435,20 @@ func (s *AeronService) AnalyzeTables(tableNames []string) (*VacuumResponse, erro
 		Results:    []VacuumResult{},
 	}
 
-	// Get current table health
-	tables, err := getTableHealth(s.db, s.config.Database.Schema)
+	ctx, err := s.newMaintenanceContext()
 	if err != nil {
-		return nil, fmt.Errorf("ophalen tabel statistieken mislukt: %w", err)
+		return nil, err
 	}
 
-	// Determine which tables to analyze
-	var tablesToAnalyze []TableHealth
-	if len(tableNames) > 0 {
-		// User specified specific tables
-		tableMap := make(map[string]TableHealth)
-		for _, t := range tables {
-			tableMap[t.Name] = t
-		}
-		for _, tableName := range tableNames {
-			if t, exists := tableMap[tableName]; exists {
-				tablesToAnalyze = append(tablesToAnalyze, t)
-			} else {
-				response.Results = append(response.Results, VacuumResult{
-					Table:         tableName,
-					Success:       false,
-					Message:       fmt.Sprintf("Tabel '%s' niet gevonden in schema '%s'", tableName, s.config.Database.Schema),
-					Skipped:       true,
-					SkippedReason: "niet gevonden",
-				})
-				response.TablesSkipped++
-			}
-		}
-	} else {
-		// Analyze tables that were never analyzed
-		for _, t := range tables {
-			if t.LastAnalyze == nil && t.LastAutoanalyze == nil && t.RowCount > 0 {
-				tablesToAnalyze = append(tablesToAnalyze, t)
-			}
-		}
+	// Auto-select criteria for analyze: tables never analyzed with data
+	autoSelect := func(t TableHealth) bool {
+		return t.LastAnalyze == nil && t.LastAutoanalyze == nil && t.RowCount > 0
 	}
 
-	response.TablesTotal = len(tablesToAnalyze) + response.TablesSkipped
+	tablesToAnalyze, skipped := ctx.resolveTables(tableNames, autoSelect)
+	response.Results = append(response.Results, skipped...)
+	response.TablesSkipped = len(skipped)
+	response.TablesTotal = len(tablesToAnalyze) + len(skipped)
 
 	// Process each table
 	for _, table := range tablesToAnalyze {
@@ -500,24 +482,11 @@ func (s *AeronService) AnalyzeTables(tableNames []string) (*VacuumResponse, erro
 
 // executeAnalyze runs ANALYZE on a single table.
 func (s *AeronService) executeAnalyze(tableName string) error {
-	if !isValidTableName(tableName) {
+	if !isValidIdentifier(tableName) {
 		return fmt.Errorf("ongeldige tabelnaam: %s", tableName)
 	}
 
-	query := fmt.Sprintf("ANALYZE %s.%s", s.config.Database.Schema, tableName)
+	query := fmt.Sprintf("ANALYZE %s.%s", s.schema, tableName)
 	_, err := s.db.Exec(query)
 	return err
-}
-
-// isValidTableName validates that a table name contains only safe characters.
-func isValidTableName(name string) bool {
-	if name == "" {
-		return false
-	}
-	for _, r := range name {
-		if (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') && r != '_' {
-			return false
-		}
-	}
-	return true
 }

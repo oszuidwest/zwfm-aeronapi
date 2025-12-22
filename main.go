@@ -10,10 +10,15 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
@@ -62,12 +67,8 @@ func run() error {
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, nil)))
 
 	// Connect to database
-	dbURL := fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=%s",
-		config.Database.User, config.Database.Password, config.Database.Host,
-		config.Database.Port, config.Database.Name, config.Database.SSLMode)
-	db, err := sqlx.Open("postgres", dbURL)
+	db, err := connectDatabase(config)
 	if err != nil {
-		slog.Error("Database verbinding mislukt", "error", err)
 		return err
 	}
 	defer func() {
@@ -76,22 +77,71 @@ func run() error {
 		}
 	}()
 
-	if err := db.Ping(); err != nil {
-		slog.Error("Database ping mislukt", "error", err)
-		return err
-	}
-
-	// Create service and start API server
+	// Create service and API server
 	service := NewAeronService(db, config)
 	apiServer := NewAeronAPI(service, config)
 
-	// Start API server
-	slog.Info("API-server gestart op poort", "poort", *serverPort)
+	// Setup signal handling for graceful shutdown
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 
-	if err := apiServer.Start(*serverPort); err != nil {
-		slog.Error("API server gestopt met fout", "error", err)
+	// Start API server in goroutine
+	serverErr := make(chan error, 1)
+	go func() {
+		slog.Info("API-server gestart op poort", "poort", *serverPort)
+		if err := apiServer.Start(*serverPort); err != nil && err != http.ErrServerClosed {
+			serverErr <- err
+		}
+	}()
+
+	// Wait for shutdown signal or server error
+	select {
+	case <-stop:
+		slog.Info("Shutdown signaal ontvangen, server wordt gestopt...")
+	case err := <-serverErr:
+		slog.Error("API server fout", "error", err)
 		return err
 	}
 
+	// Graceful shutdown with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	if err := apiServer.Shutdown(ctx); err != nil {
+		slog.Error("Fout bij graceful shutdown", "error", err)
+		return err
+	}
+
+	slog.Info("Server succesvol gestopt")
 	return nil
+}
+
+// connectDatabase establishes a connection to the PostgreSQL database with configured pool settings.
+func connectDatabase(config *Config) (*sqlx.DB, error) {
+	dbURL := fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=%s",
+		config.Database.User, config.Database.Password, config.Database.Host,
+		config.Database.Port, config.Database.Name, config.Database.SSLMode)
+
+	db, err := sqlx.Open("postgres", dbURL)
+	if err != nil {
+		slog.Error("Database verbinding mislukt", "error", err)
+		return nil, err
+	}
+
+	// Configure connection pool
+	db.SetMaxOpenConns(config.Database.GetMaxOpenConns())
+	db.SetMaxIdleConns(config.Database.GetMaxIdleConns())
+	db.SetConnMaxLifetime(config.Database.GetConnMaxLifetime())
+
+	slog.Info("Database connection pool geconfigureerd",
+		"max_open", config.Database.GetMaxOpenConns(),
+		"max_idle", config.Database.GetMaxIdleConns(),
+		"max_lifetime", config.Database.GetConnMaxLifetime())
+
+	if err := db.Ping(); err != nil {
+		slog.Error("Database ping mislukt", "error", err)
+		return nil, err
+	}
+
+	return db, nil
 }

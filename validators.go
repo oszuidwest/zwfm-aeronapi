@@ -20,8 +20,8 @@ import (
 var uuidRegex = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
 
 // ValidateScope checks if the provided scope is valid for entity operations.
-// Valid scopes are "artist" and "track". Returns an error with available options if invalid.
-func ValidateScope(scope string) error {
+// Valid scopes are ScopeArtist and ScopeTrack. Returns an error with available options if invalid.
+func ValidateScope(scope Scope) error {
 	if scope != ScopeArtist && scope != ScopeTrack {
 		return fmt.Errorf("ongeldig type: gebruik '%s' of '%s'", ScopeArtist, ScopeTrack)
 	}
@@ -143,7 +143,7 @@ func ValidateImageFormat(format string) error {
 // ValidateAndDownloadImage performs comprehensive validation and secure download of an image from a URL.
 // It validates the URL, downloads using SSRF protection, validates content type, and verifies image data.
 // Returns the downloaded image bytes or an error if any validation step fails.
-func ValidateAndDownloadImage(urlString string) ([]byte, error) {
+func ValidateAndDownloadImage(urlString string, maxSize int64) ([]byte, error) {
 	// 1. Validate URL first
 	if err := ValidateURL(urlString); err != nil {
 		return nil, err
@@ -175,8 +175,7 @@ func ValidateAndDownloadImage(urlString string) ([]byte, error) {
 		return nil, err
 	}
 
-	// 6. Read response with size limit (50MB)
-	const maxSize = 50 * 1024 * 1024
+	// 6. Read response with size limit
 	limitedReader := io.LimitReader(resp.Body, maxSize)
 	data, err := io.ReadAll(limitedReader)
 	if err != nil {

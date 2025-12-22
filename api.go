@@ -1,11 +1,11 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
 	"strconv"
-	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -17,6 +17,7 @@ import (
 type AeronAPI struct {
 	service *AeronService
 	config  *Config
+	server  *http.Server
 }
 
 // ImageUploadRequest represents the JSON request body for image upload operations.
@@ -66,7 +67,7 @@ func (s *AeronAPI) Start(port string) error {
 	router.Use(middleware.Recoverer)
 	router.Use(middleware.RealIP)
 	router.Use(middleware.Compress(5))
-	router.Use(middleware.Timeout(30 * time.Second))
+	router.Use(middleware.Timeout(s.config.API.GetRequestTimeout()))
 
 	// API routes
 	router.Route("/api", func(r chi.Router) {
@@ -96,12 +97,25 @@ func (s *AeronAPI) Start(port string) error {
 		})
 	})
 
-	// API server is now listening
-	return http.ListenAndServe(":"+port, router)
+	// Create server for graceful shutdown support
+	s.server = &http.Server{
+		Addr:    ":" + port,
+		Handler: router,
+	}
+
+	return s.server.ListenAndServe()
+}
+
+// Shutdown gracefully shuts down the server.
+func (s *AeronAPI) Shutdown(ctx context.Context) error {
+	if s.server == nil {
+		return nil
+	}
+	return s.server.Shutdown(ctx)
 }
 
 // setupEntityRoutes configures routes for an entity type (artist/track)
-func (s *AeronAPI) setupEntityRoutes(r chi.Router, path string, scope string) {
+func (s *AeronAPI) setupEntityRoutes(r chi.Router, path string, scope Scope) {
 	r.Route(path, func(r chi.Router) {
 		r.Get("/", s.handleStats(scope))
 		r.Delete("/bulk-delete", s.handleBulkDelete(scope))
@@ -144,15 +158,23 @@ func (s *AeronAPI) authMiddleware(next http.Handler) http.Handler {
 }
 
 func (s *AeronAPI) handleHealth(w http.ResponseWriter, r *http.Request) {
+	// Ping database to verify connectivity
+	dbStatus := "connected"
+	if err := s.service.db.Ping(); err != nil {
+		dbStatus = "disconnected"
+		slog.Warn("Database health check mislukt", "error", err)
+	}
+
 	respondJSON(w, http.StatusOK, map[string]string{
-		"status":   "healthy",
-		"version":  Version,
-		"database": s.service.config.Database.Name,
+		"status":          "healthy",
+		"version":         Version,
+		"database":        s.service.config.Database.Name,
+		"database_status": dbStatus,
 	})
 }
 
 // handleStats returns a handler for statistics requests
-func (s *AeronAPI) handleStats(scope string) http.HandlerFunc {
+func (s *AeronAPI) handleStats(scope Scope) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		stats, err := s.service.GetStatistics(scope)
 		if err != nil {
@@ -171,10 +193,10 @@ func (s *AeronAPI) handleStats(scope string) http.HandlerFunc {
 }
 
 // handleEntityByID returns a handler for retrieving entity details
-func (s *AeronAPI) handleEntityByID(scope string) http.HandlerFunc {
+func (s *AeronAPI) handleEntityByID(scope Scope) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		entityID := chi.URLParam(r, "id")
-		entityType := GetEntityType(scope)
+		entityType := GetEntityType(string(scope))
 
 		if err := ValidateEntityID(entityID, entityType); err != nil {
 			respondError(w, http.StatusBadRequest, err.Error())
@@ -200,7 +222,7 @@ func (s *AeronAPI) handleEntityByID(scope string) http.HandlerFunc {
 }
 
 // uploadResponse creates the response object for upload results
-func (s *AeronAPI) uploadResponse(result *ImageUploadResult, scope string) map[string]interface{} {
+func (s *AeronAPI) uploadResponse(result *ImageUploadResult, scope Scope) map[string]interface{} {
 	response := map[string]interface{}{
 		"original_size":   result.OriginalSize,
 		"optimized_size":  result.OptimizedSize,
@@ -219,7 +241,7 @@ func (s *AeronAPI) uploadResponse(result *ImageUploadResult, scope string) map[s
 }
 
 // handleBulkDelete returns a handler for bulk image deletion
-func (s *AeronAPI) handleBulkDelete(scope string) http.HandlerFunc {
+func (s *AeronAPI) handleBulkDelete(scope Scope) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		const confirmHeader = "X-Confirm-Bulk-Delete"
 		const confirmValue = "VERWIJDER ALLES"
@@ -249,20 +271,17 @@ func (s *AeronAPI) handleBulkDelete(scope string) http.HandlerFunc {
 }
 
 // handleGetImage returns a handler for retrieving images
-func (s *AeronAPI) handleGetImage(scope string) http.HandlerFunc {
+func (s *AeronAPI) handleGetImage(scope Scope) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		entityID := chi.URLParam(r, "id")
-		entityType := GetEntityType(scope)
+		entityType := GetEntityType(string(scope))
 
 		if err := ValidateEntityID(entityID, entityType); err != nil {
 			respondError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 
-		table := tableArtist
-		if scope == ScopeTrack {
-			table = tableTrack
-		}
+		table := TableForScope(scope)
 		imageData, err := getEntityImage(s.service.db, s.config.Database.Schema, table, entityID)
 
 		if err != nil {
@@ -285,10 +304,10 @@ func (s *AeronAPI) handleGetImage(scope string) http.HandlerFunc {
 }
 
 // handleImageUpload returns a handler for image uploads
-func (s *AeronAPI) handleImageUpload(scope string) http.HandlerFunc {
+func (s *AeronAPI) handleImageUpload(scope Scope) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		entityID := chi.URLParam(r, "id")
-		entityType := GetEntityType(scope)
+		entityType := GetEntityType(string(scope))
 
 		if err := ValidateEntityID(entityID, entityType); err != nil {
 			respondError(w, http.StatusBadRequest, err.Error())
@@ -330,28 +349,21 @@ func (s *AeronAPI) handleImageUpload(scope string) http.HandlerFunc {
 }
 
 // handleDeleteImage returns a handler for deleting images
-func (s *AeronAPI) handleDeleteImage(scope string) http.HandlerFunc {
+func (s *AeronAPI) handleDeleteImage(scope Scope) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		entityID := chi.URLParam(r, "id")
-		entityType := GetEntityType(scope)
+		entityType := GetEntityType(string(scope))
 
 		if err := ValidateEntityID(entityID, entityType); err != nil {
 			respondError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 
-		table := tableArtist
-		logMsg := "Artiest afbeelding verwijderen mislukt"
-		logField := "artist_id"
-		if scope == ScopeTrack {
-			table = tableTrack
-			logMsg = "Track afbeelding verwijderen mislukt"
-			logField = "track_id"
-		}
+		table := TableForScope(scope)
 
 		err := deleteEntityImage(s.service.db, s.config.Database.Schema, table, entityID)
 		if err != nil {
-			slog.Error(logMsg, logField, entityID, "error", err)
+			slog.Error("Afbeelding verwijderen mislukt", "scope", scope, "id", entityID, "error", err)
 		}
 
 		if err != nil {

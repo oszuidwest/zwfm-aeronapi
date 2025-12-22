@@ -118,13 +118,14 @@ func defaultPlaylistOptions() PlaylistOptions {
 
 // countItems counts entities in the specified table based on image presence.
 // It returns the number of entities that either have or don't have images.
-func countItems(db *sqlx.DB, schema, table string, hasImage bool) (int, error) {
+func countItems(db *sqlx.DB, schema string, table Table, hasImage bool) (int, error) {
 	condition := "IS NULL"
 	if hasImage {
 		condition = "IS NOT NULL"
 	}
 
-	query := fmt.Sprintf("SELECT COUNT(*) FROM %s.%s WHERE picture %s", schema, table, condition)
+	qt := MustQualifiedTable(schema, table)
+	query := fmt.Sprintf("SELECT COUNT(*) FROM %s WHERE picture %s", qt, condition)
 
 	var count int
 	err := db.Get(&count, query)
@@ -137,17 +138,12 @@ func countItems(db *sqlx.DB, schema, table string, hasImage bool) (int, error) {
 
 // updateEntityImage updates the image data for either an artist or track entity.
 // The table parameter determines whether to update the artist or track table.
-func updateEntityImage(db *sqlx.DB, schema, table, id string, imageData []byte) error {
-	var query string
-	var entityType string
+func updateEntityImage(db *sqlx.DB, schema string, table Table, id string, imageData []byte) error {
+	qt := MustQualifiedTable(schema, table)
+	entityType := EntityTypeForTable(table)
+	idCol := IDColumnForTable(table)
 
-	if table == tableArtist {
-		query = fmt.Sprintf("UPDATE %s.artist SET picture = $1 WHERE artistid = $2", schema)
-		entityType = "artiest"
-	} else {
-		query = fmt.Sprintf("UPDATE %s.track SET picture = $1 WHERE titleid = $2", schema)
-		entityType = "track"
-	}
+	query := fmt.Sprintf("UPDATE %s SET picture = $1 WHERE %s = $2", qt, idCol)
 
 	_, err := db.Exec(query, imageData, id)
 	if err != nil {
@@ -158,47 +154,28 @@ func updateEntityImage(db *sqlx.DB, schema, table, id string, imageData []byte) 
 
 // deleteEntityImage removes the image data for either an artist or track entity.
 // It sets the picture column to NULL and returns an error if the entity doesn't exist.
-func deleteEntityImage(db *sqlx.DB, schema, table, id string) error {
-	var query string
-	var entityType string
+func deleteEntityImage(db *sqlx.DB, schema string, table Table, id string) error {
+	qt := MustQualifiedTable(schema, table)
+	entityType := EntityTypeForTable(table)
+	idCol := IDColumnForTable(table)
 
-	if table == tableArtist {
-		query = fmt.Sprintf("UPDATE %s.artist SET picture = NULL WHERE artistid = $1", schema)
-		entityType = "artiestafbeelding"
-	} else {
-		query = fmt.Sprintf("UPDATE %s.track SET picture = NULL WHERE titleid = $1", schema)
-		entityType = "trackafbeelding"
-	}
+	query := fmt.Sprintf("UPDATE %s SET picture = NULL WHERE %s = $1", qt, idCol)
 
 	result, err := db.Exec(query, id)
 	if err != nil {
-		return fmt.Errorf("verwijderen van %s %s: %w", entityType, ErrSuffixFailed, err)
+		return fmt.Errorf("verwijderen van %safbeelding %s: %w", entityType, ErrSuffixFailed, err)
 	}
 
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("verwijderen van %s %s: %w", entityType, ErrSuffixFailed, err)
+		return fmt.Errorf("verwijderen van %safbeelding %s: %w", entityType, ErrSuffixFailed, err)
 	}
 
 	if rowsAffected == 0 {
-		return fmt.Errorf("%s met ID '%s' %s", entityType, id, ErrSuffixNotExists)
+		return fmt.Errorf("%safbeelding met ID '%s' %s", entityType, id, ErrSuffixNotExists)
 	}
 
 	return nil
-}
-
-// isValidSchemaName validates that a schema name contains only safe characters.
-// It prevents SQL injection by allowing only alphanumeric characters and underscores.
-func isValidSchemaName(schema string) bool {
-	if schema == "" {
-		return false
-	}
-	for _, r := range schema {
-		if (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') && r != '_' {
-			return false
-		}
-	}
-	return true
 }
 
 // buildPlaylistQuery creates a parameterized SQL query for playlist items.
@@ -270,8 +247,7 @@ func buildPlaylistQuery(schema string, opts PlaylistOptions) (string, []interfac
 	}
 
 	// Validate schema name to prevent SQL injection
-	// Schema names can't be parameterized in PostgreSQL, so we validate instead
-	if !isValidSchemaName(schema) {
+	if !isValidIdentifier(schema) {
 		schema = "aeron" // fallback to default
 	}
 
@@ -288,14 +264,14 @@ func buildPlaylistQuery(schema string, opts PlaylistOptions) (string, []interfac
 			CASE WHEN a.picture IS NOT NULL THEN true ELSE false END as has_artist_image,
 			COALESCE(t.exporttype, 0) as exporttype,
 			COALESCE(pi.mode, 0) as mode,
-			CASE WHEN t.userid = '021F097E-B504-49BB-9B89-16B64D2E8422' THEN true ELSE false END as is_voicetrack,
+			CASE WHEN t.userid = '%s' THEN true ELSE false END as is_voicetrack,
 			CASE WHEN COALESCE(pi.commblock, 0) > 0 THEN true ELSE false END as is_commblock
 		FROM %s.playlistitem pi
 		LEFT JOIN %s.track t ON pi.titleid = t.titleid
 		LEFT JOIN %s.artist a ON t.artistid = a.artistid
 		WHERE %s
 		ORDER BY %s
-	`, schema, schema, schema, whereClause, orderBy)
+	`, VoicetrackUserID, schema, schema, schema, whereClause, orderBy)
 
 	// Add limit/offset with parameters
 	if opts.Limit > 0 {
@@ -426,7 +402,7 @@ func getPlaylistBlocksWithTracks(db *sqlx.DB, schema string, date string) ([]Pla
 			CASE WHEN a.picture IS NOT NULL THEN true ELSE false END as has_artist_image,
 			COALESCE(t.exporttype, 0) as exporttype,
 			COALESCE(pi.mode, 0) as mode,
-			CASE WHEN t.userid = '021F097E-B504-49BB-9B89-16B64D2E8422' THEN true ELSE false END as is_voicetrack,
+			CASE WHEN t.userid = '%s' THEN true ELSE false END as is_voicetrack,
 			CASE WHEN COALESCE(pi.commblock, 0) > 0 THEN true ELSE false END as is_commblock,
 			COALESCE(pi.blockid::text, '') as blockid
 		FROM %s.playlistitem pi
@@ -434,7 +410,7 @@ func getPlaylistBlocksWithTracks(db *sqlx.DB, schema string, date string) ([]Pla
 		LEFT JOIN %s.artist a ON t.artistid = a.artistid
 		WHERE %s AND pi.blockid IN (%s)
 		ORDER BY pi.blockid, pi.startdatetime
-	`, schema, schema, schema, dateFilter, strings.Join(placeholders, ","))
+	`, VoicetrackUserID, schema, schema, schema, dateFilter, strings.Join(placeholders, ","))
 
 	var tempItems []tempPlaylistItem
 	err = db.Select(&tempItems, query, params...)
@@ -452,7 +428,7 @@ func getPlaylistBlocksWithTracks(db *sqlx.DB, schema string, date string) ([]Pla
 }
 
 const getArtistDetailsQuery = `
-	SELECT 
+	SELECT
 		artistid,
 		COALESCE(artist, '') as artist,
 		COALESCE(info, '') as info,
@@ -461,7 +437,7 @@ const getArtistDetailsQuery = `
 		COALESCE(instagram, '') as instagram,
 		CASE WHEN picture IS NOT NULL THEN true ELSE false END as has_image,
 		COALESCE(repeatvalue, 0) as repeat_value
-	FROM %s.artist 
+	FROM %s.artist
 	WHERE artistid = $1`
 
 // getArtistByID retrieves complete artist details by UUID.
@@ -483,7 +459,7 @@ func getArtistByID(db *sqlx.DB, schema, artistID string) (*ArtistDetails, error)
 }
 
 const getTrackDetailsQuery = `
-	SELECT 
+	SELECT
 		titleid,
 		COALESCE(tracktitle, '') as tracktitle,
 		COALESCE(artist, '') as artist,
@@ -504,7 +480,7 @@ const getTrackDetailsQuery = `
 		COALESCE(website, '') as website,
 		COALESCE(conductor, '') as conductor,
 		COALESCE(orchestra, '') as orchestra
-	FROM %s.track 
+	FROM %s.track
 	WHERE titleid = $1`
 
 // getTrackByID retrieves complete track details by UUID.
@@ -527,17 +503,12 @@ func getTrackByID(db *sqlx.DB, schema, trackID string) (*TrackDetails, error) {
 
 // getEntityImage retrieves the image data for either an artist or track entity.
 // It returns the raw image bytes or an error if the entity doesn't exist or has no image.
-func getEntityImage(db *sqlx.DB, schema, table, id string) ([]byte, error) {
-	var query string
-	var entityType string
+func getEntityImage(db *sqlx.DB, schema string, table Table, id string) ([]byte, error) {
+	qt := MustQualifiedTable(schema, table)
+	entityType := EntityTypeForTable(table)
+	idCol := IDColumnForTable(table)
 
-	if table == tableArtist {
-		query = fmt.Sprintf("SELECT picture FROM %s.artist WHERE artistid = $1", schema)
-		entityType = "artiest"
-	} else {
-		query = fmt.Sprintf("SELECT picture FROM %s.track WHERE titleid = $1", schema)
-		entityType = "track"
-	}
+	query := fmt.Sprintf("SELECT picture FROM %s WHERE %s = $1", qt, idCol)
 
 	var imageData []byte
 	err := db.Get(&imageData, query, id)

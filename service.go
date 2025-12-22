@@ -15,6 +15,7 @@ import (
 type AeronService struct {
 	db     *sqlx.DB
 	config *Config
+	schema string // Cached schema name for convenience
 }
 
 // NewAeronService creates a new AeronService instance with the provided database connection and configuration.
@@ -23,13 +24,14 @@ func NewAeronService(db *sqlx.DB, config *Config) *AeronService {
 	return &AeronService{
 		db:     db,
 		config: config,
+		schema: config.Database.Schema,
 	}
 }
 
 // ImageUploadParams contains the parameters required for uploading an image to an entity.
 // Either URL or ImageData should be provided, but not both.
 type ImageUploadParams struct {
-	Scope     string // Entity scope: "artist" or "track"
+	Scope     Scope  // Entity scope: ScopeArtist or ScopeTrack
 	ID        string // UUID of the entity to update
 	URL       string // URL of the image to download (optional)
 	ImageData []byte // Raw image data (optional)
@@ -57,17 +59,15 @@ func (s *AeronService) UploadImage(params *ImageUploadParams) (*ImageUploadResul
 	// First check if the artist/track exists before downloading/processing the image
 	var itemName, itemTitle string
 
-	// Processing image upload
-
 	if params.Scope == ScopeArtist {
-		artist, err := getArtistByID(s.db, s.config.Database.Schema, params.ID)
+		artist, err := getArtistByID(s.db, s.schema, params.ID)
 		if err != nil {
 			slog.Error("Artiest ophalen mislukt", "artist_id", params.ID, "error", err)
 			return nil, err
 		}
 		itemName = artist.Name
 	} else {
-		track, err := getTrackByID(s.db, s.config.Database.Schema, params.ID)
+		track, err := getTrackByID(s.db, s.schema, params.ID)
 		if err != nil {
 			slog.Error("Track ophalen mislukt", "track_id", params.ID, "error", err)
 			return nil, err
@@ -80,7 +80,7 @@ func (s *AeronService) UploadImage(params *ImageUploadParams) (*ImageUploadResul
 	var imageData []byte
 	var err error
 	if params.URL != "" {
-		imageData, err = downloadImage(params.URL)
+		imageData, err = downloadImage(params.URL, s.config.Image.GetMaxDownloadBytes())
 		if err != nil {
 			slog.Error("Afbeelding download mislukt", "url", params.URL, "error", err)
 			return nil, fmt.Errorf("downloaden %s: %w", ErrSuffixFailed, err)
@@ -97,18 +97,10 @@ func (s *AeronService) UploadImage(params *ImageUploadParams) (*ImageUploadResul
 	}
 
 	// Update the database
-	if params.Scope == ScopeArtist {
-		if err := updateEntityImage(s.db, s.config.Database.Schema, tableArtist, params.ID, processingResult.Data); err != nil {
-			slog.Error("Artiest afbeelding opslaan mislukt", "artist_id", params.ID, "error", err)
-			return nil, fmt.Errorf("opslaan %s: %w", ErrSuffixFailed, err)
-		}
-		// Artist image saved successfully
-	} else {
-		if err := updateEntityImage(s.db, s.config.Database.Schema, tableTrack, params.ID, processingResult.Data); err != nil {
-			slog.Error("Track afbeelding opslaan mislukt", "track_id", params.ID, "error", err)
-			return nil, fmt.Errorf("opslaan %s: %w", ErrSuffixFailed, err)
-		}
-		// Track image saved successfully
+	table := TableForScope(params.Scope)
+	if err := updateEntityImage(s.db, s.schema, table, params.ID, processingResult.Data); err != nil {
+		slog.Error("Afbeelding opslaan mislukt", "scope", params.Scope, "id", params.ID, "error", err)
+		return nil, fmt.Errorf("opslaan %s: %w", ErrSuffixFailed, err)
 	}
 
 	return &ImageUploadResult{
@@ -137,22 +129,15 @@ type DeleteResult struct {
 
 // DeleteAllImages removes all images for entities of the specified scope.
 // It returns the number of images that were deleted.
-// The scope must be either "artist" or "track".
-func (s *AeronService) DeleteAllImages(scope string) (*DeleteResult, error) {
+func (s *AeronService) DeleteAllImages(scope Scope) (*DeleteResult, error) {
 	if err := ValidateScope(scope); err != nil {
 		return nil, err
 	}
 
-	var table string
-	if scope == ScopeArtist {
-		table = "artist"
-	} else {
-		table = "track"
-	}
+	table := TableForScope(scope)
+	qt := MustQualifiedTable(s.schema, table)
 
-	// Starting bulk delete operation
-
-	count, err := countItems(s.db, s.config.Database.Schema, table, true)
+	count, err := countItems(s.db, s.schema, table, true)
 	if err != nil {
 		slog.Error("Tellen items met afbeeldingen mislukt", "scope", scope, "error", err)
 		return nil, err
@@ -162,19 +147,11 @@ func (s *AeronService) DeleteAllImages(scope string) (*DeleteResult, error) {
 		return &DeleteResult{Count: count}, nil
 	}
 
-	var query string
-	if scope == ScopeArtist {
-		query = fmt.Sprintf(`UPDATE %s.artist SET picture = NULL WHERE picture IS NOT NULL`, s.config.Database.Schema)
-	} else {
-		query = fmt.Sprintf(`UPDATE %s.track SET picture = NULL WHERE picture IS NOT NULL`, s.config.Database.Schema)
-	}
+	query := fmt.Sprintf(`UPDATE %s SET picture = NULL WHERE picture IS NOT NULL`, qt)
 
 	result, err := s.db.Exec(query)
 	if err != nil {
-		itemType := ItemTypeTrack
-		if scope == ScopeArtist {
-			itemType = ItemTypeArtist
-		}
+		itemType := EntityTypeForScope(scope)
 		slog.Error("Bulk delete query mislukt", "scope", scope, "query", query, "error", err)
 		return nil, fmt.Errorf("verwijderen van %s-afbeeldingen mislukt: %w", itemType, err)
 	}
@@ -200,27 +177,21 @@ func decodeBase64(data string) ([]byte, error) {
 
 // GetStatistics returns image statistics for entities of the specified scope.
 // It counts total entities, those with images, and those without images.
-// The scope must be either "artist" or "track".
-func (s *AeronService) GetStatistics(scope string) (*ImageStats, error) {
+func (s *AeronService) GetStatistics(scope Scope) (*ImageStats, error) {
 	if err := ValidateScope(scope); err != nil {
 		return nil, err
 	}
 
-	var table string
-	if scope == ScopeArtist {
-		table = "artist"
-	} else {
-		table = "track"
-	}
+	table := TableForScope(scope)
 
 	// Get counts
-	withImages, err := countItems(s.db, s.config.Database.Schema, table, true)
+	withImages, err := countItems(s.db, s.schema, table, true)
 	if err != nil {
 		slog.Error("Tellen items met afbeeldingen mislukt", "scope", scope, "error", err)
 		return nil, fmt.Errorf("tellen mislukt: %w", err)
 	}
 
-	withoutImages, err := countItems(s.db, s.config.Database.Schema, table, false)
+	withoutImages, err := countItems(s.db, s.schema, table, false)
 	if err != nil {
 		slog.Error("Tellen items zonder afbeeldingen mislukt", "scope", scope, "error", err)
 		return nil, fmt.Errorf("tellen mislukt: %w", err)
