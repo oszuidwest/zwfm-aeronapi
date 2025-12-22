@@ -371,9 +371,9 @@ jobs:
         run: |
           echo "=== ARTIST ENDPOINT TESTS ==="
 
-          # Get a known artist ID
-          ARTIST_ID=$(docker exec aeron-test-db psql -U aeron -d aeron_db -t -c "SELECT artistid FROM aeron.artist WHERE artist = 'Purple Disco Machine' LIMIT 1;" | tr -d ' ')
-          BLOF_ID=$(docker exec aeron-test-db psql -U aeron -d aeron_db -t -c "SELECT artistid FROM aeron.artist WHERE artist = 'BLØF' LIMIT 1;" | tr -d ' ')
+          # Known artist IDs from test fixtures
+          ARTIST_ID="9e37ff1f-7823-43ce-93d0-12fc1c2edb8b"  # Purple Disco Machine
+          BLOF_ID="add55a6e-2068-4114-b82a-e0729881f0be"    # BLØF
 
           # Test: Get statistics
           echo "Test: Artist statistics"
@@ -639,8 +639,8 @@ jobs:
           echo "Test: Delete non-existent backup"
           HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE \
             -H 'X-API-Key: test-api-key-12345' \
-            -H "X-Confirm-Delete: nonexistent.dump" \
-            "http://localhost:${{ env.API_PORT }}/api/db/backups/nonexistent.dump")
+            -H "X-Confirm-Delete: aeron-backup-nonexistent.dump" \
+            "http://localhost:${{ env.API_PORT }}/api/db/backups/aeron-backup-nonexistent.dump")
           [ "$HTTP_CODE" = "404" ]
           echo "✓ Non-existent backup returns 404"
 
