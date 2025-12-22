@@ -17,7 +17,7 @@ env:
 jobs:
   test:
     runs-on: ubuntu-latest
-    if: ${{ !inputs.skip_tests }}
+    if: ${{ inputs.skip_tests != true }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
