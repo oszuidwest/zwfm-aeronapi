@@ -1,11 +1,11 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"strings"
 
-	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
 )
 
@@ -118,19 +118,22 @@ func defaultPlaylistOptions() PlaylistOptions {
 
 // countItems counts entities in the specified table based on image presence.
 // It returns the number of entities that either have or don't have images.
-func countItems(db *sqlx.DB, schema string, table Table, hasImage bool) (int, error) {
+func countItems(ctx context.Context, db DB, schema string, table Table, hasImage bool) (int, error) {
 	condition := "IS NULL"
 	if hasImage {
 		condition = "IS NOT NULL"
 	}
 
-	qt := MustQualifiedTable(schema, table)
+	qt, err := QualifiedTable(schema, table)
+	if err != nil {
+		return 0, &ValidationError{Field: "table", Message: fmt.Sprintf("ongeldige tabel configuratie: %v", err)}
+	}
 	query := fmt.Sprintf("SELECT COUNT(*) FROM %s WHERE picture %s", qt, condition)
 
 	var count int
-	err := db.Get(&count, query)
+	err = db.GetContext(ctx, &count, query)
 	if err != nil {
-		return 0, fmt.Errorf("tellen van %s mislukt: %w", table, err)
+		return 0, &DatabaseError{Operation: fmt.Sprintf("tellen van %s", table), Err: err}
 	}
 
 	return count, nil
@@ -138,41 +141,47 @@ func countItems(db *sqlx.DB, schema string, table Table, hasImage bool) (int, er
 
 // updateEntityImage updates the image data for either an artist or track entity.
 // The table parameter determines whether to update the artist or track table.
-func updateEntityImage(db *sqlx.DB, schema string, table Table, id string, imageData []byte) error {
-	qt := MustQualifiedTable(schema, table)
+func updateEntityImage(ctx context.Context, db DB, schema string, table Table, id string, imageData []byte) error {
+	qt, err := QualifiedTable(schema, table)
+	if err != nil {
+		return &ValidationError{Field: "table", Message: fmt.Sprintf("ongeldige tabel configuratie: %v", err)}
+	}
 	entityType := EntityTypeForTable(table)
 	idCol := IDColumnForTable(table)
 
 	query := fmt.Sprintf("UPDATE %s SET picture = $1 WHERE %s = $2", qt, idCol)
 
-	_, err := db.Exec(query, imageData, id)
+	_, err = db.ExecContext(ctx, query, imageData, id)
 	if err != nil {
-		return fmt.Errorf("bijwerken van %s %s: %w", entityType, ErrSuffixFailed, err)
+		return &DatabaseError{Operation: fmt.Sprintf("bijwerken van %s", entityType), Err: err}
 	}
 	return nil
 }
 
 // deleteEntityImage removes the image data for either an artist or track entity.
 // It sets the picture column to NULL and returns an error if the entity doesn't exist.
-func deleteEntityImage(db *sqlx.DB, schema string, table Table, id string) error {
-	qt := MustQualifiedTable(schema, table)
+func deleteEntityImage(ctx context.Context, db DB, schema string, table Table, id string) error {
+	qt, err := QualifiedTable(schema, table)
+	if err != nil {
+		return &ValidationError{Field: "table", Message: fmt.Sprintf("ongeldige tabel configuratie: %v", err)}
+	}
 	entityType := EntityTypeForTable(table)
 	idCol := IDColumnForTable(table)
 
 	query := fmt.Sprintf("UPDATE %s SET picture = NULL WHERE %s = $1", qt, idCol)
 
-	result, err := db.Exec(query, id)
+	result, err := db.ExecContext(ctx, query, id)
 	if err != nil {
-		return fmt.Errorf("verwijderen van %safbeelding %s: %w", entityType, ErrSuffixFailed, err)
+		return &DatabaseError{Operation: fmt.Sprintf("verwijderen van %safbeelding", entityType), Err: err}
 	}
 
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("verwijderen van %safbeelding %s: %w", entityType, ErrSuffixFailed, err)
+		return &DatabaseError{Operation: fmt.Sprintf("verwijderen van %safbeelding", entityType), Err: err}
 	}
 
 	if rowsAffected == 0 {
-		return fmt.Errorf("%safbeelding met ID '%s' %s", entityType, id, ErrSuffixNotExists)
+		return NewNotFoundError(entityType+"afbeelding", id)
 	}
 
 	return nil
@@ -180,7 +189,7 @@ func deleteEntityImage(db *sqlx.DB, schema string, table Table, id string) error
 
 // buildPlaylistQuery creates a parameterized SQL query for playlist items.
 // It builds the query based on the provided options and returns the query string and parameters.
-func buildPlaylistQuery(schema string, opts PlaylistOptions) (string, []interface{}) {
+func buildPlaylistQuery(schema string, opts PlaylistOptions) (string, []interface{}, error) {
 	var conditions []string
 	var params []interface{}
 	paramCount := 0
@@ -197,7 +206,7 @@ func buildPlaylistQuery(schema string, opts PlaylistOptions) (string, []interfac
 		params = append(params, opts.BlockID)
 	} else {
 		// If no block specified, return empty result
-		return "", []interface{}{}
+		return "", []interface{}{}, nil
 	}
 
 	// Export type filter
@@ -248,7 +257,7 @@ func buildPlaylistQuery(schema string, opts PlaylistOptions) (string, []interfac
 
 	// Validate schema name to prevent SQL injection
 	if !isValidIdentifier(schema) {
-		schema = "aeron" // fallback to default
+		return "", nil, &ValidationError{Field: "schema", Message: fmt.Sprintf("ongeldige schema naam: %s", schema)}
 	}
 
 	query := fmt.Sprintf(`
@@ -283,16 +292,16 @@ func buildPlaylistQuery(schema string, opts PlaylistOptions) (string, []interfac
 		}
 	}
 
-	return query, params
+	return query, params, nil
 }
 
 // executePlaylistQuery executes a parameterized playlist query and returns the results.
 // It takes a prepared query string and its parameters, returning playlist items.
-func executePlaylistQuery(db *sqlx.DB, query string, params []interface{}) ([]PlaylistItem, error) {
+func executePlaylistQuery(ctx context.Context, db DB, query string, params []interface{}) ([]PlaylistItem, error) {
 	var items []PlaylistItem
-	err := db.Select(&items, query, params...)
+	err := db.SelectContext(ctx, &items, query, params...)
 	if err != nil {
-		return nil, fmt.Errorf("ophalen van playlist mislukt: %w", err)
+		return nil, &DatabaseError{Operation: "ophalen van playlist", Err: err}
 	}
 
 	return items, nil
@@ -300,14 +309,17 @@ func executePlaylistQuery(db *sqlx.DB, query string, params []interface{}) ([]Pl
 
 // getPlaylist retrieves playlist items from the database based on the provided options.
 // It builds and executes a query filtered by the playlist options.
-func getPlaylist(db *sqlx.DB, schema string, opts PlaylistOptions) ([]PlaylistItem, error) {
-	query, params := buildPlaylistQuery(schema, opts)
-	return executePlaylistQuery(db, query, params)
+func getPlaylist(ctx context.Context, db DB, schema string, opts PlaylistOptions) ([]PlaylistItem, error) {
+	query, params, err := buildPlaylistQuery(schema, opts)
+	if err != nil {
+		return nil, err
+	}
+	return executePlaylistQuery(ctx, db, query, params)
 }
 
 // getPlaylistBlocks retrieves all playlist blocks for a specific date.
 // If no date is provided, it returns blocks for the current date.
-func getPlaylistBlocks(db *sqlx.DB, schema string, date string) ([]PlaylistBlock, error) {
+func getPlaylistBlocks(ctx context.Context, db DB, schema string, date string) ([]PlaylistBlock, error) {
 	var dateFilter string
 	params := []interface{}{}
 
@@ -333,9 +345,9 @@ func getPlaylistBlocks(db *sqlx.DB, schema string, date string) ([]PlaylistBlock
 	`, schema, dateFilter)
 
 	var blocks []PlaylistBlock
-	err := db.Select(&blocks, query, params...)
+	err := db.SelectContext(ctx, &blocks, query, params...)
 	if err != nil {
-		return nil, fmt.Errorf("ophalen van playlist blocks mislukt: %w", err)
+		return nil, &DatabaseError{Operation: "ophalen van playlist blocks", Err: err}
 	}
 
 	return blocks, nil
@@ -343,9 +355,9 @@ func getPlaylistBlocks(db *sqlx.DB, schema string, date string) ([]PlaylistBlock
 
 // getPlaylistBlocksWithTracks efficiently fetches all blocks and their tracks for a date.
 // It uses only 2 database queries to retrieve all data and returns blocks with their associated tracks.
-func getPlaylistBlocksWithTracks(db *sqlx.DB, schema string, date string) ([]PlaylistBlock, map[string][]PlaylistItem, error) {
+func getPlaylistBlocksWithTracks(ctx context.Context, db DB, schema string, date string) ([]PlaylistBlock, map[string][]PlaylistItem, error) {
 	// First get all blocks
-	blocks, err := getPlaylistBlocks(db, schema, date)
+	blocks, err := getPlaylistBlocks(ctx, db, schema, date)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -413,9 +425,9 @@ func getPlaylistBlocksWithTracks(db *sqlx.DB, schema string, date string) ([]Pla
 	`, VoicetrackUserID, schema, schema, schema, dateFilter, strings.Join(placeholders, ","))
 
 	var tempItems []tempPlaylistItem
-	err = db.Select(&tempItems, query, params...)
+	err = db.SelectContext(ctx, &tempItems, query, params...)
 	if err != nil {
-		return nil, nil, fmt.Errorf("ophalen van playlist items mislukt: %w", err)
+		return nil, nil, &DatabaseError{Operation: "ophalen van playlist items", Err: err}
 	}
 
 	// Group items by block ID
@@ -442,17 +454,17 @@ const getArtistDetailsQuery = `
 
 // getArtistByID retrieves complete artist details by UUID.
 // It returns an error if the artist doesn't exist in the database.
-func getArtistByID(db *sqlx.DB, schema, artistID string) (*ArtistDetails, error) {
+func getArtistByID(ctx context.Context, db DB, schema, artistID string) (*ArtistDetails, error) {
 	query := fmt.Sprintf(getArtistDetailsQuery, schema)
 
 	var artist ArtistDetails
-	err := db.Get(&artist, query, artistID)
+	err := db.GetContext(ctx, &artist, query, artistID)
 
 	if err == sql.ErrNoRows {
-		return nil, fmt.Errorf("artiest ID '%s' %s", artistID, ErrSuffixNotExists)
+		return nil, NewNotFoundError("artiest", artistID)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("databasefout: %w", err)
+		return nil, &DatabaseError{Operation: "ophalen artiest", Err: err}
 	}
 
 	return &artist, nil
@@ -485,17 +497,17 @@ const getTrackDetailsQuery = `
 
 // getTrackByID retrieves complete track details by UUID.
 // It returns an error if the track doesn't exist in the database.
-func getTrackByID(db *sqlx.DB, schema, trackID string) (*TrackDetails, error) {
+func getTrackByID(ctx context.Context, db DB, schema, trackID string) (*TrackDetails, error) {
 	query := fmt.Sprintf(getTrackDetailsQuery, schema)
 
 	var track TrackDetails
-	err := db.Get(&track, query, trackID)
+	err := db.GetContext(ctx, &track, query, trackID)
 
 	if err == sql.ErrNoRows {
-		return nil, fmt.Errorf("track ID '%s' %s", trackID, ErrSuffixNotExists)
+		return nil, NewNotFoundError("track", trackID)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("databasefout: %w", err)
+		return nil, &DatabaseError{Operation: "ophalen track", Err: err}
 	}
 
 	return &track, nil
@@ -503,24 +515,27 @@ func getTrackByID(db *sqlx.DB, schema, trackID string) (*TrackDetails, error) {
 
 // getEntityImage retrieves the image data for either an artist or track entity.
 // It returns the raw image bytes or an error if the entity doesn't exist or has no image.
-func getEntityImage(db *sqlx.DB, schema string, table Table, id string) ([]byte, error) {
-	qt := MustQualifiedTable(schema, table)
+func getEntityImage(ctx context.Context, db DB, schema string, table Table, id string) ([]byte, error) {
+	qt, err := QualifiedTable(schema, table)
+	if err != nil {
+		return nil, &ValidationError{Field: "table", Message: fmt.Sprintf("ongeldige tabel configuratie: %v", err)}
+	}
 	entityType := EntityTypeForTable(table)
 	idCol := IDColumnForTable(table)
 
 	query := fmt.Sprintf("SELECT picture FROM %s WHERE %s = $1", qt, idCol)
 
 	var imageData []byte
-	err := db.Get(&imageData, query, id)
+	err = db.GetContext(ctx, &imageData, query, id)
 
 	if err == sql.ErrNoRows {
-		return nil, fmt.Errorf("%s-ID '%s' %s", entityType, id, ErrSuffixNotExists)
+		return nil, NewNotFoundError(entityType, id)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("databasefout: %w", err)
+		return nil, &DatabaseError{Operation: fmt.Sprintf("ophalen %s afbeelding", entityType), Err: err}
 	}
 	if imageData == nil {
-		return nil, fmt.Errorf("%s heeft geen afbeelding", entityType)
+		return nil, NewNoImageError(entityType, id)
 	}
 
 	return imageData, nil

@@ -113,16 +113,6 @@ func QualifiedTable(schema string, table Table) (string, error) {
 	return fmt.Sprintf("%s.%s", schema, table), nil
 }
 
-// MustQualifiedTable returns a fully qualified table name or panics on invalid input.
-// Use only when schema/table are known-safe values from config/constants.
-func MustQualifiedTable(schema string, table Table) string {
-	qt, err := QualifiedTable(schema, table)
-	if err != nil {
-		panic(err)
-	}
-	return qt
-}
-
 // ErrorMessages provides centralized Dutch error messages for consistent user communication.
 // Keys are internal error codes, values are user-friendly Dutch error messages.
 // Use fmt.Sprintf with these messages when formatting is needed.

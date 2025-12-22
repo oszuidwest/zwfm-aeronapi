@@ -32,8 +32,8 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build \
 # Runtime stage
 FROM alpine:latest
 
-# Install runtime dependencies
-RUN apk --no-cache add ca-certificates tzdata
+# Install runtime dependencies (postgresql16-client for pg_dump backup functionality)
+RUN apk --no-cache add ca-certificates tzdata postgresql16-client
 
 # Create non-root user
 RUN addgroup -g 1000 aeron && \
@@ -41,6 +41,9 @@ RUN addgroup -g 1000 aeron && \
 
 # Set working directory
 WORKDIR /app
+
+# Create backup directory
+RUN mkdir -p /backups && chown aeron:aeron /backups
 
 # Copy binary from builder
 COPY --from=builder /app/zwfm-aeronapi /app/zwfm-aeronapi

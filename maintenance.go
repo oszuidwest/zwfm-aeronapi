@@ -1,15 +1,15 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"time"
-
-	"github.com/jmoiron/sqlx"
 )
 
 // DatabaseHealth represents the overall health status of the database.
 type DatabaseHealth struct {
 	DatabaseName    string        `json:"database_name"`
+	DatabaseVersion string        `json:"database_version"`
 	DatabaseSize    string        `json:"database_size"`
 	DatabaseSizeRaw int64         `json:"database_size_bytes"`
 	SchemaName      string        `json:"schema_name"`
@@ -58,25 +58,31 @@ type tableHealthRow struct {
 }
 
 // GetDatabaseHealth retrieves comprehensive database health information.
-func (s *AeronService) GetDatabaseHealth() (*DatabaseHealth, error) {
+func (s *AeronService) GetDatabaseHealth(ctx context.Context) (*DatabaseHealth, error) {
 	health := &DatabaseHealth{
 		DatabaseName: s.config.Database.Name,
 		SchemaName:   s.schema,
 		CheckedAt:    time.Now(),
 	}
 
+	// Get PostgreSQL version
+	var version string
+	if err := s.db.GetContext(ctx, &version, "SELECT version()"); err == nil {
+		health.DatabaseVersion = version
+	}
+
 	// Get database size
-	dbSize, dbSizeRaw, err := getDatabaseSize(s.db)
+	dbSize, dbSizeRaw, err := getDatabaseSize(ctx, s.db)
 	if err != nil {
-		return nil, fmt.Errorf("ophalen database grootte mislukt: %w", err)
+		return nil, &DatabaseError{Operation: "ophalen database grootte", Err: err}
 	}
 	health.DatabaseSize = dbSize
 	health.DatabaseSizeRaw = dbSizeRaw
 
 	// Get table statistics (combined query)
-	tables, err := getTableHealth(s.db, s.schema)
+	tables, err := getTableHealth(ctx, s.db, s.schema)
 	if err != nil {
-		return nil, fmt.Errorf("ophalen tabel statistieken mislukt: %w", err)
+		return nil, &DatabaseError{Operation: "ophalen tabel statistieken", Err: err}
 	}
 	health.Tables = tables
 
@@ -87,15 +93,15 @@ func (s *AeronService) GetDatabaseHealth() (*DatabaseHealth, error) {
 }
 
 // getDatabaseSize returns the total database size.
-func getDatabaseSize(db *sqlx.DB) (string, int64, error) {
+func getDatabaseSize(ctx context.Context, db DB) (string, int64, error) {
 	var sizeRaw int64
-	err := db.Get(&sizeRaw, "SELECT pg_database_size(current_database())")
+	err := db.GetContext(ctx, &sizeRaw, "SELECT pg_database_size(current_database())")
 	if err != nil {
 		return "", 0, err
 	}
 
 	var sizePretty string
-	err = db.Get(&sizePretty, "SELECT pg_size_pretty(pg_database_size(current_database()))")
+	err = db.GetContext(ctx, &sizePretty, "SELECT pg_size_pretty(pg_database_size(current_database()))")
 	if err != nil {
 		return "", 0, err
 	}
@@ -104,7 +110,7 @@ func getDatabaseSize(db *sqlx.DB) (string, int64, error) {
 }
 
 // getTableHealth retrieves health statistics for all tables in the schema using a single combined query.
-func getTableHealth(db *sqlx.DB, schema string) ([]TableHealth, error) {
+func getTableHealth(ctx context.Context, db DB, schema string) ([]TableHealth, error) {
 	// Combined query that joins pg_stat_user_tables with pg_class for size info
 	query := `
 		SELECT
@@ -129,8 +135,8 @@ func getTableHealth(db *sqlx.DB, schema string) ([]TableHealth, error) {
 	`
 
 	var rows []tableHealthRow
-	if err := db.Select(&rows, query, schema); err != nil {
-		return nil, fmt.Errorf("ophalen tabel statistieken mislukt: %w", err)
+	if err := db.SelectContext(ctx, &rows, query, schema); err != nil {
+		return nil, &DatabaseError{Operation: "ophalen tabel statistieken", Err: err}
 	}
 
 	// Convert to TableHealth structs
@@ -288,10 +294,10 @@ type maintenanceContext struct {
 }
 
 // newMaintenanceContext creates a new maintenance context by fetching table health.
-func (s *AeronService) newMaintenanceContext() (*maintenanceContext, error) {
-	tables, err := getTableHealth(s.db, s.schema)
+func (s *AeronService) newMaintenanceContext(ctx context.Context) (*maintenanceContext, error) {
+	tables, err := getTableHealth(ctx, s.db, s.schema)
 	if err != nil {
-		return nil, fmt.Errorf("ophalen tabel statistieken mislukt: %w", err)
+		return nil, &DatabaseError{Operation: "ophalen tabel statistieken", Err: err}
 	}
 
 	tableMap := make(map[string]TableHealth, len(tables))
@@ -341,14 +347,14 @@ func (ctx *maintenanceContext) resolveTables(requestedTables []string, autoSelec
 
 // VacuumTables performs VACUUM on tables in the schema.
 // If no tables are specified, it automatically selects tables with high bloat or many dead tuples.
-func (s *AeronService) VacuumTables(opts VacuumOptions) (*VacuumResponse, error) {
+func (s *AeronService) VacuumTables(ctx context.Context, opts VacuumOptions) (*VacuumResponse, error) {
 	response := &VacuumResponse{
 		DryRun:     opts.DryRun,
 		ExecutedAt: time.Now(),
 		Results:    []VacuumResult{},
 	}
 
-	ctx, err := s.newMaintenanceContext()
+	mctx, err := s.newMaintenanceContext(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -361,7 +367,7 @@ func (s *AeronService) VacuumTables(opts VacuumOptions) (*VacuumResponse, error)
 		return t.BloatPercent > bloatThreshold || t.DeadTuples > deadTupleThreshold
 	}
 
-	tablesToVacuum, skipped := ctx.resolveTables(opts.Tables, autoSelect)
+	tablesToVacuum, skipped := mctx.resolveTables(opts.Tables, autoSelect)
 	response.Results = append(response.Results, skipped...)
 	response.TablesSkipped = len(skipped)
 	response.TablesTotal = len(tablesToVacuum) + len(skipped)
@@ -385,7 +391,7 @@ func (s *AeronService) VacuumTables(opts VacuumOptions) (*VacuumResponse, error)
 			response.TablesSuccess++
 		} else {
 			start := time.Now()
-			err := s.executeVacuum(table.Name, opts.Analyze)
+			err := s.executeVacuum(ctx, table.Name, opts.Analyze)
 			duration := time.Since(start)
 			result.Duration = duration.Round(time.Millisecond).String()
 
@@ -411,9 +417,9 @@ func (s *AeronService) VacuumTables(opts VacuumOptions) (*VacuumResponse, error)
 }
 
 // executeVacuum runs VACUUM on a single table.
-func (s *AeronService) executeVacuum(tableName string, analyze bool) error {
+func (s *AeronService) executeVacuum(ctx context.Context, tableName string, analyze bool) error {
 	if !isValidIdentifier(tableName) {
-		return fmt.Errorf("ongeldige tabelnaam: %s", tableName)
+		return &ValidationError{Field: "table", Message: fmt.Sprintf("ongeldige tabelnaam: %s", tableName)}
 	}
 
 	var query string
@@ -423,19 +429,19 @@ func (s *AeronService) executeVacuum(tableName string, analyze bool) error {
 		query = fmt.Sprintf("VACUUM %s.%s", s.schema, tableName)
 	}
 
-	_, err := s.db.Exec(query)
+	_, err := s.db.ExecContext(ctx, query)
 	return err
 }
 
 // AnalyzeTables performs ANALYZE on tables in the schema.
-func (s *AeronService) AnalyzeTables(tableNames []string) (*VacuumResponse, error) {
+func (s *AeronService) AnalyzeTables(ctx context.Context, tableNames []string) (*VacuumResponse, error) {
 	response := &VacuumResponse{
 		DryRun:     false,
 		ExecutedAt: time.Now(),
 		Results:    []VacuumResult{},
 	}
 
-	ctx, err := s.newMaintenanceContext()
+	mctx, err := s.newMaintenanceContext(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -445,7 +451,7 @@ func (s *AeronService) AnalyzeTables(tableNames []string) (*VacuumResponse, erro
 		return t.LastAnalyze == nil && t.LastAutoanalyze == nil && t.RowCount > 0
 	}
 
-	tablesToAnalyze, skipped := ctx.resolveTables(tableNames, autoSelect)
+	tablesToAnalyze, skipped := mctx.resolveTables(tableNames, autoSelect)
 	response.Results = append(response.Results, skipped...)
 	response.TablesSkipped = len(skipped)
 	response.TablesTotal = len(tablesToAnalyze) + len(skipped)
@@ -460,7 +466,7 @@ func (s *AeronService) AnalyzeTables(tableNames []string) (*VacuumResponse, erro
 		}
 
 		start := time.Now()
-		err := s.executeAnalyze(table.Name)
+		err := s.executeAnalyze(ctx, table.Name)
 		duration := time.Since(start)
 		result.Duration = duration.Round(time.Millisecond).String()
 
@@ -481,12 +487,12 @@ func (s *AeronService) AnalyzeTables(tableNames []string) (*VacuumResponse, erro
 }
 
 // executeAnalyze runs ANALYZE on a single table.
-func (s *AeronService) executeAnalyze(tableName string) error {
+func (s *AeronService) executeAnalyze(ctx context.Context, tableName string) error {
 	if !isValidIdentifier(tableName) {
-		return fmt.Errorf("ongeldige tabelnaam: %s", tableName)
+		return &ValidationError{Field: "table", Message: fmt.Sprintf("ongeldige tabelnaam: %s", tableName)}
 	}
 
 	query := fmt.Sprintf("ANALYZE %s.%s", s.schema, tableName)
-	_, err := s.db.Exec(query)
+	_, err := s.db.ExecContext(ctx, query)
 	return err
 }

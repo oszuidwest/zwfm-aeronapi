@@ -83,7 +83,7 @@ func (opt *ImageOptimizer) OptimizeImage(data []byte) ([]byte, string, string, e
 func (opt *ImageOptimizer) optimizeJPEG(data []byte) ([]byte, string, string, error) {
 	img, err := jpeg.Decode(bytes.NewReader(data))
 	if err != nil {
-		return nil, "", "", fmt.Errorf("fout bij decoderen van JPEG: %w", err)
+		return nil, "", "", &ImageProcessingError{Reason: fmt.Sprintf("decoderen van JPEG mislukt: %v", err)}
 	}
 
 	return opt.processImage(img, data, "jpeg")
@@ -92,7 +92,7 @@ func (opt *ImageOptimizer) optimizeJPEG(data []byte) ([]byte, string, string, er
 func (opt *ImageOptimizer) convertPNGToJPEG(data []byte) ([]byte, string, string, error) {
 	img, err := png.Decode(bytes.NewReader(data))
 	if err != nil {
-		return nil, "", "", fmt.Errorf("fout bij decoderen van PNG: %w", err)
+		return nil, "", "", &ImageProcessingError{Reason: fmt.Sprintf("decoderen van PNG mislukt: %v", err)}
 	}
 
 	return opt.processImage(img, data, "jpeg")
@@ -189,7 +189,7 @@ func encodeToJPEGParallel(img image.Image, config ImageConfig) ([]byte, string, 
 
 	// Handle standard JPEG error
 	if standardResult.err != nil {
-		return nil, "", fmt.Errorf("JPEG-codering mislukt: %w", standardResult.err)
+		return nil, "", &ImageProcessingError{Reason: fmt.Sprintf("JPEG-codering mislukt: %v", standardResult.err)}
 	}
 
 	// Determine the best result
@@ -222,7 +222,7 @@ func encodeStandardJPEG(img image.Image, quality int) ([]byte, error) {
 	var buf bytes.Buffer
 	options := &jpeg.Options{Quality: quality}
 	if err := jpeg.Encode(&buf, img, options); err != nil {
-		return nil, fmt.Errorf("JPEG encoding mislukt: %w", err)
+		return nil, &ImageProcessingError{Reason: fmt.Sprintf("JPEG encoding mislukt: %v", err)}
 	}
 	return buf.Bytes(), nil
 }
@@ -257,7 +257,7 @@ func validateImage(info *ImageInfo, config ImageConfig) error {
 func extractImageInfo(imageData []byte) (*ImageInfo, error) {
 	format, width, height, err := getImageInfo(imageData)
 	if err != nil {
-		return nil, fmt.Errorf("ophalen van afbeeldingsinformatie mislukt: %w", err)
+		return nil, &ImageProcessingError{Reason: fmt.Sprintf("ophalen van afbeeldingsinformatie mislukt: %v", err)}
 	}
 
 	return &ImageInfo{
@@ -270,8 +270,11 @@ func extractImageInfo(imageData []byte) (*ImageInfo, error) {
 
 func validateImageDimensions(info *ImageInfo, config ImageConfig) error {
 	if config.RejectSmaller && (info.Width < config.TargetWidth || info.Height < config.TargetHeight) {
-		return fmt.Errorf("afbeelding is te klein: %dx%d (minimaal %dx%d vereist)",
-			info.Width, info.Height, config.TargetWidth, config.TargetHeight)
+		return &ValidationError{
+			Field: "dimensions",
+			Message: fmt.Sprintf("afbeelding is te klein: %dx%d (minimaal %dx%d vereist)",
+				info.Width, info.Height, config.TargetWidth, config.TargetHeight),
+		}
 	}
 	return nil
 }
@@ -295,7 +298,7 @@ func optimizeImageData(imageData []byte, originalInfo *ImageInfo, config ImageCo
 	optimizer := NewImageOptimizer(config)
 	optimizedData, optFormat, optEncoder, err := optimizer.OptimizeImage(imageData)
 	if err != nil {
-		return nil, fmt.Errorf("optimaliseren mislukt: %w", err)
+		return nil, &ImageProcessingError{Reason: fmt.Sprintf("optimaliseren mislukt: %v", err)}
 	}
 
 	optimizedInfo, err := extractImageInfo(optimizedData)

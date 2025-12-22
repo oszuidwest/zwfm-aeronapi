@@ -47,6 +47,16 @@ type MaintenanceConfig struct {
 	DeadTupleThreshold int64   `yaml:"dead_tuple_threshold"` // Dead tuple count threshold for vacuum recommendation (default: 10000)
 }
 
+// BackupConfig contains settings for database backup functionality.
+type BackupConfig struct {
+	Enabled            bool   `yaml:"enabled"`             // Whether backup endpoints are enabled
+	Path               string `yaml:"path"`                // Directory for storing backups
+	RetentionDays      int    `yaml:"retention_days"`      // Auto-delete backups older than this (default: 30)
+	MaxBackups         int    `yaml:"max_backups"`         // Maximum number of backups to keep (default: 10)
+	DefaultFormat      string `yaml:"default_format"`      // Default backup format: "custom" or "plain" (default: "custom")
+	DefaultCompression int    `yaml:"default_compression"` // Default compression level 0-9 (default: 9)
+}
+
 // Config represents the complete application configuration loaded from YAML.
 // It contains all settings needed for database connectivity, image processing, and API authentication.
 // The zero value is not usable; all fields must be properly configured.
@@ -55,17 +65,23 @@ type Config struct {
 	Image       ImageConfig       `yaml:"image"`       // Image processing settings
 	API         APIConfig         `yaml:"api"`         // API authentication settings
 	Maintenance MaintenanceConfig `yaml:"maintenance"` // Maintenance thresholds
+	Backup      BackupConfig      `yaml:"backup"`      // Backup settings
 }
 
 // Default configuration values
 const (
-	DefaultMaxOpenConns       = 25
-	DefaultMaxIdleConns       = 5
-	DefaultConnMaxLifetime    = 5                // minutes
-	DefaultMaxDownloadBytes   = 50 * 1024 * 1024 // 50MB
-	DefaultRequestTimeout     = 30               // seconds
-	DefaultBloatThreshold     = 10.0
-	DefaultDeadTupleThreshold = 10000
+	DefaultMaxOpenConns        = 25
+	DefaultMaxIdleConns        = 5
+	DefaultConnMaxLifetime     = 5                // minutes
+	DefaultMaxDownloadBytes    = 50 * 1024 * 1024 // 50MB
+	DefaultRequestTimeout      = 30               // seconds
+	DefaultBloatThreshold      = 10.0
+	DefaultDeadTupleThreshold  = 10000
+	DefaultBackupRetentionDays = 30
+	DefaultBackupMaxBackups    = 10
+	DefaultBackupFormat        = "custom"
+	DefaultBackupCompression   = 9
+	DefaultBackupPath          = "./backups"
 )
 
 // GetMaxDownloadBytes returns the maximum download size, using default if not configured.
@@ -122,6 +138,49 @@ func (c *MaintenanceConfig) GetDeadTupleThreshold() int64 {
 		return DefaultDeadTupleThreshold
 	}
 	return c.DeadTupleThreshold
+}
+
+// GetPath returns the backup path, using default if not configured.
+func (c *BackupConfig) GetPath() string {
+	if c.Path == "" {
+		return DefaultBackupPath
+	}
+	return c.Path
+}
+
+// GetRetentionDays returns the backup retention period in days.
+func (c *BackupConfig) GetRetentionDays() int {
+	if c.RetentionDays <= 0 {
+		return DefaultBackupRetentionDays
+	}
+	return c.RetentionDays
+}
+
+// GetMaxBackups returns the maximum number of backups to keep.
+func (c *BackupConfig) GetMaxBackups() int {
+	if c.MaxBackups <= 0 {
+		return DefaultBackupMaxBackups
+	}
+	return c.MaxBackups
+}
+
+// GetDefaultFormat returns the default backup format ("custom" or "plain").
+func (c *BackupConfig) GetDefaultFormat() string {
+	if c.DefaultFormat == "" {
+		return DefaultBackupFormat
+	}
+	return c.DefaultFormat
+}
+
+// GetDefaultCompression returns the default compression level (0-9).
+func (c *BackupConfig) GetDefaultCompression() int {
+	if c.DefaultCompression <= 0 {
+		return DefaultBackupCompression
+	}
+	if c.DefaultCompression > 9 {
+		return 9
+	}
+	return c.DefaultCompression
 }
 
 // loadConfig loads and validates application configuration from a YAML file.

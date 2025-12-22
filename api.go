@@ -93,6 +93,13 @@ func (s *AeronAPI) Start(port string) error {
 				r.Get("/health", s.handleDatabaseHealth)
 				r.Post("/vacuum", s.handleVacuum)
 				r.Post("/analyze", s.handleAnalyze)
+
+				// Backup endpoints
+				r.Post("/backup", s.handleCreateBackup)
+				r.Get("/backup/download", s.handleBackupDownload)
+				r.Get("/backups", s.handleListBackups)
+				r.Get("/backups/{filename}", s.handleDownloadBackupFile)
+				r.Delete("/backups/{filename}", s.handleDeleteBackup)
 			})
 		})
 	})
@@ -160,7 +167,7 @@ func (s *AeronAPI) authMiddleware(next http.Handler) http.Handler {
 func (s *AeronAPI) handleHealth(w http.ResponseWriter, r *http.Request) {
 	// Ping database to verify connectivity
 	dbStatus := "connected"
-	if err := s.service.db.Ping(); err != nil {
+	if err := s.service.db.PingContext(r.Context()); err != nil {
 		dbStatus = "disconnected"
 		slog.Warn("Database health check mislukt", "error", err)
 	}
@@ -176,7 +183,7 @@ func (s *AeronAPI) handleHealth(w http.ResponseWriter, r *http.Request) {
 // handleStats returns a handler for statistics requests
 func (s *AeronAPI) handleStats(scope Scope) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		stats, err := s.service.GetStatistics(scope)
+		stats, err := s.service.GetStatistics(r.Context(), scope)
 		if err != nil {
 			respondError(w, http.StatusInternalServerError, err.Error())
 			return
@@ -206,9 +213,9 @@ func (s *AeronAPI) handleEntityByID(scope Scope) http.HandlerFunc {
 		var data interface{}
 		var err error
 		if scope == ScopeArtist {
-			data, err = getArtistByID(s.service.db, s.config.Database.Schema, entityID)
+			data, err = getArtistByID(r.Context(), s.service.db, s.config.Database.Schema, entityID)
 		} else {
-			data, err = getTrackByID(s.service.db, s.config.Database.Schema, entityID)
+			data, err = getTrackByID(r.Context(), s.service.db, s.config.Database.Schema, entityID)
 		}
 
 		if err != nil {
@@ -251,7 +258,7 @@ func (s *AeronAPI) handleBulkDelete(scope Scope) http.HandlerFunc {
 			return
 		}
 
-		result, err := s.service.DeleteAllImages(scope)
+		result, err := s.service.DeleteAllImages(r.Context(), scope)
 		if err != nil {
 			respondError(w, http.StatusInternalServerError, err.Error())
 			return
@@ -282,7 +289,7 @@ func (s *AeronAPI) handleGetImage(scope Scope) http.HandlerFunc {
 		}
 
 		table := TableForScope(scope)
-		imageData, err := getEntityImage(s.service.db, s.config.Database.Schema, table, entityID)
+		imageData, err := getEntityImage(r.Context(), s.service.db, s.config.Database.Schema, table, entityID)
 
 		if err != nil {
 			statusCode := errorCode(err)
@@ -336,7 +343,7 @@ func (s *AeronAPI) handleImageUpload(scope Scope) http.HandlerFunc {
 			params.ImageData = imageData
 		}
 
-		result, err := s.service.UploadImage(params)
+		result, err := s.service.UploadImage(r.Context(), params)
 		if err != nil {
 			statusCode := errorCode(err)
 			respondError(w, statusCode, err.Error())
@@ -361,7 +368,7 @@ func (s *AeronAPI) handleDeleteImage(scope Scope) http.HandlerFunc {
 
 		table := TableForScope(scope)
 
-		err := deleteEntityImage(s.service.db, s.config.Database.Schema, table, entityID)
+		err := deleteEntityImage(r.Context(), s.service.db, s.config.Database.Schema, table, entityID)
 		if err != nil {
 			slog.Error("Afbeelding verwijderen mislukt", "scope", scope, "id", entityID, "error", err)
 		}
@@ -385,7 +392,7 @@ func (s *AeronAPI) handleDeleteImage(scope Scope) http.HandlerFunc {
 }
 
 func (s *AeronAPI) handleDatabaseHealth(w http.ResponseWriter, r *http.Request) {
-	health, err := s.service.GetDatabaseHealth()
+	health, err := s.service.GetDatabaseHealth(r.Context())
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -401,7 +408,7 @@ func (s *AeronAPI) handleVacuum(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := s.service.VacuumTables(VacuumOptions(req))
+	result, err := s.service.VacuumTables(r.Context(), VacuumOptions(req))
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -417,13 +424,124 @@ func (s *AeronAPI) handleAnalyze(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := s.service.AnalyzeTables(req.Tables)
+	result, err := s.service.AnalyzeTables(r.Context(), req.Tables)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
 	respondJSON(w, http.StatusOK, result)
+}
+
+func (s *AeronAPI) handleCreateBackup(w http.ResponseWriter, r *http.Request) {
+	var req BackupRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err.Error() != "EOF" {
+		respondError(w, http.StatusBadRequest, "Ongeldige aanvraaginhoud")
+		return
+	}
+
+	result, err := s.service.CreateBackup(r.Context(), req)
+	if err != nil {
+		statusCode := errorCode(err)
+		respondError(w, statusCode, err.Error())
+		return
+	}
+
+	respondJSON(w, http.StatusOK, result)
+}
+
+func (s *AeronAPI) handleBackupDownload(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query()
+	format := query.Get("format")
+	if format == "" {
+		format = s.config.Backup.GetDefaultFormat()
+	}
+
+	compression := s.config.Backup.GetDefaultCompression()
+	if c := query.Get("compression"); c != "" {
+		if val, err := strconv.Atoi(c); err == nil {
+			compression = val
+		}
+	}
+
+	// Generate filename for download
+	timestamp := "download"
+	var ext string
+	if format == "custom" {
+		ext = "dump"
+	} else {
+		ext = "sql"
+	}
+	filename := "aeron-backup-" + timestamp + "." + ext
+
+	// Set headers for file download
+	w.Header().Del("Content-Type")
+	if format == "custom" {
+		w.Header().Set("Content-Type", "application/octet-stream")
+	} else {
+		w.Header().Set("Content-Type", "application/sql")
+	}
+	w.Header().Set("Content-Disposition", "attachment; filename="+filename)
+
+	if err := s.service.StreamBackup(r.Context(), w, format, compression); err != nil {
+		// Headers already sent, can't send error JSON
+		slog.Error("Backup stream mislukt", "error", err)
+	}
+}
+
+func (s *AeronAPI) handleListBackups(w http.ResponseWriter, r *http.Request) {
+	result, err := s.service.ListBackups()
+	if err != nil {
+		statusCode := errorCode(err)
+		respondError(w, statusCode, err.Error())
+		return
+	}
+
+	respondJSON(w, http.StatusOK, result)
+}
+
+func (s *AeronAPI) handleDownloadBackupFile(w http.ResponseWriter, r *http.Request) {
+	filename := chi.URLParam(r, "filename")
+
+	filePath, err := s.service.GetBackupFilePath(filename)
+	if err != nil {
+		statusCode := errorCode(err)
+		respondError(w, statusCode, err.Error())
+		return
+	}
+
+	// Determine content type
+	w.Header().Del("Content-Type")
+	if len(filename) > 5 && filename[len(filename)-5:] == ".dump" {
+		w.Header().Set("Content-Type", "application/octet-stream")
+	} else {
+		w.Header().Set("Content-Type", "application/sql")
+	}
+	w.Header().Set("Content-Disposition", "attachment; filename="+filename)
+
+	http.ServeFile(w, r, filePath)
+}
+
+func (s *AeronAPI) handleDeleteBackup(w http.ResponseWriter, r *http.Request) {
+	filename := chi.URLParam(r, "filename")
+
+	// Require confirmation header
+	const confirmHeader = "X-Confirm-Delete"
+	if r.Header.Get(confirmHeader) != filename {
+		respondError(w, http.StatusBadRequest, "Bevestigingsheader ontbreekt: "+confirmHeader+" moet de bestandsnaam bevatten")
+		return
+	}
+
+	if err := s.service.DeleteBackup(filename); err != nil {
+		statusCode := errorCode(err)
+		respondError(w, statusCode, err.Error())
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]string{
+		"message":  "Backup succesvol verwijderd",
+		"filename": filename,
+	})
 }
 
 func (s *AeronAPI) handlePlaylist(w http.ResponseWriter, r *http.Request) {
@@ -465,7 +583,7 @@ func (s *AeronAPI) handlePlaylist(w http.ResponseWriter, r *http.Request) {
 			opts.SortDesc = true
 		}
 
-		playlist, err := getPlaylist(s.service.db, s.config.Database.Schema, opts)
+		playlist, err := getPlaylist(r.Context(), s.service.db, s.config.Database.Schema, opts)
 		if err != nil {
 			respondError(w, http.StatusInternalServerError, err.Error())
 			return
@@ -479,7 +597,7 @@ func (s *AeronAPI) handlePlaylist(w http.ResponseWriter, r *http.Request) {
 	date := query.Get("date")
 
 	// Get all blocks and tracks in just 2 queries (optimized)
-	blocks, tracksByBlock, err := getPlaylistBlocksWithTracks(s.service.db, s.config.Database.Schema, date)
+	blocks, tracksByBlock, err := getPlaylistBlocksWithTracks(r.Context(), s.service.db, s.config.Database.Schema, date)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, err.Error())
 		return

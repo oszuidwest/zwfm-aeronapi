@@ -23,3 +23,12 @@ api:
   enabled: false        # API-sleutelauthenticatie inschakelen
   keys: []              # Lijst van geldige API-sleutels (indien ingeschakeld)
     # - "jouw-veilige-api-sleutel-hier"
+
+# Backup-configuratie
+backup:
+  enabled: false              # Backup-endpoints inschakelen
+  path: "/backups"            # Directory voor het opslaan van backups
+  retention_days: 30          # Automatisch backups ouder dan dit verwijderen
+  max_backups: 10             # Maximum aantal backups om te bewaren
+  default_format: "custom"    # Standaard backup-formaat: "custom" (binair) of "plain" (SQL)
+  default_compression: 9      # Standaard compressieniveau (0-9)

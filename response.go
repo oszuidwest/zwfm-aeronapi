@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -39,13 +40,51 @@ func respondError(w http.ResponseWriter, statusCode int, errorMsg string) {
 	}
 }
 
-// errorCode determines the appropriate HTTP status code based on the error message content.
-// It maps common Dutch error messages to their corresponding HTTP status codes.
+// errorCode determines the appropriate HTTP status code based on the error type.
+// It first checks custom error types using errors.As(), then falls back to string
+// matching for backwards compatibility during the migration period.
 func errorCode(err error) int {
 	if err == nil {
 		return http.StatusOK
 	}
 
+	// Check custom error types first (preferred method)
+	var notFound *NotFoundError
+	if errors.As(err, &notFound) {
+		return http.StatusNotFound
+	}
+
+	var noImage *NoImageError
+	if errors.As(err, &noImage) {
+		return http.StatusNotFound
+	}
+
+	var validation *ValidationError
+	if errors.As(err, &validation) {
+		return http.StatusBadRequest
+	}
+
+	var imageProc *ImageProcessingError
+	if errors.As(err, &imageProc) {
+		return http.StatusBadRequest
+	}
+
+	var config *ConfigurationError
+	if errors.As(err, &config) {
+		return http.StatusInternalServerError
+	}
+
+	var dbErr *DatabaseError
+	if errors.As(err, &dbErr) {
+		return http.StatusInternalServerError
+	}
+
+	var backupErr *BackupError
+	if errors.As(err, &backupErr) {
+		return http.StatusInternalServerError
+	}
+
+	// Fallback to string matching for backwards compatibility during migration
 	errorMsg := err.Error()
 
 	// 404 Not Found errors
