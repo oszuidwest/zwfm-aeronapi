@@ -9,3 +9,5 @@ require (
 	github.com/lib/pq v1.10.9
 	golang.org/x/image v0.34.0
 )
+
+require github.com/netresearch/go-cron v0.7.1 // indirect

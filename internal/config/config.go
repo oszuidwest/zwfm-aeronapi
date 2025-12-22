@@ -48,14 +48,22 @@ type MaintenanceConfig struct {
 	DeadTupleThreshold int64   `json:"dead_tuple_threshold"`
 }
 
+// SchedulerConfig contains settings for automatic scheduled backups.
+type SchedulerConfig struct {
+	Enabled  bool   `json:"enabled"`
+	Schedule string `json:"schedule"` // Cron expression, e.g., "0 3 * * *"
+	Timezone string `json:"timezone"` // Optional IANA timezone, e.g., "Europe/Amsterdam"
+}
+
 // BackupConfig contains settings for database backup functionality.
 type BackupConfig struct {
-	Enabled            bool   `json:"enabled"`
-	Path               string `json:"path"`
-	RetentionDays      int    `json:"retention_days"`
-	MaxBackups         int    `json:"max_backups"`
-	DefaultFormat      string `json:"default_format"`
-	DefaultCompression int    `json:"default_compression"`
+	Enabled            bool            `json:"enabled"`
+	Path               string          `json:"path"`
+	RetentionDays      int             `json:"retention_days"`
+	MaxBackups         int             `json:"max_backups"`
+	DefaultFormat      string          `json:"default_format"`
+	DefaultCompression int             `json:"default_compression"`
+	Scheduler          SchedulerConfig `json:"scheduler"`
 }
 
 // Config represents the complete application configuration loaded from JSON.
@@ -204,6 +212,18 @@ func validate(config *Config) error {
 	}
 	if config.Image.Quality <= 0 || config.Image.Quality > 100 {
 		errs = append(errs, fmt.Errorf("image.quality moet tussen 1-100 zijn"))
+	}
+
+	// Validate scheduler config
+	if config.Backup.Scheduler.Enabled {
+		if config.Backup.Scheduler.Schedule == "" {
+			errs = append(errs, fmt.Errorf("backup.scheduler.schedule is verplicht wanneer scheduler is ingeschakeld"))
+		}
+	}
+	if config.Backup.Scheduler.Timezone != "" {
+		if _, err := time.LoadLocation(config.Backup.Scheduler.Timezone); err != nil {
+			errs = append(errs, fmt.Errorf("backup.scheduler.timezone is ongeldig: %s", config.Backup.Scheduler.Timezone))
+		}
 	}
 
 	return errors.Join(errs...)
