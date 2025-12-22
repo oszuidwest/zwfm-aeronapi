@@ -1,6 +1,6 @@
-# ZWFM Aeron API Tests
+# Aeron Toolbox Tests
 
-This directory contains test fixtures and data for the ZWFM Aeron API project.
+This directory contains test fixtures and data for the Aeron Toolbox project.
 
 ## Structure
 

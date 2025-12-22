@@ -1,17 +1,18 @@
-# Aeron Image Manager API
+# Aeron Toolbox
 
-Een **onofficiële** REST API voor het Aeron-radioautomatiseringssysteem, speciaal ontwikkeld voor het **toevoegen en beheren van afbeeldingen** voor tracks en artiesten.
+Een **onofficiële** REST API voor het Aeron-radioautomatiseringssysteem met tools voor afbeeldingenbeheer, mediabrowser, database-onderhoud en backups.
 
 > [!WARNING]
 > Aeron is een product van Broadcast Partners. Deze API is volledig onofficieel en wordt niet ontwikkeld door of in samenwerking met Broadcast Partners. Gebruik is op eigen risico. Maak altijd eerst een back-up van je database voordat je deze tool gebruikt.
 
 ## Functionaliteiten
 
-- **Afbeeldingenbeheer** - Upload en beheer albumhoezen en artiestfoto's
-- **Automatische optimalisatie** - Afbeeldingen worden geschaald en gecomprimeerd naar JPEG
-- **Playlist-integratie** - Bekijk playlists inclusief afbeeldingsstatus
-- **Database onderhoud** - Health monitoring, vacuum en analyze operaties
-- **Backup/restore** - Maak en beheer database backups
+| Module | Beschrijving |
+|--------|--------------|
+| **Afbeeldingenbeheer** | Upload, optimaliseer en beheer albumhoezen en artiestfoto's |
+| **Mediabrowser** | Bekijk artiesten, tracks en playlists met uitgebreide metadata |
+| **Database-onderhoud** | Health monitoring, VACUUM en ANALYZE operaties |
+| **Backup-management** | Maak, download en beheer database backups |
 
 ## Installatie
 
@@ -68,11 +69,9 @@ curl -X POST http://localhost:8080/api/artists/{id}/image \
   -H "Content-Type: application/json" \
   -d '{"url":"https://example.com/artist.jpg"}'
 
-# Trackafbeelding uploaden
-curl -X POST http://localhost:8080/api/tracks/{id}/image \
-  -H "X-API-Key: jouw-api-sleutel" \
-  -H "Content-Type: application/json" \
-  -d '{"url":"https://example.com/album.jpg"}'
+# Database backup maken
+curl -X POST http://localhost:8080/api/db/backup \
+  -H "X-API-Key: jouw-api-sleutel"
 ```
 
 Volledige API-documentatie: [API.md](API.md)

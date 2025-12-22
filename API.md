@@ -1,4 +1,4 @@
-# Aeron Image Manager API-documentatie
+# Aeron Toolbox API-documentatie
 
 ## Inhoudsopgave
 
@@ -19,7 +19,7 @@
 
 ## Overzicht
 
-De Aeron Image Manager API biedt RESTful-endpoints voor het beheren van afbeeldingen in het Aeron-radioautomatiseringssysteem. Deze API biedt directe databasetoegang om albumhoezen voor tracks en artiestfoto's toe te voegen, op te halen en te verwijderen.
+De Aeron Toolbox API biedt RESTful-endpoints voor het Aeron-radioautomatiseringssysteem. De API biedt directe databasetoegang voor afbeeldingenbeheer, mediabrowser, database-onderhoud en backup-management.
 
 **Basis-URL:** `http://localhost:8080/api`
 

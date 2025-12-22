@@ -1,4 +1,4 @@
-// Package service provides business logic for managing images in the Aeron radio automation system.
+// Package service provides business logic for the Aeron Toolbox.
 package service
 
 import (
