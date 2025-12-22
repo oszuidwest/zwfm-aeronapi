@@ -1,6 +1,6 @@
 module github.com/oszuidwest/zwfm-aeronapi
 
-go 1.24.0
+go 1.25.0
 
 require (
 	github.com/doyensec/safeurl v0.2.2
@@ -12,4 +12,7 @@ require (
 	gopkg.in/yaml.v3 v3.0.1
 )
 
-require github.com/tetratelabs/wazero v1.9.0 // indirect
+require (
+	github.com/tetratelabs/wazero v1.11.0 // indirect
+	golang.org/x/sys v0.39.0 // indirect
+)

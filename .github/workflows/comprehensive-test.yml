@@ -16,14 +16,14 @@ on:
         type: boolean
         default: false
 env:
-  GO_VERSION: "1.24"
+  GO_VERSION: '1.25'  # Also update in test.yml and release.yml
   POSTGRES_USER: aeron
   POSTGRES_PASSWORD: aeron123
   POSTGRES_DB: aeron_db
 jobs:
   test:
     runs-on: ubuntu-latest
-    if: ${{ !inputs.skip_tests }}
+    if: ${{ inputs.skip_tests != true }}
     steps:
       # ==========================================
       # SETUP
@@ -64,6 +64,9 @@ jobs:
         with:
           version: latest
           args: --timeout=5m
+
+      - name: Check for dead code
+        run: go run golang.org/x/tools/cmd/deadcode@latest ./...
 
       # ==========================================
       # BUILD
@@ -932,6 +935,425 @@ jobs:
         run: |
           kill $(cat api_bulk.pid) || true
           rm -f api_bulk.pid
+
+      # ==========================================
+      # DATABASE MAINTENANCE TESTS
+      # ==========================================
+      - name: "=== DATABASE MAINTENANCE TESTS ==="
+        run: echo "Start database maintenance tests"
+
+      - name: Reset database before maintenance tests
+        run: ./reset_db.sh
+
+      - name: Start API server for maintenance tests
+        run: |
+          ./zwfm-aeronapi -config=test_config.yaml -port=8896 &
+          echo $! > api_maint.pid
+          sleep 3
+
+      - name: DB Maintenance Test - Health endpoint
+        run: |
+          echo "Test: Database health endpoint"
+          RESPONSE=$(curl -s -H 'X-API-Key: test-api-key-12345' http://localhost:8896/api/db/health)
+
+          if echo "$RESPONSE" | jq -e '.success == true and .data.database_name != null and .data.tables != null' > /dev/null; then
+            TABLE_COUNT=$(echo "$RESPONSE" | jq '.data.tables | length')
+            RECO_COUNT=$(echo "$RESPONSE" | jq '.data.recommendations | length')
+            echo "✓ Database health endpoint succesvol"
+            echo "  Tabellen gevonden: $TABLE_COUNT"
+            echo "  Aanbevelingen: $RECO_COUNT"
+          else
+            echo "✗ Database health endpoint mislukt:"
+            echo "$RESPONSE" | jq .
+            exit 1
+          fi
+
+      - name: DB Maintenance Test - Vacuum dry-run
+        run: |
+          echo "Test: Vacuum dry-run"
+          RESPONSE=$(curl -s -X POST -H 'X-API-Key: test-api-key-12345' \
+            -H 'Content-Type: application/json' \
+            http://localhost:8896/api/db/vacuum \
+            -d '{"dry_run": true}')
+
+          if echo "$RESPONSE" | jq -e '.success == true and .data.dry_run == true' > /dev/null; then
+            TABLES_TOTAL=$(echo "$RESPONSE" | jq '.data.tables_total')
+            echo "✓ Vacuum dry-run succesvol"
+            echo "  Tabellen die gevacuumd zouden worden: $TABLES_TOTAL"
+            echo "$RESPONSE" | jq '.data.results[] | {table, bloat_percent_before, dead_tuples_before, message}'
+          else
+            echo "✗ Vacuum dry-run mislukt:"
+            echo "$RESPONSE" | jq .
+            exit 1
+          fi
+
+      - name: DB Maintenance Test - Vacuum specific table (dry-run)
+        run: |
+          echo "Test: Vacuum specifieke tabel (dry-run)"
+          RESPONSE=$(curl -s -X POST -H 'X-API-Key: test-api-key-12345' \
+            -H 'Content-Type: application/json' \
+            http://localhost:8896/api/db/vacuum \
+            -d '{"tables": ["artist"], "dry_run": true}')
+
+          if echo "$RESPONSE" | jq -e '.success == true and .data.tables_total == 1' > /dev/null; then
+            echo "✓ Vacuum specifieke tabel dry-run succesvol"
+          else
+            echo "✗ Vacuum specifieke tabel dry-run mislukt:"
+            echo "$RESPONSE" | jq .
+            exit 1
+          fi
+
+      - name: DB Maintenance Test - Vacuum with analyze (dry-run)
+        run: |
+          echo "Test: Vacuum met analyze (dry-run)"
+          RESPONSE=$(curl -s -X POST -H 'X-API-Key: test-api-key-12345' \
+            -H 'Content-Type: application/json' \
+            http://localhost:8896/api/db/vacuum \
+            -d '{"tables": ["track"], "analyze": true, "dry_run": true}')
+
+          if echo "$RESPONSE" | jq -e '.success == true and .data.results[0].analyzed == true' > /dev/null; then
+            MESSAGE=$(echo "$RESPONSE" | jq -r '.data.results[0].message')
+            echo "✓ Vacuum met analyze dry-run succesvol"
+            echo "  Message: $MESSAGE"
+          else
+            echo "✗ Vacuum met analyze dry-run mislukt:"
+            echo "$RESPONSE" | jq .
+            exit 1
+          fi
+
+      - name: DB Maintenance Test - Vacuum non-existent table
+        run: |
+          echo "Test: Vacuum niet-bestaande tabel"
+          RESPONSE=$(curl -s -X POST -H 'X-API-Key: test-api-key-12345' \
+            -H 'Content-Type: application/json' \
+            http://localhost:8896/api/db/vacuum \
+            -d '{"tables": ["nonexistent_table"], "dry_run": true}')
+
+          if echo "$RESPONSE" | jq -e '.success == true and .data.tables_skipped == 1' > /dev/null; then
+            SKIP_REASON=$(echo "$RESPONSE" | jq -r '.data.results[0].skipped_reason')
+            echo "✓ Niet-bestaande tabel correct geskipped: $SKIP_REASON"
+          else
+            echo "✗ Niet-bestaande tabel handling mislukt:"
+            echo "$RESPONSE" | jq .
+            exit 1
+          fi
+
+      - name: DB Maintenance Test - Analyze dry-run
+        run: |
+          echo "Test: Analyze endpoint"
+          RESPONSE=$(curl -s -X POST -H 'X-API-Key: test-api-key-12345' \
+            -H 'Content-Type: application/json' \
+            http://localhost:8896/api/db/analyze \
+            -d '{"tables": ["artist"]}')
+
+          if echo "$RESPONSE" | jq -e '.success == true' > /dev/null; then
+            echo "✓ Analyze endpoint succesvol"
+            echo "$RESPONSE" | jq '.data.results[] | {table, success, message}'
+          else
+            echo "✗ Analyze endpoint mislukt:"
+            echo "$RESPONSE" | jq .
+            exit 1
+          fi
+
+      - name: DB Maintenance Test - Execute actual vacuum on small table
+        run: |
+          echo "Test: Daadwerkelijke vacuum op kleine tabel"
+          RESPONSE=$(curl -s -X POST -H 'X-API-Key: test-api-key-12345' \
+            -H 'Content-Type: application/json' \
+            http://localhost:8896/api/db/vacuum \
+            -d '{"tables": ["artist"], "analyze": true}')
+
+          if echo "$RESPONSE" | jq -e '.success == true and .data.tables_success >= 1' > /dev/null; then
+            DURATION=$(echo "$RESPONSE" | jq -r '.data.results[0].duration')
+            echo "✓ Daadwerkelijke vacuum succesvol uitgevoerd"
+            echo "  Duur: $DURATION"
+          else
+            echo "✗ Vacuum uitvoering mislukt:"
+            echo "$RESPONSE" | jq .
+            exit 1
+          fi
+
+      - name: Stop API maintenance server
+        run: |
+          kill $(cat api_maint.pid) || true
+          rm -f api_maint.pid
+
+      # ==========================================
+      # DATABASE BACKUP TESTS
+      # ==========================================
+      - name: "=== DATABASE BACKUP TESTS ==="
+        run: echo "Start database backup tests"
+
+      - name: Create backup test configuration
+        run: |
+          mkdir -p /tmp/backups
+          cat > test_backup_config.yaml << 'EOF'
+          database:
+            host: localhost
+            port: "5433"
+            name: aeron_db
+            user: aeron
+            password: aeron123
+            schema: aeron
+            sslmode: disable
+
+          image:
+            target_width: 1280
+            target_height: 1280
+            quality: 90
+            reject_smaller: true
+
+          api:
+            enabled: true
+            keys:
+              - "test-api-key-12345"
+
+          backup:
+            enabled: true
+            path: "/tmp/backups"
+            retention_days: 30
+            max_backups: 5
+            default_format: "custom"
+            default_compression: 9
+          EOF
+
+      - name: Start API server for backup tests
+        run: |
+          ./zwfm-aeronapi -config=test_backup_config.yaml -port=8897 &
+          echo $! > api_backup.pid
+          sleep 3
+
+      - name: Backup Test - List backups (empty)
+        run: |
+          echo "Test: Lijst backups (leeg)"
+          RESPONSE=$(curl -s -H 'X-API-Key: test-api-key-12345' http://localhost:8897/api/db/backups)
+
+          if echo "$RESPONSE" | jq -e '.success == true and .data.total_count == 0' > /dev/null; then
+            echo "✓ Lege backup lijst correct teruggegeven"
+          else
+            echo "✗ Backup lijst test mislukt:"
+            echo "$RESPONSE" | jq .
+            exit 1
+          fi
+
+      - name: Backup Test - Create backup (dry-run)
+        run: |
+          echo "Test: Backup maken (dry-run)"
+          RESPONSE=$(curl -s -X POST -H 'X-API-Key: test-api-key-12345' \
+            -H 'Content-Type: application/json' \
+            http://localhost:8897/api/db/backup \
+            -d '{"format": "custom", "dry_run": true}')
+
+          if echo "$RESPONSE" | jq -e '.success == true and .data.dry_run == true and .data.command != null' > /dev/null; then
+            COMMAND=$(echo "$RESPONSE" | jq -r '.data.command')
+            echo "✓ Backup dry-run succesvol"
+            echo "  Command: $COMMAND"
+          else
+            echo "✗ Backup dry-run mislukt:"
+            echo "$RESPONSE" | jq .
+            exit 1
+          fi
+
+      - name: Backup Test - Create actual backup (custom format)
+        run: |
+          echo "Test: Echte backup maken (custom format)"
+          RESPONSE=$(curl -s -X POST -H 'X-API-Key: test-api-key-12345' \
+            -H 'Content-Type: application/json' \
+            http://localhost:8897/api/db/backup \
+            -d '{"format": "custom", "compression": 6}')
+
+          if echo "$RESPONSE" | jq -e '.success == true and .data.dry_run == false and .data.filename != null' > /dev/null; then
+            FILENAME=$(echo "$RESPONSE" | jq -r '.data.filename')
+            SIZE=$(echo "$RESPONSE" | jq -r '.data.size')
+            DURATION=$(echo "$RESPONSE" | jq -r '.data.duration')
+            echo "✓ Backup succesvol gemaakt"
+            echo "  Bestand: $FILENAME"
+            echo "  Grootte: $SIZE"
+            echo "  Duur: $DURATION"
+            # Save filename for later tests
+            echo "$FILENAME" > /tmp/backup_filename.txt
+          else
+            echo "✗ Backup maken mislukt:"
+            echo "$RESPONSE" | jq .
+            exit 1
+          fi
+
+      - name: Backup Test - Create backup (plain SQL format)
+        run: |
+          echo "Test: Backup maken (plain SQL format)"
+          RESPONSE=$(curl -s -X POST -H 'X-API-Key: test-api-key-12345' \
+            -H 'Content-Type: application/json' \
+            http://localhost:8897/api/db/backup \
+            -d '{"format": "plain"}')
+
+          if echo "$RESPONSE" | jq -e '.success == true and .data.format == "plain"' > /dev/null; then
+            FILENAME=$(echo "$RESPONSE" | jq -r '.data.filename')
+            echo "✓ Plain SQL backup succesvol: $FILENAME"
+          else
+            echo "✗ Plain backup mislukt:"
+            echo "$RESPONSE" | jq .
+            exit 1
+          fi
+
+      - name: Backup Test - List backups (with files)
+        run: |
+          echo "Test: Lijst backups (met bestanden)"
+          RESPONSE=$(curl -s -H 'X-API-Key: test-api-key-12345' http://localhost:8897/api/db/backups)
+
+          if echo "$RESPONSE" | jq -e '.success == true and .data.total_count == 2' > /dev/null; then
+            echo "✓ Backup lijst toont 2 bestanden"
+            echo "$RESPONSE" | jq '.data.backups[] | {filename, format, size}'
+          else
+            echo "✗ Backup lijst test mislukt:"
+            echo "$RESPONSE" | jq .
+            exit 1
+          fi
+
+      - name: Backup Test - Download backup file
+        run: |
+          echo "Test: Backup bestand downloaden"
+          FILENAME=$(cat /tmp/backup_filename.txt)
+
+          HTTP_CODE=$(curl -s -o /tmp/downloaded_backup.dump -w "%{http_code}" \
+            -H 'X-API-Key: test-api-key-12345' \
+            "http://localhost:8897/api/db/backups/$FILENAME")
+
+          if [ "$HTTP_CODE" = "200" ] && [ -s /tmp/downloaded_backup.dump ]; then
+            SIZE=$(stat -c%s /tmp/downloaded_backup.dump 2>/dev/null || stat -f%z /tmp/downloaded_backup.dump)
+            echo "✓ Backup bestand succesvol gedownload: $SIZE bytes"
+          else
+            echo "✗ Backup download mislukt - HTTP: $HTTP_CODE"
+            exit 1
+          fi
+
+      - name: Backup Test - Stream backup download
+        run: |
+          echo "Test: Backup stream download"
+          HTTP_CODE=$(curl -s -o /tmp/streamed_backup.dump -w "%{http_code}" \
+            -H 'X-API-Key: test-api-key-12345' \
+            "http://localhost:8897/api/db/backup/download?format=custom&compression=3")
+
+          if [ "$HTTP_CODE" = "200" ] && [ -s /tmp/streamed_backup.dump ]; then
+            SIZE=$(stat -c%s /tmp/streamed_backup.dump 2>/dev/null || stat -f%z /tmp/streamed_backup.dump)
+            echo "✓ Backup stream succesvol: $SIZE bytes"
+          else
+            echo "✗ Backup stream mislukt - HTTP: $HTTP_CODE"
+            exit 1
+          fi
+
+      - name: Backup Test - Delete backup without confirmation
+        run: |
+          echo "Test: Backup verwijderen zonder bevestiging"
+          FILENAME=$(cat /tmp/backup_filename.txt)
+
+          RESPONSE=$(curl -s -X DELETE -H 'X-API-Key: test-api-key-12345' \
+            "http://localhost:8897/api/db/backups/$FILENAME")
+
+          if echo "$RESPONSE" | jq -e '.success == false' > /dev/null; then
+            echo "✓ Delete correct geweigerd zonder bevestigingsheader"
+          else
+            echo "✗ Delete had geweigerd moeten worden:"
+            echo "$RESPONSE" | jq .
+            exit 1
+          fi
+
+      - name: Backup Test - Delete backup with confirmation
+        run: |
+          echo "Test: Backup verwijderen met bevestiging"
+          FILENAME=$(cat /tmp/backup_filename.txt)
+
+          RESPONSE=$(curl -s -X DELETE \
+            -H 'X-API-Key: test-api-key-12345' \
+            -H "X-Confirm-Delete: $FILENAME" \
+            "http://localhost:8897/api/db/backups/$FILENAME")
+
+          if echo "$RESPONSE" | jq -e '.success == true' > /dev/null; then
+            echo "✓ Backup succesvol verwijderd"
+          else
+            echo "✗ Backup verwijderen mislukt:"
+            echo "$RESPONSE" | jq .
+            exit 1
+          fi
+
+      - name: Backup Test - Delete non-existent backup
+        run: |
+          echo "Test: Niet-bestaande backup verwijderen"
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X DELETE \
+            -H 'X-API-Key: test-api-key-12345' \
+            -H "X-Confirm-Delete: aeron-backup-nonexistent.dump" \
+            "http://localhost:8897/api/db/backups/aeron-backup-nonexistent.dump")
+
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+
+          if [ "$HTTP_CODE" = "404" ]; then
+            echo "✓ Niet-bestaande backup geeft correct 404"
+          else
+            echo "✗ Verwacht: 404, gekregen: $HTTP_CODE"
+            exit 1
+          fi
+
+      - name: Backup Test - Invalid format validation
+        run: |
+          echo "Test: Ongeldige format validatie"
+          RESPONSE=$(curl -s -X POST -H 'X-API-Key: test-api-key-12345' \
+            -H 'Content-Type: application/json' \
+            http://localhost:8897/api/db/backup \
+            -d '{"format": "invalid_format", "dry_run": true}')
+
+          if echo "$RESPONSE" | jq -e '.success == false' > /dev/null; then
+            ERROR=$(echo "$RESPONSE" | jq -r '.error')
+            echo "✓ Ongeldige format correct afgewezen: $ERROR"
+          else
+            echo "✗ Ongeldige format had afgewezen moeten worden"
+            exit 1
+          fi
+
+      - name: Backup Test - Invalid compression validation
+        run: |
+          echo "Test: Ongeldige compressie validatie"
+          RESPONSE=$(curl -s -X POST -H 'X-API-Key: test-api-key-12345' \
+            -H 'Content-Type: application/json' \
+            http://localhost:8897/api/db/backup \
+            -d '{"compression": 15, "dry_run": true}')
+
+          if echo "$RESPONSE" | jq -e '.success == false' > /dev/null; then
+            ERROR=$(echo "$RESPONSE" | jq -r '.error')
+            echo "✓ Ongeldige compressie correct afgewezen: $ERROR"
+          else
+            echo "✗ Ongeldige compressie had afgewezen moeten worden"
+            exit 1
+          fi
+
+      - name: Backup Test - Path traversal protection
+        run: |
+          echo "Test: Path traversal bescherming"
+          RESPONSE=$(curl -s -X DELETE \
+            -H 'X-API-Key: test-api-key-12345' \
+            -H "X-Confirm-Delete: ../../../etc/passwd" \
+            "http://localhost:8897/api/db/backups/../../../etc/passwd")
+
+          # Should either 400 (validation) or 404 (not found after validation)
+          if echo "$RESPONSE" | jq -e '.success == false' > /dev/null; then
+            echo "✓ Path traversal correct geblokkeerd"
+          else
+            echo "✗ Path traversal had geblokkeerd moeten worden"
+            exit 1
+          fi
+
+      - name: Backup Test - Verify backup file count after tests
+        run: |
+          echo "Test: Controleer backup bestanden"
+          RESPONSE=$(curl -s -H 'X-API-Key: test-api-key-12345' http://localhost:8897/api/db/backups)
+          COUNT=$(echo "$RESPONSE" | jq '.data.total_count')
+
+          echo "Aantal backups na tests: $COUNT"
+          ls -la /tmp/backups/ || true
+
+      - name: Stop API backup server
+        run: |
+          kill $(cat api_backup.pid) || true
+          rm -f api_backup.pid
+          rm -f /tmp/backup_filename.txt /tmp/downloaded_backup.dump /tmp/streamed_backup.dump
 
       # ==========================================
       # CLEANUP

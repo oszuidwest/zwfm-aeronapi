@@ -6,6 +6,7 @@ import (
 	"image"
 	"image/jpeg"
 	"image/png"
+	"sync"
 
 	"github.com/gen2brain/jpegli"
 	"golang.org/x/image/draw"
@@ -48,8 +49,8 @@ func NewImageOptimizer(config ImageConfig) *ImageOptimizer {
 	}
 }
 
-func downloadImage(urlString string) ([]byte, error) {
-	return ValidateAndDownloadImage(urlString)
+func downloadImage(urlString string, maxSize int64) ([]byte, error) {
+	return ValidateAndDownloadImage(urlString, maxSize)
 }
 
 func getImageInfo(data []byte) (format string, width, height int, err error) {
@@ -82,7 +83,7 @@ func (opt *ImageOptimizer) OptimizeImage(data []byte) ([]byte, string, string, e
 func (opt *ImageOptimizer) optimizeJPEG(data []byte) ([]byte, string, string, error) {
 	img, err := jpeg.Decode(bytes.NewReader(data))
 	if err != nil {
-		return nil, "", "", fmt.Errorf("fout bij decoderen van JPEG: %w", err)
+		return nil, "", "", &ImageProcessingError{Reason: fmt.Sprintf("decoderen van JPEG mislukt: %v", err)}
 	}
 
 	return opt.processImage(img, data, "jpeg")
@@ -91,7 +92,7 @@ func (opt *ImageOptimizer) optimizeJPEG(data []byte) ([]byte, string, string, er
 func (opt *ImageOptimizer) convertPNGToJPEG(data []byte) ([]byte, string, string, error) {
 	img, err := png.Decode(bytes.NewReader(data))
 	if err != nil {
-		return nil, "", "", fmt.Errorf("fout bij decoderen van PNG: %w", err)
+		return nil, "", "", &ImageProcessingError{Reason: fmt.Sprintf("decoderen van PNG mislukt: %v", err)}
 	}
 
 	return opt.processImage(img, data, "jpeg")
@@ -106,7 +107,7 @@ func (opt *ImageOptimizer) processImage(img image.Image, originalData []byte, ou
 		img = opt.resizeImage(img, opt.Config.TargetWidth, opt.Config.TargetHeight)
 	}
 
-	optimizedData, usedEncoder, err := encodeToJPEG(img, opt.Config)
+	optimizedData, usedEncoder, err := encodeToJPEGParallel(img, opt.Config)
 	if err != nil {
 		return nil, "", "", err
 	}
@@ -150,31 +151,62 @@ func (opt *ImageOptimizer) resizeImage(img image.Image, maxWidth, maxHeight int)
 	return dst
 }
 
-func encodeToJPEG(img image.Image, config ImageConfig) ([]byte, string, error) {
-	// Try standard JPEG encoder first
-	standardData, err := encodeStandardJPEG(img, config.Quality)
-	if err != nil {
-		return nil, "", fmt.Errorf("JPEG-codering mislukt: %w", err)
+// encodingResult holds the result of an encoding operation.
+type encodingResult struct {
+	data []byte
+	err  error
+}
+
+// encodeToJPEGParallel encodes an image using both standard JPEG and jpegli in parallel,
+// returning the smaller result.
+func encodeToJPEGParallel(img image.Image, config ImageConfig) ([]byte, string, error) {
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	standardCh := make(chan encodingResult, 1)
+	jpegliCh := make(chan encodingResult, 1)
+
+	// Encode with standard JPEG in parallel
+	go func() {
+		defer wg.Done()
+		data, err := encodeStandardJPEG(img, config.Quality)
+		standardCh <- encodingResult{data: data, err: err}
+	}()
+
+	// Encode with jpegli in parallel
+	go func() {
+		defer wg.Done()
+		data, err := encodeWithJpegli(img, config.Quality)
+		jpegliCh <- encodingResult{data: data, err: err}
+	}()
+
+	wg.Wait()
+	close(standardCh)
+	close(jpegliCh)
+
+	standardResult := <-standardCh
+	jpegliResult := <-jpegliCh
+
+	// Handle standard JPEG error
+	if standardResult.err != nil {
+		return nil, "", &ImageProcessingError{Reason: fmt.Sprintf("JPEG-codering mislukt: %v", standardResult.err)}
 	}
 
-	// Try Jpegli encoder for potentially better compression
-	jpegliData, jpegliErr := encodeWithJpegli(img, config.Quality)
-
 	// Determine the best result
-	if jpegliErr == nil && len(jpegliData) > 0 && len(jpegliData) < len(standardData) {
+	if jpegliResult.err == nil && len(jpegliResult.data) > 0 && len(jpegliResult.data) < len(standardResult.data) {
 		// Jpegli produced smaller file
-		winnerInfo := fmt.Sprintf("jpegli (%d KB) versus standaard (%d KB)", len(jpegliData)/kilobyte, len(standardData)/kilobyte)
-		return jpegliData, winnerInfo, nil
+		winnerInfo := fmt.Sprintf("jpegli (%d KB) versus standaard (%d KB)", len(jpegliResult.data)/kilobyte, len(standardResult.data)/kilobyte)
+		return jpegliResult.data, winnerInfo, nil
 	}
 
 	// Standard JPEG is better or Jpegli failed
-	if jpegliErr != nil {
-		winnerInfo := fmt.Sprintf("standaard (%d KB) - jpegli mislukt", len(standardData)/kilobyte)
-		return standardData, winnerInfo, nil
+	if jpegliResult.err != nil {
+		winnerInfo := fmt.Sprintf("standaard (%d KB) - jpegli mislukt", len(standardResult.data)/kilobyte)
+		return standardResult.data, winnerInfo, nil
 	}
 
-	winnerInfo := fmt.Sprintf("standaard (%d KB) versus jpegli (%d KB)", len(standardData)/kilobyte, len(jpegliData)/kilobyte)
-	return standardData, winnerInfo, nil
+	winnerInfo := fmt.Sprintf("standaard (%d KB) versus jpegli (%d KB)", len(standardResult.data)/kilobyte, len(jpegliResult.data)/kilobyte)
+	return standardResult.data, winnerInfo, nil
 }
 
 func encodeWithJpegli(img image.Image, quality int) ([]byte, error) {
@@ -190,7 +222,7 @@ func encodeStandardJPEG(img image.Image, quality int) ([]byte, error) {
 	var buf bytes.Buffer
 	options := &jpeg.Options{Quality: quality}
 	if err := jpeg.Encode(&buf, img, options); err != nil {
-		return nil, fmt.Errorf("JPEG encoding mislukt: %w", err)
+		return nil, &ImageProcessingError{Reason: fmt.Sprintf("JPEG encoding mislukt: %v", err)}
 	}
 	return buf.Bytes(), nil
 }
@@ -225,7 +257,7 @@ func validateImage(info *ImageInfo, config ImageConfig) error {
 func extractImageInfo(imageData []byte) (*ImageInfo, error) {
 	format, width, height, err := getImageInfo(imageData)
 	if err != nil {
-		return nil, fmt.Errorf("ophalen van afbeeldingsinformatie mislukt: %w", err)
+		return nil, &ImageProcessingError{Reason: fmt.Sprintf("ophalen van afbeeldingsinformatie mislukt: %v", err)}
 	}
 
 	return &ImageInfo{
@@ -238,8 +270,11 @@ func extractImageInfo(imageData []byte) (*ImageInfo, error) {
 
 func validateImageDimensions(info *ImageInfo, config ImageConfig) error {
 	if config.RejectSmaller && (info.Width < config.TargetWidth || info.Height < config.TargetHeight) {
-		return fmt.Errorf("afbeelding is te klein: %dx%d (minimaal %dx%d vereist)",
-			info.Width, info.Height, config.TargetWidth, config.TargetHeight)
+		return &ValidationError{
+			Field: "dimensions",
+			Message: fmt.Sprintf("afbeelding is te klein: %dx%d (minimaal %dx%d vereist)",
+				info.Width, info.Height, config.TargetWidth, config.TargetHeight),
+		}
 	}
 	return nil
 }
@@ -263,7 +298,7 @@ func optimizeImageData(imageData []byte, originalInfo *ImageInfo, config ImageCo
 	optimizer := NewImageOptimizer(config)
 	optimizedData, optFormat, optEncoder, err := optimizer.OptimizeImage(imageData)
 	if err != nil {
-		return nil, fmt.Errorf("optimaliseren mislukt: %w", err)
+		return nil, &ImageProcessingError{Reason: fmt.Sprintf("optimaliseren mislukt: %v", err)}
 	}
 
 	optimizedInfo, err := extractImageInfo(optimizedData)

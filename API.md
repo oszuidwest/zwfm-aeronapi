@@ -12,6 +12,8 @@
   - [Artiestendpoints](#artiestendpoints)
   - [Trackendpoints](#trackendpoints)
   - [Playlist-endpoints](#playlist-endpoints)
+  - [Database onderhoud](#database-onderhoud)
+  - [Backup-endpoints](#backup-endpoints)
 - [Codevoorbeelden](#codevoorbeelden)
 - [Configuratie](#configuratie)
 
@@ -44,6 +46,16 @@ De Aeron Image Manager API biedt RESTful-endpoints voor het beheren van afbeeldi
 | **Playlist** |
 | `/api/playlist` | GET | Playlistblokken voor datum | Ja |
 | `/api/playlist?block_id={id}` | GET | Tracks in playlistblok | Ja |
+| **Database onderhoud** |
+| `/api/db/health` | GET | Database health en statistieken | Ja |
+| `/api/db/vacuum` | POST | VACUUM uitvoeren op tabellen | Ja |
+| `/api/db/analyze` | POST | ANALYZE uitvoeren op tabellen | Ja |
+| **Backups** |
+| `/api/db/backup` | POST | Nieuwe backup aanmaken | Ja |
+| `/api/db/backup/download` | GET | Laatste backup downloaden | Ja |
+| `/api/db/backups` | GET | Lijst van alle backups | Ja |
+| `/api/db/backups/{filename}` | GET | Specifieke backup downloaden | Ja |
+| `/api/db/backups/{filename}` | DELETE | Backup verwijderen | Ja |
 
 ## Authenticatie
 
@@ -515,6 +527,268 @@ Verkrijg tracks voor een specifiek playlistblok.
 
 ---
 
+## Database onderhoud
+
+### Database health ophalen
+
+Verkrijg gedetailleerde database statistieken inclusief tabelgroottes, bloat-percentages en onderhoudsaanbevelingen.
+
+**Endpoint:** `GET /api/db/health`
+**Authenticatie:** Vereist
+
+**Response:** `200 OK`
+```json
+{
+  "database_name": "aeron",
+  "database_size": "2.45 GB",
+  "database_size_bytes": 2630451200,
+  "schema": "aeron",
+  "tables": [
+    {
+      "name": "track",
+      "row_count": 125000,
+      "dead_tuples": 4500,
+      "bloat_percent": 3.5,
+      "total_size": "1.2 GB",
+      "total_size_bytes": 1288490188,
+      "data_size": "1.0 GB",
+      "index_size": "150 MB",
+      "toast_size": "50 MB",
+      "last_vacuum": "2025-12-20T03:00:00Z",
+      "last_autovacuum": "2025-12-21T04:15:00Z",
+      "last_analyze": "2025-12-20T03:00:00Z",
+      "last_autoanalyze": "2025-12-21T04:15:00Z",
+      "seq_scan": 1250,
+      "idx_scan": 45000
+    }
+  ],
+  "recommendations": [
+    "Tabel 'playlistitem' heeft 15.2% bloat - VACUUM aanbevolen",
+    "Tabel 'artist' heeft 12500 dead tuples - VACUUM aanbevolen"
+  ]
+}
+```
+
+### VACUUM uitvoeren
+
+Voer VACUUM uit op tabellen om ruimte terug te winnen en prestaties te verbeteren.
+
+**Endpoint:** `POST /api/db/vacuum`
+**Authenticatie:** Vereist
+
+**Request Body:**
+```json
+{
+  "tables": ["track", "artist"],
+  "dry_run": false
+}
+```
+
+**Parameters:**
+- `tables` (optioneel): Specifieke tabellen om te vacuumen. Indien leeg, worden tabellen met hoge bloat automatisch geselecteerd.
+- `dry_run` (optioneel): Indien `true`, worden geen wijzigingen doorgevoerd maar alleen een preview getoond.
+
+**Response:** `200 OK`
+```json
+{
+  "results": [
+    {
+      "table": "track",
+      "success": true,
+      "duration_ms": 1250,
+      "message": "VACUUM succesvol uitgevoerd"
+    },
+    {
+      "table": "artist",
+      "success": true,
+      "duration_ms": 340,
+      "message": "VACUUM succesvol uitgevoerd"
+    }
+  ],
+  "dry_run": false
+}
+```
+
+### ANALYZE uitvoeren
+
+Werk tabelstatistieken bij voor de PostgreSQL query optimizer.
+
+**Endpoint:** `POST /api/db/analyze`
+**Authenticatie:** Vereist
+
+**Request Body:**
+```json
+{
+  "tables": ["track"],
+  "dry_run": false
+}
+```
+
+**Parameters:**
+- `tables` (optioneel): Specifieke tabellen om te analyzeren. Indien leeg, worden alle tabellen geanalyseerd.
+- `dry_run` (optioneel): Indien `true`, worden geen wijzigingen doorgevoerd maar alleen een preview getoond.
+
+**Response:** `200 OK`
+```json
+{
+  "results": [
+    {
+      "table": "track",
+      "success": true,
+      "duration_ms": 890,
+      "message": "ANALYZE succesvol uitgevoerd"
+    }
+  ],
+  "dry_run": false
+}
+```
+
+---
+
+## Backup-endpoints
+
+> **Let op:** Backup-endpoints zijn alleen beschikbaar indien `backup.enabled: true` in de configuratie.
+
+### Backup aanmaken
+
+Maak een nieuwe database backup.
+
+**Endpoint:** `POST /api/db/backup`
+**Authenticatie:** Vereist
+
+**Request Body:**
+```json
+{
+  "format": "custom",
+  "compression": 9
+}
+```
+
+**Parameters:**
+- `format` (optioneel): `"custom"` (binair, standaard) of `"plain"` (SQL-tekst)
+- `compression` (optioneel): Compressieniveau 0-9 (standaard: 9, alleen voor custom format)
+
+**Response:** `200 OK`
+```json
+{
+  "filename": "aeron-backup-2025-12-22T14-30-00.dump",
+  "format": "custom",
+  "size": 52428800,
+  "size_formatted": "50.0 MB",
+  "duration_ms": 12500,
+  "created_at": "2025-12-22T14:30:00Z"
+}
+```
+
+**Foutresponse:** `400 Bad Request`
+```json
+{
+  "error": "backup functionaliteit is niet ingeschakeld"
+}
+```
+
+### Laatste backup downloaden
+
+Download de meest recente backup direct.
+
+**Endpoint:** `GET /api/db/backup/download`
+**Authenticatie:** Vereist
+
+**Response:** `200 OK`
+- Content-Type: `application/octet-stream` (custom) of `application/sql` (plain)
+- Content-Disposition: `attachment; filename=aeron-backup-....dump`
+- Binaire backup data
+
+**Foutresponse:** `404 Not Found`
+```json
+{
+  "error": "geen backups beschikbaar"
+}
+```
+
+### Lijst van backups ophalen
+
+Verkrijg een overzicht van alle beschikbare backups.
+
+**Endpoint:** `GET /api/db/backups`
+**Authenticatie:** Vereist
+
+**Response:** `200 OK`
+```json
+{
+  "backups": [
+    {
+      "filename": "aeron-backup-2025-12-22T14-30-00.dump",
+      "format": "custom",
+      "size": 52428800,
+      "size_formatted": "50.0 MB",
+      "created_at": "2025-12-22T14:30:00Z"
+    },
+    {
+      "filename": "aeron-backup-2025-12-21T14-30-00.sql",
+      "format": "plain",
+      "size": 125829120,
+      "size_formatted": "120.0 MB",
+      "created_at": "2025-12-21T14:30:00Z"
+    }
+  ],
+  "total_size": 178257920,
+  "total_count": 2
+}
+```
+
+### Specifieke backup downloaden
+
+Download een specifiek backup bestand.
+
+**Endpoint:** `GET /api/db/backups/{filename}`
+**Authenticatie:** Vereist
+
+**Parameters:**
+- `filename` (pad, vereist): Naam van het backup bestand
+
+**Response:** `200 OK`
+- Content-Type: `application/octet-stream` of `application/sql`
+- Content-Disposition: `attachment; filename=...`
+- Binaire backup data
+
+**Foutresponse:** `404 Not Found`
+```json
+{
+  "error": "backup bestand niet gevonden"
+}
+```
+
+### Backup verwijderen
+
+Verwijder een specifiek backup bestand.
+
+**Endpoint:** `DELETE /api/db/backups/{filename}`
+**Authenticatie:** Vereist
+
+**Parameters:**
+- `filename` (pad, vereist): Naam van het backup bestand
+
+**Vereiste header:**
+- `X-Confirm-Delete: {filename}` (bestandsnaam moet overeenkomen)
+
+**Response:** `200 OK`
+```json
+{
+  "message": "Backup succesvol verwijderd",
+  "filename": "aeron-backup-2025-12-21T14-30-00.dump"
+}
+```
+
+**Foutresponse:** `400 Bad Request`
+```json
+{
+  "error": "Bevestigingsheader ontbreekt: X-Confirm-Delete moet de bestandsnaam bevatten"
+}
+```
+
+---
+
 ## Afbeeldingsverwerking
 
 ### Afbeeldingsoptimalisatie
@@ -690,6 +964,9 @@ database:
   name: aeron
   schema: aeron
   sslmode: disable
+  max_open_conns: 25      # Maximum open verbindingen
+  max_idle_conns: 5       # Maximum idle verbindingen
+  conn_max_lifetime: 5    # Levensduur in minuten
 
 # Afbeeldingsverwerking
 image:
@@ -697,12 +974,28 @@ image:
   target_height: 640
   quality: 85
   reject_smaller: false
+  max_download_bytes: 52428800  # 50MB
 
 # API-configuratie
 api:
   enabled: true
   keys:
     - "jouw-veilige-api-sleutel-hier"
+  request_timeout: 30     # Timeout in seconden
+
+# Database onderhoud
+maintenance:
+  bloat_threshold: 10.0       # Bloat % voor vacuum-aanbeveling
+  dead_tuple_threshold: 10000 # Dead tuples voor vacuum-aanbeveling
+
+# Backup-configuratie
+backup:
+  enabled: false              # Backup-endpoints inschakelen
+  path: "/backups"            # Directory voor backups
+  retention_days: 30          # Automatisch verwijderen na X dagen
+  max_backups: 10             # Maximum aantal backups
+  default_format: "custom"    # "custom" of "plain"
+  default_compression: 9      # Compressieniveau 0-9
 ```
 
 ---

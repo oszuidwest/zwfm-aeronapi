@@ -13,11 +13,11 @@ on:
         type: boolean
         default: false
 env:
-  GO_VERSION: '1.24'
+  GO_VERSION: '1.25'  # Also update in comprehensive-test.yml and release.yml
 jobs:
   test:
     runs-on: ubuntu-latest
-    if: ${{ !inputs.skip_tests }}
+    if: ${{ inputs.skip_tests != true }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -37,6 +37,8 @@ jobs:
             gofmt -s -l .
             exit 1
           fi
+      - name: Check for dead code
+        run: go run golang.org/x/tools/cmd/deadcode@latest ./...
       - name: Test build
         run: go build -v ./...
       - name: Test version functionality
