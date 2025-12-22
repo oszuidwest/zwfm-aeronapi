@@ -5,7 +5,7 @@
 // and photos for artists directly in the Aeron database, functionality that is
 // not natively supported by the system.
 //
-// The API server can be configured via YAML configuration file and supports
+// The API server can be configured via JSON configuration file and supports
 // optional API key authentication for secure access.
 package main
 
@@ -36,7 +36,7 @@ func main() {
 
 func run() error {
 	var (
-		configFile = flag.String("config", "", "Path to config file (default: config.yaml)")
+		configFile = flag.String("config", "", "Path to config file (default: config.json)")
 		serverPort = flag.String("port", "8080", "API server port (default: 8080)")
 		version    = flag.Bool("version", false, "Show version information")
 	)

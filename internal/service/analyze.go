@@ -14,7 +14,7 @@ func (s *AeronService) AnalyzeTables(ctx context.Context, tableNames []string) (
 	response := &VacuumResponse{
 		DryRun:     false,
 		ExecutedAt: time.Now(),
-		Results:    []VacuumResult{},
+		Results:    []MaintenanceResult{},
 	}
 
 	mctx, err := s.newMaintenanceContext(ctx)
@@ -27,14 +27,14 @@ func (s *AeronService) AnalyzeTables(ctx context.Context, tableNames []string) (
 		return t.LastAnalyze == nil && t.LastAutoanalyze == nil && t.RowCount > 0
 	}
 
-	tablesToAnalyze, skipped := mctx.resolveTables(tableNames, autoSelect)
+	tablesToAnalyze, skipped := mctx.selectTablesToProcess(tableNames, autoSelect)
 	response.Results = append(response.Results, skipped...)
 	response.TablesSkipped = len(skipped)
 	response.TablesTotal = len(tablesToAnalyze) + len(skipped)
 
 	// Process each table
 	for _, table := range tablesToAnalyze {
-		result := VacuumResult{
+		result := MaintenanceResult{
 			Table:        table.Name,
 			DeadTuples:   table.DeadTuples,
 			BloatPercent: table.BloatPercent,

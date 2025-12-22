@@ -43,14 +43,14 @@ func (s *Server) handleBackupDownload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Generate filename for download
-	timestamp := "download"
+	filenamePrefix := "download"
 	var ext string
 	if format == "custom" {
 		ext = "dump"
 	} else {
 		ext = "sql"
 	}
-	filename := "aeron-backup-" + timestamp + "." + ext
+	filename := "aeron-backup-" + filenamePrefix + "." + ext
 
 	// Set headers for file download
 	w.Header().Del("Content-Type")

@@ -2,15 +2,15 @@ package types
 
 import "fmt"
 
-// Scope is a typed string for entity scope validation.
-type Scope string
+// EntityType is a typed string that identifies the type of entity (artist or track).
+type EntityType string
 
-// Scope constants define the valid entity types for image operations.
+// EntityType constants define the valid entity types for image operations.
 // These values are used throughout the application to distinguish between
 // artist and track entities.
 const (
-	ScopeArtist Scope = "artist" // Represents artist entities
-	ScopeTrack  Scope = "track"  // Represents track entities
+	EntityTypeArtist EntityType = "artist" // Represents artist entities
+	EntityTypeTrack  EntityType = "track"  // Represents track entities
 )
 
 // Table constants for database operations.
@@ -21,18 +21,10 @@ const (
 	TableTrack  Table = "track"
 )
 
-// Error message suffixes provide consistent Dutch error messaging.
-// These are appended to entity-specific error messages throughout the application.
+// Label constants provide Dutch labels for entities in user-facing messages.
 const (
-	ErrSuffixFailed    = "mislukt"      // "failed" - used for operation failures
-	ErrSuffixNotExists = "bestaat niet" // "does not exist" - used for missing entities
-)
-
-// Item type constants provide Dutch labels for entities.
-// These are used in user-facing messages and API responses.
-const (
-	ItemTypeArtist = "artiest" // Dutch word for "artist"
-	ItemTypeTrack  = "track"   // English word "track" (commonly used in Dutch radio)
+	LabelArtist = "artiest" // Dutch word for "artist"
+	LabelTrack  = "track"   // English word "track" (commonly used in Dutch radio)
 )
 
 // VoicetrackUserID is the UUID used in Aeron to identify voice tracks.
@@ -43,38 +35,29 @@ const VoicetrackUserID = "021F097E-B504-49BB-9B89-16B64D2E8422"
 // All formats are converted to JPEG during optimization for consistency and size.
 var SupportedFormats = []string{"jpeg", "jpg", "png"}
 
-// TableForScope returns the database table name for a given scope.
-func TableForScope(scope Scope) Table {
-	if scope == ScopeTrack {
+// TableForEntityType returns the database table name for a given entity type.
+func TableForEntityType(entityType EntityType) Table {
+	if entityType == EntityTypeTrack {
 		return TableTrack
 	}
 	return TableArtist
 }
 
-// EntityTypeForScope returns the Dutch entity type string for a given scope.
-// It converts internal scope constants to user-friendly Dutch labels.
-func EntityTypeForScope(scope Scope) string {
-	if scope == ScopeTrack {
+// LabelForEntityType returns the Dutch label for a given entity type.
+// It converts internal entity type constants to user-friendly Dutch labels.
+func LabelForEntityType(entityType EntityType) string {
+	if entityType == EntityTypeTrack {
 		return "track"
 	}
 	return "artiest"
 }
 
-// EntityTypeForTable returns the Dutch entity type string for a given table.
-func EntityTypeForTable(table Table) string {
+// LabelForTable returns the Dutch label for a given table.
+func LabelForTable(table Table) string {
 	if table == TableTrack {
 		return "track"
 	}
 	return "artiest"
-}
-
-// GetEntityType returns the Dutch entity type string for a given scope string.
-// Kept for backwards compatibility with existing code.
-func GetEntityType(scope string) string {
-	if scope == string(ScopeTrack) {
-		return "Track"
-	}
-	return "Artiest"
 }
 
 // IDColumnForTable returns the primary key column name for a given table.
@@ -115,7 +98,14 @@ func QualifiedTable(schema string, table Table) (string, error) {
 
 // ErrorMessages provides centralized Dutch error messages for consistent user communication.
 // Keys are internal error codes, values are user-friendly Dutch error messages.
-// Use fmt.Sprintf with these messages when formatting is needed.
+//
+// Format strings use standard fmt.Sprintf verbs:
+//   %s - string interpolation (e.g., entity type, entity ID)
+//   %d - integer interpolation (e.g., count)
+//   %w - error wrapping (for errors.Is/As compatibility)
+//
+// Example usage:
+//   msg := fmt.Sprintf(ErrorMessages["invalid_uuid"], "artiest")
 var ErrorMessages = map[string]string{
 	// Authentication errors
 	"auth_failed":     "Niet geautoriseerd: ongeldige of ontbrekende API-sleutel",

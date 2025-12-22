@@ -13,6 +13,8 @@ import (
 
 // Response is the standard response format for all API endpoints.
 // It provides a consistent structure for both successful and error responses.
+// The Data field uses interface{} to allow flexible response types (artists, tracks, stats, etc.)
+// that are dynamically determined at runtime based on the endpoint.
 type Response struct {
 	Success bool        `json:"success"`         // Whether the operation was successful
 	Data    interface{} `json:"data,omitempty"`  // Response data for successful operations
@@ -91,7 +93,7 @@ func errorCode(err error) int {
 	errorMsg := err.Error()
 
 	// 404 Not Found errors
-	if strings.Contains(errorMsg, types.ErrSuffixNotExists) ||
+	if strings.Contains(errorMsg, "bestaat niet") ||
 		strings.Contains(errorMsg, "heeft geen afbeelding") {
 		return http.StatusNotFound
 	}

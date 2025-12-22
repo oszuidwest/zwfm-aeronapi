@@ -952,51 +952,50 @@ async function haalPlaylistTracksOp(blockId) {
 
 ## Configuratie
 
-Het gedrag van de API kan worden geconfigureerd via `config.yaml`:
+Het gedrag van de API kan worden geconfigureerd via `config.json`:
 
-```yaml
-# Databaseconfiguratie
-database:
-  host: localhost
-  port: 5432
-  user: aeron
-  password: ""
-  name: aeron
-  schema: aeron
-  sslmode: disable
-  max_open_conns: 25      # Maximum open verbindingen
-  max_idle_conns: 5       # Maximum idle verbindingen
-  conn_max_lifetime: 5    # Levensduur in minuten
-
-# Afbeeldingsverwerking
-image:
-  target_width: 640
-  target_height: 640
-  quality: 85
-  reject_smaller: false
-  max_download_bytes: 52428800  # 50MB
-
-# API-configuratie
-api:
-  enabled: true
-  keys:
-    - "jouw-veilige-api-sleutel-hier"
-  request_timeout: 30     # Timeout in seconden
-
-# Database onderhoud
-maintenance:
-  bloat_threshold: 10.0       # Bloat % voor vacuum-aanbeveling
-  dead_tuple_threshold: 10000 # Dead tuples voor vacuum-aanbeveling
-
-# Backup-configuratie
-backup:
-  enabled: false              # Backup-endpoints inschakelen
-  path: "/backups"            # Directory voor backups
-  retention_days: 30          # Automatisch verwijderen na X dagen
-  max_backups: 10             # Maximum aantal backups
-  default_format: "custom"    # "custom" of "plain"
-  default_compression: 9      # Compressieniveau 0-9
+```json
+{
+  "database": {
+    "host": "localhost",
+    "port": "5432",
+    "user": "aeron",
+    "password": "",
+    "name": "aeron",
+    "schema": "aeron",
+    "sslmode": "disable",
+    "max_open_conns": 25,
+    "max_idle_conns": 5,
+    "conn_max_lifetime_minutes": 5
+  },
+  "image": {
+    "target_width": 640,
+    "target_height": 640,
+    "quality": 85,
+    "reject_smaller": false,
+    "max_image_download_size_bytes": 52428800
+  },
+  "api": {
+    "enabled": true,
+    "keys": ["jouw-veilige-api-sleutel-hier"],
+    "request_timeout_seconds": 30
+  },
+  "maintenance": {
+    "bloat_threshold": 10.0,
+    "dead_tuple_threshold": 10000
+  },
+  "backup": {
+    "enabled": false,
+    "path": "./backups",
+    "retention_days": 30,
+    "max_backups": 10,
+    "default_format": "custom",
+    "default_compression": 9
+  }
+}
 ```
+
+Zie [CLAUDE.md](CLAUDE.md) voor een complete configuratie-referentie met alle beschikbare opties.
 
 ---
 

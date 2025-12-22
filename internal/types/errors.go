@@ -35,11 +35,11 @@ func (e *ValidationError) Error() string {
 
 // ImageProcessingError indicates image processing failed
 type ImageProcessingError struct {
-	Reason string
+	Message string
 }
 
 func (e *ImageProcessingError) Error() string {
-	return fmt.Sprintf("afbeelding verwerking mislukt: %s", e.Reason)
+	return fmt.Sprintf("afbeelding verwerking mislukt: %s", e.Message)
 }
 
 // DatabaseError wraps database operation errors
@@ -95,4 +95,24 @@ func NewNoImageError(entity, id string) *NoImageError {
 // NewValidationError creates a new ValidationError
 func NewValidationError(field, message string) *ValidationError {
 	return &ValidationError{Field: field, Message: message}
+}
+
+// NewImageProcessingError creates a new ImageProcessingError
+func NewImageProcessingError(message string) *ImageProcessingError {
+	return &ImageProcessingError{Message: message}
+}
+
+// NewDatabaseError creates a new DatabaseError
+func NewDatabaseError(operation string, err error) *DatabaseError {
+	return &DatabaseError{Operation: operation, Err: err}
+}
+
+// NewConfigurationError creates a new ConfigurationError
+func NewConfigurationError(field, message string) *ConfigurationError {
+	return &ConfigurationError{Field: field, Message: message}
+}
+
+// NewBackupError creates a new BackupError
+func NewBackupError(operation string, err error) *BackupError {
+	return &BackupError{Operation: operation, Err: err}
 }

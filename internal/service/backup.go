@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/oszuidwest/zwfm-aeronapi/internal/types"
+	"github.com/oszuidwest/zwfm-aeronapi/internal/util"
 )
 
 // BackupFormat represents the pg_dump output format.
@@ -63,13 +64,14 @@ type BackupListResponse struct {
 	TotalCount int          `json:"total_count"`
 }
 
-// validFilenameRegex validates backup filenames to prevent path traversal.
-var validFilenameRegex = regexp.MustCompile(`^[a-zA-Z0-9_\-\.]+$`)
+// safeBackupFilenamePattern validates backup filenames to prevent path traversal.
+// Only allows alphanumeric characters, underscores, hyphens, and dots.
+var safeBackupFilenamePattern = regexp.MustCompile(`^[a-zA-Z0-9_\-\.]+$`)
 
 // validateBackupPath validates a backup filename and returns the full path.
 // It checks for valid characters, correct prefix, and prevents path traversal.
 func (s *AeronService) validateBackupPath(filename string) (string, error) {
-	if !validFilenameRegex.MatchString(filename) {
+	if !safeBackupFilenamePattern.MatchString(filename) {
 		return "", types.NewValidationError("filename", "ongeldige bestandsnaam")
 	}
 
@@ -217,7 +219,7 @@ func (s *AeronService) CreateBackup(ctx context.Context, req BackupRequest) (*Ba
 
 	slog.Info("Backup succesvol gemaakt",
 		"filename", filename,
-		"size", FormatBytes(fileInfo.Size()),
+		"size", util.FormatBytes(fileInfo.Size()),
 		"duration", duration.Round(time.Millisecond).String())
 
 	// Cleanup old backups
@@ -228,7 +230,7 @@ func (s *AeronService) CreateBackup(ctx context.Context, req BackupRequest) (*Ba
 		FilePath:      fullPath,
 		Format:        format,
 		Size:          fileInfo.Size(),
-		SizeFormatted: FormatBytes(fileInfo.Size()),
+		SizeFormatted: util.FormatBytes(fileInfo.Size()),
 		Duration:      duration.Round(time.Millisecond).String(),
 		CreatedAt:     fileInfo.ModTime(),
 		DryRun:        false,
@@ -328,7 +330,7 @@ func (s *AeronService) ListBackups() (*BackupListResponse, error) {
 			Filename:      name,
 			Format:        format,
 			Size:          info.Size(),
-			SizeFormatted: FormatBytes(info.Size()),
+			SizeFormatted: util.FormatBytes(info.Size()),
 			CreatedAt:     info.ModTime(),
 		})
 		totalSize += info.Size()

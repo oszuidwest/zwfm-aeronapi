@@ -12,18 +12,18 @@ import (
 // PlaylistBlock represents a programming block in the Aeron playlist system.
 // Blocks group playlist items by time periods (e.g., morning show, afternoon music).
 type PlaylistBlock struct {
-	BlockID   string `db:"blockid" json:"blockid"`       // UUID of the playlist block
-	Name      string `db:"name" json:"name"`             // Block name (e.g., "Morning Show")
-	StartTime string `db:"start_time" json:"start_time"` // Block start time (HH:MM:SS format)
-	EndTime   string `db:"end_time" json:"end_time"`     // Block end time (HH:MM:SS format)
-	Date      string `db:"date" json:"date"`             // Block date (YYYY-MM-DD format)
+	BlockID        string `db:"blockid" json:"blockid"`       // UUID of the playlist block
+	Name           string `db:"name" json:"name"`             // Block name (e.g., "Morning Show")
+	StartTimeOfDay string `db:"start_time" json:"start_time"` // Block start time of day (HH:MM:SS format)
+	EndTimeOfDay   string `db:"end_time" json:"end_time"`     // Block end time of day (HH:MM:SS format)
+	Date           string `db:"date" json:"date"`             // Block date (YYYY-MM-DD format)
 }
 
 // PlaylistItem represents a single item in the Aeron playlist.
 // Items can be music tracks, voice tracks, commercials, or other content.
 type PlaylistItem struct {
-	SongID         string `db:"songid" json:"songid"`                     // UUID of the track
-	SongName       string `db:"songname" json:"songname"`                 // Track title
+	TrackID        string `db:"trackid" json:"trackid"`                   // UUID of the track
+	TrackTitle     string `db:"tracktitle" json:"tracktitle"`             // Track title
 	ArtistID       string `db:"artistid" json:"artistid"`                 // UUID of the artist
 	ArtistName     string `db:"artistname" json:"artistname"`             // Artist name
 	StartTime      string `db:"start_time" json:"start_time"`             // Scheduled start time (HH:MM:SS format)
@@ -136,8 +136,8 @@ func BuildPlaylistQuery(schema string, opts PlaylistOptions) (string, []interfac
 
 	query := fmt.Sprintf(`
 		SELECT
-			pi.titleid as songid,
-			COALESCE(t.tracktitle, '') as songname,
+			pi.titleid as trackid,
+			COALESCE(t.tracktitle, '') as tracktitle,
 			COALESCE(t.artistid, '00000000-0000-0000-0000-000000000000') as artistid,
 			COALESCE(t.artist, '') as artistname,
 			TO_CHAR(pi.startdatetime, 'HH24:MI:SS') as start_time,
@@ -270,15 +270,15 @@ func GetPlaylistBlocksWithTracks(ctx context.Context, db DB, schema string, date
 	}
 
 	// Create a temporary struct that includes blockid for grouping
-	type tempPlaylistItem struct {
+	type playlistItemWithBlockID struct {
 		PlaylistItem
 		TempBlockID string `db:"blockid"`
 	}
 
 	query := fmt.Sprintf(`
 		SELECT
-			pi.titleid as songid,
-			COALESCE(t.tracktitle, '') as songname,
+			pi.titleid as trackid,
+			COALESCE(t.tracktitle, '') as tracktitle,
 			COALESCE(t.artistid, '00000000-0000-0000-0000-000000000000') as artistid,
 			COALESCE(t.artist, '') as artistname,
 			TO_CHAR(pi.startdatetime, 'HH24:MI:SS') as start_time,
@@ -298,7 +298,7 @@ func GetPlaylistBlocksWithTracks(ctx context.Context, db DB, schema string, date
 		ORDER BY pi.blockid, pi.startdatetime
 	`, types.VoicetrackUserID, schema, schema, schema, dateFilter, strings.Join(placeholders, ","))
 
-	var tempItems []tempPlaylistItem
+	var tempItems []playlistItemWithBlockID
 	err = db.SelectContext(ctx, &tempItems, query, params...)
 	if err != nil {
 		return nil, nil, &types.DatabaseError{Operation: "ophalen van playlist items", Err: err}

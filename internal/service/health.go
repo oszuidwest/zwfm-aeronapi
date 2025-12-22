@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/oszuidwest/zwfm-aeronapi/internal/types"
+	"github.com/oszuidwest/zwfm-aeronapi/internal/util"
 )
 
 // DatabaseHealth represents the overall health status of the database.
@@ -156,13 +157,13 @@ func getTableHealth(ctx context.Context, db DB, schema string) ([]TableHealth, e
 			SeqScans:        row.SeqScan,
 			IdxScans:        row.IdxScan,
 			TotalSizeRaw:    row.TotalSize,
-			TotalSize:       FormatBytes(row.TotalSize),
+			TotalSize:       util.FormatBytes(row.TotalSize),
 			TableSizeRaw:    row.TableSize,
-			TableSize:       FormatBytes(row.TableSize),
+			TableSize:       util.FormatBytes(row.TableSize),
 			IndexSizeRaw:    row.IndexSize,
-			IndexSize:       FormatBytes(row.IndexSize),
+			IndexSize:       util.FormatBytes(row.IndexSize),
 			ToastSizeRaw:    row.ToastSize,
-			ToastSize:       FormatBytes(row.ToastSize),
+			ToastSize:       util.FormatBytes(row.ToastSize),
 		}
 
 		// Calculate bloat estimate based on dead tuples
@@ -202,11 +203,11 @@ func (s *AeronService) generateRecommendations(tables []TableHealth) []string {
 		}
 
 		// Old vacuum (more than 7 days)
-		lastVac := t.LastAutovacuum
-		if t.LastVacuum != nil && (lastVac == nil || t.LastVacuum.After(*lastVac)) {
-			lastVac = t.LastVacuum
+		lastVacuumTime := t.LastAutovacuum
+		if t.LastVacuum != nil && (lastVacuumTime == nil || t.LastVacuum.After(*lastVacuumTime)) {
+			lastVacuumTime = t.LastVacuum
 		}
-		if lastVac != nil && time.Since(*lastVac) > 7*24*time.Hour && t.RowCount > 1000 {
+		if lastVacuumTime != nil && time.Since(*lastVacuumTime) > 7*24*time.Hour && t.RowCount > 1000 {
 			recommendations = append(recommendations,
 				fmt.Sprintf("Tabel '%s' is meer dan 7 dagen niet gevacuumd", t.Name))
 		}
@@ -236,24 +237,4 @@ func (s *AeronService) generateRecommendations(tables []TableHealth) []string {
 	}
 
 	return recommendations
-}
-
-// FormatBytes converts bytes to a human-readable string.
-func FormatBytes(bytes int64) string {
-	const (
-		KB = 1024
-		MB = KB * 1024
-		GB = MB * 1024
-	)
-
-	switch {
-	case bytes >= GB:
-		return fmt.Sprintf("%.2f GB", float64(bytes)/float64(GB))
-	case bytes >= MB:
-		return fmt.Sprintf("%.2f MB", float64(bytes)/float64(MB))
-	case bytes >= KB:
-		return fmt.Sprintf("%.2f KB", float64(bytes)/float64(KB))
-	default:
-		return fmt.Sprintf("%d bytes", bytes)
-	}
 }

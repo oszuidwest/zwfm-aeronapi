@@ -70,7 +70,7 @@ func getImageInfo(data []byte) (format string, width, height int, err error) {
 
 // OptimizeImage processes and optimizes image data according to the configured settings.
 // It returns the optimized image data, format, encoder description, and any error encountered.
-func (opt *Optimizer) OptimizeImage(data []byte) ([]byte, string, string, error) {
+func (o *Optimizer) OptimizeImage(data []byte) ([]byte, string, string, error) {
 	_, format, err := image.DecodeConfig(bytes.NewReader(data))
 	if err != nil {
 		return nil, "", "", err
@@ -78,47 +78,47 @@ func (opt *Optimizer) OptimizeImage(data []byte) ([]byte, string, string, error)
 
 	switch format {
 	case "jpeg", "jpg":
-		return opt.optimizeJPEG(data)
+		return o.optimizeJPEG(data)
 	case "png":
-		return opt.convertPNGToJPEG(data)
+		return o.convertPNGToJPEG(data)
 	default:
 		return data, format, "origineel", nil
 	}
 }
 
-func (opt *Optimizer) optimizeJPEG(data []byte) ([]byte, string, string, error) {
-	img, err := jpeg.Decode(bytes.NewReader(data))
+func (o *Optimizer) optimizeJPEG(data []byte) ([]byte, string, string, error) {
+	sourceImage, err := jpeg.Decode(bytes.NewReader(data))
 	if err != nil {
-		return nil, "", "", &types.ImageProcessingError{Reason: fmt.Sprintf("decoderen van JPEG mislukt: %v", err)}
+		return nil, "", "", &types.ImageProcessingError{Message: fmt.Sprintf("decoderen van JPEG mislukt: %v", err)}
 	}
 
-	return opt.processImage(img, data, "jpeg")
+	return o.processImage(sourceImage, data, "jpeg")
 }
 
-func (opt *Optimizer) convertPNGToJPEG(data []byte) ([]byte, string, string, error) {
-	img, err := png.Decode(bytes.NewReader(data))
+func (o *Optimizer) convertPNGToJPEG(data []byte) ([]byte, string, string, error) {
+	sourceImage, err := png.Decode(bytes.NewReader(data))
 	if err != nil {
-		return nil, "", "", &types.ImageProcessingError{Reason: fmt.Sprintf("decoderen van PNG mislukt: %v", err)}
+		return nil, "", "", &types.ImageProcessingError{Message: fmt.Sprintf("decoderen van PNG mislukt: %v", err)}
 	}
 
-	return opt.processImage(img, data, "jpeg")
+	return o.processImage(sourceImage, data, "jpeg")
 }
 
-func (opt *Optimizer) processImage(img image.Image, originalData []byte, outputFormat string) ([]byte, string, string, error) {
+func (o *Optimizer) processImage(sourceImage image.Image, originalData []byte, outputFormat string) ([]byte, string, string, error) {
 	// Resize if image exceeds target dimensions to reduce memory usage
-	bounds := img.Bounds()
+	bounds := sourceImage.Bounds()
 	width, height := bounds.Dx(), bounds.Dy()
 
-	if width > opt.Config.TargetWidth || height > opt.Config.TargetHeight {
-		img = opt.resizeImage(img, opt.Config.TargetWidth, opt.Config.TargetHeight)
+	if width > o.Config.TargetWidth || height > o.Config.TargetHeight {
+		sourceImage = o.resizeImage(sourceImage, o.Config.TargetWidth, o.Config.TargetHeight)
 	}
 
 	// Encode to JPEG
-	var buf bytes.Buffer
-	if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: opt.Config.Quality}); err != nil {
-		return nil, "", "", &types.ImageProcessingError{Reason: fmt.Sprintf("JPEG encoding mislukt: %v", err)}
+	var jpegBuffer bytes.Buffer
+	if err := jpeg.Encode(&jpegBuffer, sourceImage, &jpeg.Options{Quality: o.Config.Quality}); err != nil {
+		return nil, "", "", &types.ImageProcessingError{Message: fmt.Sprintf("JPEG encoding mislukt: %v", err)}
 	}
-	optimizedData := buf.Bytes()
+	optimizedData := jpegBuffer.Bytes()
 
 	// Return optimized data only if it's smaller than original
 	if len(optimizedData) < len(originalData) {
@@ -130,21 +130,21 @@ func (opt *Optimizer) processImage(img image.Image, originalData []byte, outputF
 
 // resizeImage resizes an image to fit within the specified maximum dimensions while maintaining aspect ratio.
 // It uses high-quality CatmullRom scaling and will not upscale images that are already smaller than the target size.
-func (opt *Optimizer) resizeImage(img image.Image, maxWidth, maxHeight int) image.Image {
-	bounds := img.Bounds()
+func (o *Optimizer) resizeImage(sourceImage image.Image, maxWidth, maxHeight int) image.Image {
+	bounds := sourceImage.Bounds()
 	width, height := bounds.Dx(), bounds.Dy()
 
 	// Calculate scale factor to fit within bounds while maintaining aspect ratio
-	scaleX := float64(maxWidth) / float64(width)
-	scaleY := float64(maxHeight) / float64(height)
-	scale := scaleX
-	if scaleY < scaleX {
-		scale = scaleY
+	scaleFactorX := float64(maxWidth) / float64(width)
+	scaleFactorY := float64(maxHeight) / float64(height)
+	scale := scaleFactorX
+	if scaleFactorY < scaleFactorX {
+		scale = scaleFactorY
 	}
 
 	// If image is already smaller, don't upscale
 	if scale >= 1 {
-		return img
+		return sourceImage
 	}
 
 	newWidth := int(float64(width) * scale)
@@ -154,7 +154,7 @@ func (opt *Optimizer) resizeImage(img image.Image, maxWidth, maxHeight int) imag
 	dst := image.NewRGBA(image.Rect(0, 0, newWidth, newHeight))
 
 	// Use CatmullRom for high-quality resizing (slower but best quality)
-	draw.CatmullRom.Scale(dst, dst.Bounds(), img, img.Bounds(), draw.Over, nil)
+	draw.CatmullRom.Scale(dst, dst.Bounds(), sourceImage, sourceImage.Bounds(), draw.Over, nil)
 
 	return dst
 }
@@ -172,7 +172,7 @@ func Process(imageData []byte, config Config) (*ProcessingResult, error) {
 	}
 
 	// Skip optimization if already at target size
-	if shouldSkipOptimization(originalInfo, config) {
+	if isAlreadyTargetSize(originalInfo, config) {
 		return createSkippedResult(imageData, originalInfo), nil
 	}
 
@@ -189,7 +189,7 @@ func validateImage(info *Info, config Config) error {
 func extractImageInfo(imageData []byte) (*Info, error) {
 	format, width, height, err := getImageInfo(imageData)
 	if err != nil {
-		return nil, &types.ImageProcessingError{Reason: fmt.Sprintf("ophalen van afbeeldingsinformatie mislukt: %v", err)}
+		return nil, &types.ImageProcessingError{Message: fmt.Sprintf("ophalen van afbeeldingsinformatie mislukt: %v", err)}
 	}
 
 	return &Info{
@@ -211,7 +211,7 @@ func validateImageDimensions(info *Info, config Config) error {
 	return nil
 }
 
-func shouldSkipOptimization(info *Info, config Config) bool {
+func isAlreadyTargetSize(info *Info, config Config) bool {
 	return info.Width == config.TargetWidth && info.Height == config.TargetHeight
 }
 
@@ -230,7 +230,7 @@ func optimizeImageData(imageData []byte, originalInfo *Info, config Config) (*Pr
 	optimizer := NewOptimizer(config)
 	optimizedData, optFormat, optEncoder, err := optimizer.OptimizeImage(imageData)
 	if err != nil {
-		return nil, &types.ImageProcessingError{Reason: fmt.Sprintf("optimaliseren mislukt: %v", err)}
+		return nil, &types.ImageProcessingError{Message: fmt.Sprintf("optimaliseren mislukt: %v", err)}
 	}
 
 	optimizedInfo, err := extractImageInfo(optimizedData)

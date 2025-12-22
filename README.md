@@ -48,7 +48,7 @@ De primaire functie van deze API is het **beheren van afbeeldingen** voor:
 docker run -d -p 8080:8080 --name zwfm-aeronapi ghcr.io/oszuidwest/zwfm-aeronapi:latest
 
 # Of met eigen configuratie
-docker run -d -p 8080:8080 -v $(pwd)/config.yaml:/config.yaml --name zwfm-aeronapi ghcr.io/oszuidwest/zwfm-aeronapi:latest
+docker run -d -p 8080:8080 -v $(pwd)/config.json:/config.json --name zwfm-aeronapi ghcr.io/oszuidwest/zwfm-aeronapi:latest
 ```
 
 ### Uitvoerbare bestanden
@@ -63,13 +63,13 @@ Download uitvoerbare bestanden voor verschillende platformen via de [releases-pa
 
 ```bash
 # Download voorbeeldconfiguratie
-wget https://raw.githubusercontent.com/oszuidwest/zwfm-aeronapi/main/config.example.yaml -O config.yaml
-# Pas config.yaml aan naar jouw situatie
+wget https://raw.githubusercontent.com/oszuidwest/zwfm-aeronapi/main/config.example.json -O config.json
+# Pas config.json aan naar jouw situatie
 
 # Start de container
 docker run -d \
   -p 8080:8080 \
-  -v $(pwd)/config.yaml:/config.yaml \
+  -v $(pwd)/config.json:/config.json \
   --name zwfm-aeronapi \
   --restart unless-stopped \
   ghcr.io/oszuidwest/zwfm-aeronapi:latest
@@ -81,7 +81,7 @@ docker run -d \
 # Start de container met backup volume
 docker run -d \
   -p 8080:8080 \
-  -v $(pwd)/config.yaml:/config.yaml \
+  -v $(pwd)/config.json:/config.json \
   -v $(pwd)/backups:/backups \
   --name zwfm-aeronapi \
   --restart unless-stopped \
@@ -95,27 +95,25 @@ git clone https://github.com/oszuidwest/zwfm-aeronapi.git
 cd zwfm-aeronapi
 
 # Kopieer en pas de configuratie aan
-cp config.example.yaml config.yaml
-# Bewerk config.yaml met jouw databasegegevens
+cp config.example.json config.json
+# Bewerk config.json met jouw databasegegevens
 
 # Compileer en start de applicatie
 go build -o zwfm-aeronapi .
-./zwfm-aeronapi -config=config.yaml -port=8080
+./zwfm-aeronapi -config=config.json -port=8080
 ```
 
 
 ## Configuratie
 
-Kopieer `config.example.yaml` naar `config.yaml` en pas de waarden aan:
+Kopieer `config.example.json` naar `config.json` en pas de waarden aan:
 
 ```bash
-cp config.example.yaml config.yaml
+cp config.example.json config.json
 ```
 
-Raadpleeg [`config.example.yaml`](config.example.yaml) voor:
-- Volledige documentatie van alle configuratie-opties
-- Voorbeelden voor verschillende omgevingen
-- Gedetailleerde uitleg van elke instelling
+Raadpleeg [`config.example.json`](config.example.json) voor een complete voorbeeldconfiguratie.
+Zie [CLAUDE.md](CLAUDE.md) voor gedetailleerde documentatie van alle configuratie-opties.
 
 ### Belangrijke configuratie-opties
 
@@ -142,7 +140,7 @@ Raadpleeg [`config.example.yaml`](config.example.yaml) voor:
 ./zwfm-aeronapi -port=9090
 
 # Met aangepaste configuratie
-./zwfm-aeronapi -config=/pad/naar/config.yaml -port=8080
+./zwfm-aeronapi -config=/pad/naar/config.json -port=8080
 
 # Versie-informatie tonen
 ./zwfm-aeronapi -version
@@ -152,7 +150,7 @@ Raadpleeg [`config.example.yaml`](config.example.yaml) voor:
 
 ### 1. Start de API-server
 ```bash
-./zwfm-aeronapi -config=config.yaml
+./zwfm-aeronapi -config=config.json
 ```
 
 ### 2. Test de verbinding

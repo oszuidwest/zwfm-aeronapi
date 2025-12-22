@@ -71,8 +71,8 @@ func (s *Server) Start(port string) error {
 			r.Use(s.authMiddleware)
 
 			// Generic entity routes for both artists and tracks
-			s.setupEntityRoutes(r, "/artists", types.ScopeArtist)
-			s.setupEntityRoutes(r, "/tracks", types.ScopeTrack)
+			s.setupEntityRoutes(r, "/artists", types.EntityTypeArtist)
+			s.setupEntityRoutes(r, "/tracks", types.EntityTypeTrack)
 
 			// Playlist
 			r.Get("/playlist", s.handlePlaylist)
@@ -111,17 +111,17 @@ func (s *Server) Shutdown(ctx context.Context) error {
 }
 
 // setupEntityRoutes configures routes for an entity type (artist/track)
-func (s *Server) setupEntityRoutes(r chi.Router, path string, scope types.Scope) {
+func (s *Server) setupEntityRoutes(r chi.Router, path string, entityType types.EntityType) {
 	r.Route(path, func(r chi.Router) {
-		r.Get("/", s.handleStats(scope))
-		r.Delete("/bulk-delete", s.handleBulkDelete(scope))
+		r.Get("/", s.handleStats(entityType))
+		r.Delete("/bulk-delete", s.handleBulkDelete(entityType))
 
 		r.Route("/{id}", func(r chi.Router) {
-			r.Get("/", s.handleEntityByID(scope))
+			r.Get("/", s.handleEntityByID(entityType))
 			r.Route("/image", func(r chi.Router) {
-				r.Get("/", s.handleGetImage(scope))
-				r.Post("/", s.handleImageUpload(scope))
-				r.Delete("/", s.handleDeleteImage(scope))
+				r.Get("/", s.handleGetImage(entityType))
+				r.Post("/", s.handleImageUpload(entityType))
+				r.Delete("/", s.handleDeleteImage(entityType))
 			})
 		})
 	})
@@ -171,8 +171,8 @@ func detectImageContentType(data []byte) string {
 	return http.DetectContentType(data)
 }
 
-// parseBoolParam parses a boolean query parameter
-func parseBoolParam(value string) *bool {
+// parseQueryBoolParam parses a boolean query parameter
+func parseQueryBoolParam(value string) *bool {
 	switch value {
 	case "yes", "true", "1":
 		val := true

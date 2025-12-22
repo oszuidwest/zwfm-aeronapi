@@ -29,6 +29,13 @@ type ImageStatsResponse struct {
 	WithoutImages int `json:"without_images"` // Number of entities without images
 }
 
+// BlockWithTracks represents a playlist block with its associated tracks.
+// Used when returning the full playlist structure grouped by blocks.
+type BlockWithTracks struct {
+	database.PlaylistBlock
+	Tracks []database.PlaylistItem `json:"tracks"`
+}
+
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	// Ping database to verify connectivity
 	dbStatus := "connected"
@@ -46,9 +53,9 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleStats returns a handler for statistics requests
-func (s *Server) handleStats(scope types.Scope) http.HandlerFunc {
+func (s *Server) handleStats(entityType types.EntityType) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		stats, err := s.service.GetStatistics(r.Context(), scope)
+		stats, err := s.service.GetStatistics(r.Context(), entityType)
 		if err != nil {
 			respondError(w, http.StatusInternalServerError, err.Error())
 			return
@@ -65,55 +72,57 @@ func (s *Server) handleStats(scope types.Scope) http.HandlerFunc {
 }
 
 // handleEntityByID returns a handler for retrieving entity details
-func (s *Server) handleEntityByID(scope types.Scope) http.HandlerFunc {
+func (s *Server) handleEntityByID(entityType types.EntityType) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		entityID := chi.URLParam(r, "id")
-		entityType := types.GetEntityType(string(scope))
+		label := types.LabelForEntityType(entityType)
 
-		if err := util.ValidateEntityID(entityID, entityType); err != nil {
+		if err := util.ValidateEntityID(entityID, label); err != nil {
 			respondError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 
-		var data interface{}
-		var err error
-		if scope == types.ScopeArtist {
-			data, err = database.GetArtistByID(r.Context(), s.service.DB(), s.config.Database.Schema, entityID)
+		if entityType == types.EntityTypeArtist {
+			artist, err := database.GetArtistByID(r.Context(), s.service.DB(), s.config.Database.Schema, entityID)
+			if err != nil {
+				statusCode := errorCode(err)
+				respondError(w, statusCode, err.Error())
+				return
+			}
+			respondJSON(w, http.StatusOK, artist)
 		} else {
-			data, err = database.GetTrackByID(r.Context(), s.service.DB(), s.config.Database.Schema, entityID)
+			track, err := database.GetTrackByID(r.Context(), s.service.DB(), s.config.Database.Schema, entityID)
+			if err != nil {
+				statusCode := errorCode(err)
+				respondError(w, statusCode, err.Error())
+				return
+			}
+			respondJSON(w, http.StatusOK, track)
 		}
-
-		if err != nil {
-			statusCode := errorCode(err)
-			respondError(w, statusCode, err.Error())
-			return
-		}
-
-		respondJSON(w, http.StatusOK, data)
 	}
 }
 
 // uploadResponse creates the response object for upload results
-func (s *Server) uploadResponse(result *service.ImageUploadResult, scope types.Scope) map[string]interface{} {
+func (s *Server) uploadResponse(result *service.ImageUploadResult, entityType types.EntityType) map[string]interface{} {
 	response := map[string]interface{}{
 		"original_size":   result.OriginalSize,
 		"optimized_size":  result.OptimizedSize,
-		"savings_percent": result.SavingsPercent,
+		"savings_percent": result.SizeReductionPercent,
 		"encoder":         result.Encoder,
 	}
 
-	if scope == types.ScopeArtist {
-		response["artist"] = result.ItemName
+	if entityType == types.EntityTypeArtist {
+		response["artist"] = result.ArtistName
 	} else {
-		response["track"] = result.ItemTitle
-		response["artist"] = result.ItemName
+		response["track"] = result.TrackTitle
+		response["artist"] = result.ArtistName
 	}
 
 	return response
 }
 
 // handleBulkDelete returns a handler for bulk image deletion
-func (s *Server) handleBulkDelete(scope types.Scope) http.HandlerFunc {
+func (s *Server) handleBulkDelete(entityType types.EntityType) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		const confirmHeader = "X-Confirm-Bulk-Delete"
 		const confirmValue = "VERWIJDER ALLES"
@@ -123,37 +132,34 @@ func (s *Server) handleBulkDelete(scope types.Scope) http.HandlerFunc {
 			return
 		}
 
-		result, err := s.service.DeleteAllImages(r.Context(), scope)
+		result, err := s.service.DeleteAllImages(r.Context(), entityType)
 		if err != nil {
 			respondError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
 
-		itemType := types.ItemTypeArtist
-		if scope == types.ScopeTrack {
-			itemType = types.ItemTypeTrack
-		}
+		label := types.LabelForEntityType(entityType)
 
-		message := strconv.FormatInt(result.Deleted, 10) + " " + itemType + "-afbeeldingen verwijderd"
+		message := strconv.FormatInt(result.DeletedCount, 10) + " " + label + "-afbeeldingen verwijderd"
 		respondJSON(w, http.StatusOK, map[string]interface{}{
-			"deleted": result.Deleted,
+			"deleted": result.DeletedCount,
 			"message": message,
 		})
 	}
 }
 
 // handleGetImage returns a handler for retrieving images
-func (s *Server) handleGetImage(scope types.Scope) http.HandlerFunc {
+func (s *Server) handleGetImage(entityType types.EntityType) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		entityID := chi.URLParam(r, "id")
-		entityType := types.GetEntityType(string(scope))
+		label := types.LabelForEntityType(entityType)
 
-		if err := util.ValidateEntityID(entityID, entityType); err != nil {
+		if err := util.ValidateEntityID(entityID, label); err != nil {
 			respondError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 
-		table := types.TableForScope(scope)
+		table := types.TableForEntityType(entityType)
 		imageData, err := database.GetEntityImage(r.Context(), s.service.DB(), s.config.Database.Schema, table, entityID)
 
 		if err != nil {
@@ -176,12 +182,12 @@ func (s *Server) handleGetImage(scope types.Scope) http.HandlerFunc {
 }
 
 // handleImageUpload returns a handler for image uploads
-func (s *Server) handleImageUpload(scope types.Scope) http.HandlerFunc {
+func (s *Server) handleImageUpload(entityType types.EntityType) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		entityID := chi.URLParam(r, "id")
-		entityType := types.GetEntityType(string(scope))
+		label := types.LabelForEntityType(entityType)
 
-		if err := util.ValidateEntityID(entityID, entityType); err != nil {
+		if err := util.ValidateEntityID(entityID, label); err != nil {
 			respondError(w, http.StatusBadRequest, err.Error())
 			return
 		}
@@ -194,9 +200,9 @@ func (s *Server) handleImageUpload(scope types.Scope) http.HandlerFunc {
 
 		// For image endpoint, we only use ID - ignore any name field
 		params := &service.ImageUploadParams{
-			Scope: scope,
-			ID:    entityID,
-			URL:   req.URL,
+			EntityType: entityType,
+			ID:         entityID,
+			ImageURL:   req.URL,
 		}
 
 		if req.Image != "" {
@@ -215,27 +221,27 @@ func (s *Server) handleImageUpload(scope types.Scope) http.HandlerFunc {
 			return
 		}
 
-		response := s.uploadResponse(result, scope)
+		response := s.uploadResponse(result, entityType)
 		respondJSON(w, http.StatusOK, response)
 	}
 }
 
 // handleDeleteImage returns a handler for deleting images
-func (s *Server) handleDeleteImage(scope types.Scope) http.HandlerFunc {
+func (s *Server) handleDeleteImage(entityType types.EntityType) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		entityID := chi.URLParam(r, "id")
-		entityType := types.GetEntityType(string(scope))
+		label := types.LabelForEntityType(entityType)
 
-		if err := util.ValidateEntityID(entityID, entityType); err != nil {
+		if err := util.ValidateEntityID(entityID, label); err != nil {
 			respondError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 
-		table := types.TableForScope(scope)
+		table := types.TableForEntityType(entityType)
 
 		err := database.DeleteEntityImage(r.Context(), s.service.DB(), s.config.Database.Schema, table, entityID)
 		if err != nil {
-			slog.Error("Afbeelding verwijderen mislukt", "scope", scope, "id", entityID, "error", err)
+			slog.Error("Afbeelding verwijderen mislukt", "entityType", entityType, "id", entityID, "error", err)
 		}
 
 		if err != nil {
@@ -244,14 +250,14 @@ func (s *Server) handleDeleteImage(scope types.Scope) http.HandlerFunc {
 			return
 		}
 
-		idField := "artist_id"
-		if scope == types.ScopeTrack {
-			idField = "track_id"
+		responseKeyName := "artist_id"
+		if entityType == types.EntityTypeTrack {
+			responseKeyName = "track_id"
 		}
 
 		respondJSON(w, http.StatusOK, map[string]string{
-			"message": entityType + "-afbeelding succesvol verwijderd",
-			idField:   entityID,
+			"message":       label + "-afbeelding succesvol verwijderd",
+			responseKeyName: entityID,
 		})
 	}
 }
@@ -279,12 +285,12 @@ func (s *Server) handlePlaylist(w http.ResponseWriter, r *http.Request) {
 
 		// Track image filter
 		if trackImage := query.Get("track_image"); trackImage != "" {
-			opts.TrackImage = parseBoolParam(trackImage)
+			opts.TrackImage = parseQueryBoolParam(trackImage)
 		}
 
 		// Artist image filter
 		if artistImage := query.Get("artist_image"); artistImage != "" {
-			opts.ArtistImage = parseBoolParam(artistImage)
+			opts.ArtistImage = parseQueryBoolParam(artistImage)
 		}
 
 		// Sort options
@@ -316,11 +322,6 @@ func (s *Server) handlePlaylist(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Build the response
-	type BlockWithTracks struct {
-		database.PlaylistBlock
-		Tracks []database.PlaylistItem `json:"tracks"`
-	}
-
 	result := make([]BlockWithTracks, len(blocks))
 	for i, block := range blocks {
 		tracks := tracksByBlock[block.BlockID]
