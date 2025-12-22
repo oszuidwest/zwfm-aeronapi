@@ -54,11 +54,6 @@ func (s *AeronService) DB() DB {
 	return s.db
 }
 
-// Schema returns the database schema name.
-func (s *AeronService) Schema() string {
-	return s.schema
-}
-
 // ImageUploadParams contains the parameters required for uploading an image to an entity.
 // Either URL or ImageData should be provided, but not both.
 type ImageUploadParams struct {

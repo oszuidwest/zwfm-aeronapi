@@ -21,15 +21,6 @@ import (
 // It ensures that UUIDs follow the proper v4 format with correct version and variant bits.
 var uuidRegex = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
 
-// ValidateScope checks if the provided scope is valid for entity operations.
-// Valid scopes are ScopeArtist and ScopeTrack. Returns an error with available options if invalid.
-func ValidateScope(scope types.Scope) error {
-	if scope != types.ScopeArtist && scope != types.ScopeTrack {
-		return types.NewValidationError("scope", fmt.Sprintf("ongeldig type: gebruik '%s' of '%s'", types.ScopeArtist, types.ScopeTrack))
-	}
-	return nil
-}
-
 // ValidateEntityID validates that an ID is a proper UUID v4 format.
 // It checks for empty strings and validates the UUID format using regex matching.
 func ValidateEntityID(id string, entityType string) error {
@@ -40,42 +31,6 @@ func ValidateEntityID(id string, entityType string) error {
 	// Validate UUID v4 format using regex
 	if !uuidRegex.MatchString(id) {
 		return types.NewValidationError("id", fmt.Sprintf("ongeldige %s-ID: moet een UUID zijn", entityType))
-	}
-
-	return nil
-}
-
-// ImageUploadParams contains the parameters for image upload validation.
-type ImageUploadParams struct {
-	Scope     types.Scope
-	URL       string
-	ImageData []byte
-}
-
-// ValidateImageUploadParams validates all parameters required for image upload operations.
-// It ensures proper scope, mutually exclusive URL/image data, and URL safety when applicable.
-func ValidateImageUploadParams(params *ImageUploadParams) error {
-	if err := ValidateScope(params.Scope); err != nil {
-		return err
-	}
-
-	// Check that we have either URL or image data, but not both
-	hasURL := params.URL != ""
-	hasImageData := len(params.ImageData) > 0
-
-	if !hasURL && !hasImageData {
-		return types.NewValidationError("image", "afbeelding is verplicht")
-	}
-
-	if hasURL && hasImageData {
-		return types.NewValidationError("image", "gebruik óf URL óf upload, niet beide")
-	}
-
-	// Validate URL with SafeURL to prevent SSRF attacks
-	if hasURL {
-		if err := ValidateURL(params.URL); err != nil {
-			return err
-		}
 	}
 
 	return nil

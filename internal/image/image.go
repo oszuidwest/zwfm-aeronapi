@@ -70,7 +70,6 @@ func getImageInfo(data []byte) (format string, width, height int, err error) {
 
 // OptimizeImage processes and optimizes image data according to the configured settings.
 // It returns the optimized image data, format, encoder description, and any error encountered.
-// The function automatically selects the best compression method between standard JPEG and jpegli.
 func (opt *Optimizer) OptimizeImage(data []byte) ([]byte, string, string, error) {
 	_, format, err := image.DecodeConfig(bytes.NewReader(data))
 	if err != nil {
@@ -114,14 +113,16 @@ func (opt *Optimizer) processImage(img image.Image, originalData []byte, outputF
 		img = opt.resizeImage(img, opt.Config.TargetWidth, opt.Config.TargetHeight)
 	}
 
-	optimizedData, usedEncoder, err := encodeToJPEGParallel(img, opt.Config)
-	if err != nil {
-		return nil, "", "", err
+	// Encode to JPEG
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: opt.Config.Quality}); err != nil {
+		return nil, "", "", &types.ImageProcessingError{Reason: fmt.Sprintf("JPEG encoding mislukt: %v", err)}
 	}
+	optimizedData := buf.Bytes()
 
 	// Return optimized data only if it's smaller than original
-	if len(optimizedData) > 0 && len(optimizedData) < len(originalData) {
-		return optimizedData, outputFormat, usedEncoder, nil
+	if len(optimizedData) < len(originalData) {
+		return optimizedData, outputFormat, "geoptimaliseerd", nil
 	}
 
 	return originalData, outputFormat, "origineel", nil
