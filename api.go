@@ -69,10 +69,21 @@ func (s *AeronAPI) Start(port string) error {
 	router.Use(middleware.Compress(5))
 	router.Use(middleware.Timeout(s.config.API.GetRequestTimeout()))
 
+	// Global 404 handler - returns JSON for consistency
+	router.NotFound(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		respondError(w, http.StatusNotFound, "Endpoint niet gevonden")
+	})
+
 	// API routes
 	router.Route("/api", func(r chi.Router) {
 		// JSON content type for all API routes (except images)
 		r.Use(middleware.SetHeader("Content-Type", "application/json; charset=utf-8"))
+
+		// Custom 404 handler for API routes - returns JSON instead of plain text
+		r.NotFound(func(w http.ResponseWriter, r *http.Request) {
+			respondError(w, http.StatusNotFound, "Endpoint niet gevonden")
+		})
 
 		// Health check - no auth required
 		r.Get("/health", s.handleHealth)
