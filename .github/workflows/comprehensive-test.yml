@@ -16,7 +16,7 @@ on:
         type: boolean
         default: false
 env:
-  GO_VERSION: '1.24'  # Also update in test.yml and release.yml
+  GO_VERSION: '1.25'  # Also update in test.yml and release.yml
   POSTGRES_USER: aeron
   POSTGRES_PASSWORD: aeron123
   POSTGRES_DB: aeron_db
