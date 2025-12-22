@@ -26,11 +26,13 @@ env:
   POSTGRES_DB: aeron_db
   API_PORT: 8888
   DB_PORT: 5433
+  API_KEY: test-api-key-12345
+  # Known IDs from test fixtures
+  ARTIST_ID: "9e37ff1f-7823-43ce-93d0-12fc1c2edb8b"
+  BLOF_ID: "add55a6e-2068-4114-b82a-e0729881f0be"
+  FAKE_UUID: "00000000-0000-4000-8000-000000000001"
 
 jobs:
-  # ==================================================
-  # BUILD & LINT (runs in parallel)
-  # ==================================================
   build:
     runs-on: ubuntu-latest
     if: ${{ inputs.skip_tests != true }}
@@ -75,14 +77,16 @@ jobs:
       - name: Download dependencies
         run: go mod download
 
-      - name: Run formatters and linters
+      - name: Check formatting (gofmt)
         run: |
           if [ "$(gofmt -s -l . | wc -l)" -gt 0 ]; then
             echo "De volgende bestanden zijn niet geformatteerd:"
             gofmt -s -l .
             exit 1
           fi
-          go vet ./...
+
+      - name: Run go vet
+        run: go vet ./...
 
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@v9
@@ -93,9 +97,6 @@ jobs:
       - name: Check for dead code
         run: go run golang.org/x/tools/cmd/deadcode@latest ./...
 
-  # ==================================================
-  # INTEGRATION TESTS (parallel matrix)
-  # ==================================================
   integration:
     needs: build
     runs-on: ubuntu-latest
@@ -136,24 +137,15 @@ jobs:
 
       - name: Wait for database
         run: |
-          echo "Waiting for database to be ready..."
           for i in {1..30}; do
             if docker exec aeron-test-db pg_isready -U aeron 2>/dev/null; then
-              echo "Database is ready!"
-              # Extra wait for init scripts
               sleep 2
               break
             fi
-            echo "Attempt $i/30: Database not ready yet..."
             sleep 1
           done
-          # Verify data is loaded
           ARTIST_COUNT=$(docker exec aeron-test-db psql -U aeron -d aeron_db -t -c "SELECT COUNT(*) FROM aeron.artist;" 2>/dev/null | tr -d ' ')
-          if [ -z "$ARTIST_COUNT" ] || [ "$ARTIST_COUNT" -eq 0 ]; then
-            echo "ERROR: Database not properly initialized"
-            exit 1
-          fi
-          echo "Database initialized with $ARTIST_COUNT artists"
+          [ -n "$ARTIST_COUNT" ] && [ "$ARTIST_COUNT" -gt 0 ]
 
       - name: Create test configuration
         run: |
@@ -200,562 +192,470 @@ jobs:
         run: |
           ./zwfm-aerontoolbox -config=test_config.json -port=${{ env.API_PORT }} &
           echo $! > api.pid
-          # Wait for API to be ready
-          echo "Waiting for API server..."
           for i in {1..30}; do
-            if curl -sf http://localhost:${{ env.API_PORT }}/api/health > /dev/null 2>&1; then
-              echo "API server is ready!"
-              break
-            fi
-            echo "Attempt $i/30: API not ready yet..."
+            curl -sf http://localhost:${{ env.API_PORT }}/api/health > /dev/null 2>&1 && break
             sleep 1
           done
 
-      - name: Run database tests
+      # ==================== DATABASE TESTS ====================
+      - name: "Database: Schema exists"
         if: matrix.suite == 'database'
         run: |
-          echo "=== DATABASE INTEGRITY TESTS ==="
-
-          # Test: Schema exists
-          echo "Test: Schema exists"
           docker exec aeron-test-db psql -U aeron -d aeron_db \
             -c "SELECT schema_name FROM information_schema.schemata WHERE schema_name = 'aeron';" | grep -q 'aeron'
-          echo "✓ Schema exists"
 
-          # Test: Tables exist
-          echo "Test: Required tables exist"
+      - name: "Database: Required tables exist"
+        if: matrix.suite == 'database'
+        run: |
           docker exec aeron-test-db psql -U aeron -d aeron_db \
             -c "SELECT table_name FROM information_schema.tables WHERE table_schema = 'aeron' AND table_name = 'artist';" | grep -q 'artist'
           docker exec aeron-test-db psql -U aeron -d aeron_db \
             -c "SELECT table_name FROM information_schema.tables WHERE table_schema = 'aeron' AND table_name = 'track';" | grep -q 'track'
-          echo "✓ Required tables exist"
 
-          # Test: Data counts
-          echo "Test: Verify data counts"
+      - name: "Database: Verify data counts"
+        if: matrix.suite == 'database'
+        run: |
           ARTIST_COUNT=$(docker exec aeron-test-db psql -U aeron -d aeron_db -t -c "SELECT COUNT(*) FROM aeron.artist;" | tr -d ' ')
           TRACK_COUNT=$(docker exec aeron-test-db psql -U aeron -d aeron_db -t -c "SELECT COUNT(*) FROM aeron.track;" | tr -d ' ')
           ARTISTS_WITH_IMG=$(docker exec aeron-test-db psql -U aeron -d aeron_db -t -c "SELECT COUNT(*) FROM aeron.artist WHERE picture IS NOT NULL;" | tr -d ' ')
+          [ "$ARTIST_COUNT" -eq 1000 ]
+          [ "$TRACK_COUNT" -eq 1100 ]
+          [ "$ARTISTS_WITH_IMG" -gt 0 ]
 
-          echo "  Artists: $ARTIST_COUNT (expected: 1000)"
-          echo "  Tracks: $TRACK_COUNT (expected: 1100)"
-          echo "  Artists with images: $ARTISTS_WITH_IMG"
-
-          if [ "$ARTIST_COUNT" -ne 1000 ]; then
-            echo "✗ Unexpected artist count"
-            exit 1
-          fi
-          if [ "$TRACK_COUNT" -ne 1100 ]; then
-            echo "✗ Unexpected track count"
-            exit 1
-          fi
-          if [ "$ARTISTS_WITH_IMG" -eq 0 ]; then
-            echo "✗ No artists with images"
-            exit 1
-          fi
-          echo "✓ Data counts are correct"
-
-      - name: Run API basic tests
+      # ==================== API BASIC TESTS ====================
+      - name: "API: Health endpoint"
         if: matrix.suite == 'api-basic'
         run: |
-          echo "=== API BASIC TESTS ==="
-
-          # Test: Health check
-          echo "Test: Health endpoint"
           RESPONSE=$(curl -sf http://localhost:${{ env.API_PORT }}/api/health)
           echo "$RESPONSE" | jq -e '.success == true' > /dev/null
-          echo "✓ Health endpoint works"
 
-          # Test: Authentication required
-          echo "Test: Authentication required"
+      - name: "API: Authentication required"
+        if: matrix.suite == 'api-basic'
+        run: |
           RESPONSE=$(curl -s http://localhost:${{ env.API_PORT }}/api/artists)
           echo "$RESPONSE" | jq -e '.success == false' > /dev/null
-          echo "✓ Unauthenticated request rejected"
 
-          # Test: Valid API key
-          echo "Test: Valid API key"
-          RESPONSE=$(curl -sf -H 'X-API-Key: test-api-key-12345' http://localhost:${{ env.API_PORT }}/api/artists)
+      - name: "API: Valid API key accepted"
+        if: matrix.suite == 'api-basic'
+        run: |
+          RESPONSE=$(curl -sf -H "X-API-Key: ${{ env.API_KEY }}" http://localhost:${{ env.API_PORT }}/api/artists)
           echo "$RESPONSE" | jq -e '.success == true' > /dev/null
-          echo "✓ Valid API key accepted"
 
-          # Test: Invalid API key
-          echo "Test: Invalid API key"
+      - name: "API: Invalid API key rejected"
+        if: matrix.suite == 'api-basic'
+        run: |
           RESPONSE=$(curl -s -H 'X-API-Key: invalid-key' http://localhost:${{ env.API_PORT }}/api/artists)
           echo "$RESPONSE" | jq -e '.success == false' > /dev/null
-          echo "✓ Invalid API key rejected"
 
-          # Test: Method not allowed
-          echo "Test: Method not allowed"
-          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X PUT -H 'X-API-Key: test-api-key-12345' http://localhost:${{ env.API_PORT }}/api/artists)
+      - name: "API: Method not allowed returns 405"
+        if: matrix.suite == 'api-basic'
+        run: |
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X PUT -H "X-API-Key: ${{ env.API_KEY }}" http://localhost:${{ env.API_PORT }}/api/artists)
           [ "$HTTP_CODE" = "405" ]
-          echo "✓ PUT method returns 405"
 
-          # Test: 404 for invalid endpoint
-          echo "Test: Invalid endpoint"
-          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -H 'X-API-Key: test-api-key-12345' http://localhost:${{ env.API_PORT }}/api/invalid)
+      - name: "API: Invalid endpoint returns 404"
+        if: matrix.suite == 'api-basic'
+        run: |
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -H "X-API-Key: ${{ env.API_KEY }}" http://localhost:${{ env.API_PORT }}/api/invalid)
           [ "$HTTP_CODE" = "404" ]
-          echo "✓ Invalid endpoint returns 404"
 
-          # Test: Playlist endpoint
-          echo "Test: Playlist endpoint"
+      - name: "API: Playlist endpoint"
+        if: matrix.suite == 'api-basic'
+        run: |
           docker exec aeron-test-db psql -U aeron -d aeron_db -c "UPDATE aeron.playlistitem SET startdatetime = CURRENT_DATE + (startdatetime::time)" > /dev/null
-          RESPONSE=$(curl -sf -H 'X-API-Key: test-api-key-12345' http://localhost:${{ env.API_PORT }}/api/playlist)
+          RESPONSE=$(curl -sf -H "X-API-Key: ${{ env.API_KEY }}" http://localhost:${{ env.API_PORT }}/api/playlist)
           echo "$RESPONSE" | jq -e '.success == true' > /dev/null
-          BLOCK_COUNT=$(echo "$RESPONSE" | jq '.data | length')
-          echo "✓ Playlist endpoint works ($BLOCK_COUNT blocks)"
 
-          # Test: Playlist structure validation
-          echo "Test: Playlist block structure"
-          FIRST_BLOCK=$(echo "$RESPONSE" | jq '.data[0]')
-          echo "$FIRST_BLOCK" | jq -e 'has("blockid") and has("name") and has("start_time") and
-                                        has("end_time") and has("date") and has("tracks")' > /dev/null
-          echo "✓ Playlist blocks have correct structure"
+      - name: "API: Playlist block structure"
+        if: matrix.suite == 'api-basic'
+        run: |
+          RESPONSE=$(curl -sf -H "X-API-Key: ${{ env.API_KEY }}" http://localhost:${{ env.API_PORT }}/api/playlist)
+          echo "$RESPONSE" | jq -e '.data[0] | has("blockid") and has("name") and has("start_time") and has("end_time") and has("date") and has("tracks")' > /dev/null
 
-          # Test: Playlist track structure
-          echo "Test: Playlist track structure"
-          TRACK_COUNT=$(echo "$FIRST_BLOCK" | jq '.tracks | length')
-          if [ "$TRACK_COUNT" -gt 0 ]; then
-            FIRST_TRACK=$(echo "$FIRST_BLOCK" | jq '.tracks[0]')
-            echo "$FIRST_TRACK" | jq -e 'has("trackid") and has("tracktitle") and has("artistid") and
-                                          has("artistname") and has("start_time") and
-                                          has("has_track_image") and has("has_artist_image")' > /dev/null
-            echo "✓ Playlist tracks have correct structure"
-          fi
+      - name: "API: Playlist track structure"
+        if: matrix.suite == 'api-basic'
+        run: |
+          RESPONSE=$(curl -sf -H "X-API-Key: ${{ env.API_KEY }}" http://localhost:${{ env.API_PORT }}/api/playlist)
+          echo "$RESPONSE" | jq -e '.data[0].tracks[0] | has("trackid") and has("tracktitle") and has("artistid") and has("artistname") and has("start_time")' > /dev/null
 
-          # Stop server to test auth disabled mode
+      - name: "API: Auth disabled mode"
+        if: matrix.suite == 'api-basic'
+        run: |
           kill $(cat api.pid) 2>/dev/null || true
-          sleep 1
-
-          # Create config with auth disabled
-          cat > test_no_auth_config.json << 'EOF'
+          cat > test_no_auth.json << 'EOF'
           {
-            "database": {
-              "host": "localhost",
-              "port": "5433",
-              "name": "aeron_db",
-              "user": "aeron",
-              "password": "aeron123",
-              "schema": "aeron",
-              "sslmode": "disable"
-            },
-            "image": {
-              "target_width": 1280,
-              "target_height": 1280,
-              "quality": 90,
-              "reject_smaller": true
-            },
-            "api": {
-              "enabled": false,
-              "keys": []
-            }
+            "database": { "host": "localhost", "port": "5433", "name": "aeron_db", "user": "aeron", "password": "aeron123", "schema": "aeron", "sslmode": "disable" },
+            "api": { "enabled": false, "keys": [] }
           }
           EOF
-
-          # Start server with auth disabled
-          ./zwfm-aerontoolbox -config=test_no_auth_config.json -port=${{ env.API_PORT }} &
+          ./zwfm-aerontoolbox -config=test_no_auth.json -port=${{ env.API_PORT }} &
           echo $! > api.pid
-          for i in {1..30}; do
-            if curl -sf http://localhost:${{ env.API_PORT }}/api/health > /dev/null 2>&1; then
-              break
-            fi
-            sleep 1
-          done
-
-          # Test: Auth disabled allows access without key
-          echo "Test: Auth disabled allows access without API key"
+          for i in {1..30}; do curl -sf http://localhost:${{ env.API_PORT }}/api/health > /dev/null 2>&1 && break; sleep 1; done
           RESPONSE=$(curl -sf http://localhost:${{ env.API_PORT }}/api/artists)
           echo "$RESPONSE" | jq -e '.success == true' > /dev/null
-          echo "✓ Endpoints accessible without API key when auth disabled"
 
-      - name: Run artist tests
+      # ==================== ARTIST TESTS ====================
+      - name: "Artist: Get statistics"
         if: matrix.suite == 'artists'
         run: |
-          echo "=== ARTIST ENDPOINT TESTS ==="
-
-          # Known artist IDs from test fixtures
-          ARTIST_ID="9e37ff1f-7823-43ce-93d0-12fc1c2edb8b"  # Purple Disco Machine
-          BLOF_ID="add55a6e-2068-4114-b82a-e0729881f0be"    # BLØF
-
-          # Test: Get statistics
-          echo "Test: Artist statistics"
-          RESPONSE=$(curl -sf -H 'X-API-Key: test-api-key-12345' http://localhost:${{ env.API_PORT }}/api/artists)
+          RESPONSE=$(curl -sf -H "X-API-Key: ${{ env.API_KEY }}" http://localhost:${{ env.API_PORT }}/api/artists)
           TOTAL=$(echo "$RESPONSE" | jq '.data.total')
           WITH_IMAGES=$(echo "$RESPONSE" | jq '.data.with_images')
           WITHOUT_IMAGES=$(echo "$RESPONSE" | jq '.data.without_images')
-          [ "$TOTAL" -eq 1000 ]
-          [ "$WITH_IMAGES" -gt 0 ]
-          [ "$WITHOUT_IMAGES" -gt 0 ]
-          echo "✓ Artist statistics correct (total: $TOTAL, with: $WITH_IMAGES, without: $WITHOUT_IMAGES)"
+          [ "$TOTAL" -eq 1000 ] && [ "$WITH_IMAGES" -gt 0 ] && [ "$WITHOUT_IMAGES" -gt 0 ]
 
-          # Test: Get single artist
-          echo "Test: Get single artist"
-          RESPONSE=$(curl -sf -H 'X-API-Key: test-api-key-12345' "http://localhost:${{ env.API_PORT }}/api/artists/$ARTIST_ID")
+      - name: "Artist: Get single artist"
+        if: matrix.suite == 'artists'
+        run: |
+          RESPONSE=$(curl -sf -H "X-API-Key: ${{ env.API_KEY }}" "http://localhost:${{ env.API_PORT }}/api/artists/${{ env.ARTIST_ID }}")
           echo "$RESPONSE" | jq -e '.success == true and .data.artistid != null' > /dev/null
-          echo "✓ Single artist retrieved"
 
-          # Test: Non-existent artist
-          echo "Test: Non-existent artist"
-          FAKE_ID="00000000-0000-4000-8000-000000000001"
-          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -H 'X-API-Key: test-api-key-12345' \
-            "http://localhost:${{ env.API_PORT }}/api/artists/$FAKE_ID")
+      - name: "Artist: Non-existent returns 404"
+        if: matrix.suite == 'artists'
+        run: |
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -H "X-API-Key: ${{ env.API_KEY }}" \
+            "http://localhost:${{ env.API_PORT }}/api/artists/${{ env.FAKE_UUID }}")
           [ "$HTTP_CODE" = "404" ]
-          echo "✓ Non-existent artist returns 404"
 
-          # Test: Upload image via URL
-          echo "Test: Upload image via URL"
-          RESPONSE=$(curl -sf -X POST -H 'X-API-Key: test-api-key-12345' "http://localhost:${{ env.API_PORT }}/api/artists/${ARTIST_ID}/image" \
+      - name: "Artist: Upload image via URL"
+        if: matrix.suite == 'artists'
+        run: |
+          RESPONSE=$(curl -sf -X POST -H "X-API-Key: ${{ env.API_KEY }}" \
+            "http://localhost:${{ env.API_PORT }}/api/artists/${{ env.ARTIST_ID }}/image" \
             -H 'Content-Type: application/json' \
-            -d '{"url":"https://picsum.photos/1500"}' \
-            -m 15)
+            -d '{"url":"https://picsum.photos/1500"}' -m 15)
           echo "$RESPONSE" | jq -e '.success == true' > /dev/null
-          echo "✓ Image uploaded via URL"
 
-          # Test: Upload image via base64
-          echo "Test: Upload image via base64"
+      - name: "Artist: Upload image via base64"
+        if: matrix.suite == 'artists'
+        run: |
           BASE64_IMAGE=$(base64 -w 0 < test_large.png)
-          RESPONSE=$(curl -sf -X POST -H 'X-API-Key: test-api-key-12345' "http://localhost:${{ env.API_PORT }}/api/artists/$BLOF_ID/image" \
+          RESPONSE=$(curl -sf -X POST -H "X-API-Key: ${{ env.API_KEY }}" \
+            "http://localhost:${{ env.API_PORT }}/api/artists/${{ env.BLOF_ID }}/image" \
             -H 'Content-Type: application/json' \
             -d "{\"image\":\"data:image/png;base64,$BASE64_IMAGE\"}")
           echo "$RESPONSE" | jq -e '.success == true' > /dev/null
-          echo "✓ Image uploaded via base64"
 
-          # Test: Get image
-          echo "Test: Get artist image"
-          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -H 'X-API-Key: test-api-key-12345' "http://localhost:${{ env.API_PORT }}/api/artists/$BLOF_ID/image")
+      - name: "Artist: Get image"
+        if: matrix.suite == 'artists'
+        run: |
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -H "X-API-Key: ${{ env.API_KEY }}" \
+            "http://localhost:${{ env.API_PORT }}/api/artists/${{ env.BLOF_ID }}/image")
           [ "$HTTP_CODE" = "200" ]
-          echo "✓ Artist image retrieved"
 
-          # Test: Delete image
-          echo "Test: Delete artist image"
-          RESPONSE=$(curl -sf -X DELETE -H 'X-API-Key: test-api-key-12345' "http://localhost:${{ env.API_PORT }}/api/artists/$BLOF_ID/image")
+      - name: "Artist: Delete image"
+        if: matrix.suite == 'artists'
+        run: |
+          RESPONSE=$(curl -sf -X DELETE -H "X-API-Key: ${{ env.API_KEY }}" \
+            "http://localhost:${{ env.API_PORT }}/api/artists/${{ env.BLOF_ID }}/image")
           echo "$RESPONSE" | jq -e '.success == true' > /dev/null
-          echo "✓ Artist image deleted"
 
-          # Test: Get deleted image returns 404
-          echo "Test: Deleted image returns 404"
-          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -H 'X-API-Key: test-api-key-12345' "http://localhost:${{ env.API_PORT }}/api/artists/$BLOF_ID/image")
+      - name: "Artist: Deleted image returns 404"
+        if: matrix.suite == 'artists'
+        run: |
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -H "X-API-Key: ${{ env.API_KEY }}" \
+            "http://localhost:${{ env.API_PORT }}/api/artists/${{ env.BLOF_ID }}/image")
           [ "$HTTP_CODE" = "404" ]
-          echo "✓ Deleted image returns 404"
 
-          # Test: Bulk delete requires confirmation
-          echo "Test: Bulk delete requires confirmation"
-          RESPONSE=$(curl -s -X DELETE -H 'X-API-Key: test-api-key-12345' http://localhost:${{ env.API_PORT }}/api/artists/bulk-delete)
+      - name: "Artist: Bulk delete requires confirmation"
+        if: matrix.suite == 'artists'
+        run: |
+          RESPONSE=$(curl -s -X DELETE -H "X-API-Key: ${{ env.API_KEY }}" \
+            http://localhost:${{ env.API_PORT }}/api/artists/bulk-delete)
           echo "$RESPONSE" | jq -e '.success == false' > /dev/null
-          echo "✓ Bulk delete requires confirmation header"
 
-      - name: Run track tests
+      # ==================== TRACK TESTS ====================
+      - name: "Track: Get statistics"
         if: matrix.suite == 'tracks'
         run: |
-          echo "=== TRACK ENDPOINT TESTS ==="
-
-          # Get a known track ID
-          TRACK_ID=$(docker exec aeron-test-db psql -U aeron -d aeron_db -t -c "SELECT titleid FROM aeron.track LIMIT 1;" | tr -d ' ')
-
-          # Test: Get statistics
-          echo "Test: Track statistics"
-          RESPONSE=$(curl -sf -H 'X-API-Key: test-api-key-12345' http://localhost:${{ env.API_PORT }}/api/tracks)
+          RESPONSE=$(curl -sf -H "X-API-Key: ${{ env.API_KEY }}" http://localhost:${{ env.API_PORT }}/api/tracks)
           TOTAL=$(echo "$RESPONSE" | jq '.data.total')
           [ "$TOTAL" -eq 1100 ]
-          echo "✓ Track statistics correct (total: $TOTAL)"
 
-          # Test: Get single track
-          echo "Test: Get single track"
-          RESPONSE=$(curl -sf -H 'X-API-Key: test-api-key-12345' "http://localhost:${{ env.API_PORT }}/api/tracks/$TRACK_ID")
+      - name: "Track: Get single track"
+        if: matrix.suite == 'tracks'
+        run: |
+          TRACK_ID=$(docker exec aeron-test-db psql -U aeron -d aeron_db -t -c "SELECT titleid FROM aeron.track LIMIT 1;" | tr -d ' ')
+          RESPONSE=$(curl -sf -H "X-API-Key: ${{ env.API_KEY }}" "http://localhost:${{ env.API_PORT }}/api/tracks/$TRACK_ID")
           echo "$RESPONSE" | jq -e '.success == true and .data.titleid != null' > /dev/null
-          echo "✓ Single track retrieved"
 
-          # Test: Non-existent track
-          echo "Test: Non-existent track"
-          FAKE_ID="00000000-0000-4000-8000-000000000001"
-          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -H 'X-API-Key: test-api-key-12345' \
-            "http://localhost:${{ env.API_PORT }}/api/tracks/$FAKE_ID")
+      - name: "Track: Non-existent returns 404"
+        if: matrix.suite == 'tracks'
+        run: |
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -H "X-API-Key: ${{ env.API_KEY }}" \
+            "http://localhost:${{ env.API_PORT }}/api/tracks/${{ env.FAKE_UUID }}")
           [ "$HTTP_CODE" = "404" ]
-          echo "✓ Non-existent track returns 404"
 
-          # Test: Upload track image
-          echo "Test: Upload track image"
+      - name: "Track: Upload image"
+        if: matrix.suite == 'tracks'
+        run: |
+          TRACK_ID=$(docker exec aeron-test-db psql -U aeron -d aeron_db -t -c "SELECT titleid FROM aeron.track LIMIT 1;" | tr -d ' ')
           BASE64_IMAGE=$(base64 -w 0 < test_large.png)
-          RESPONSE=$(curl -sf -X POST -H 'X-API-Key: test-api-key-12345' "http://localhost:${{ env.API_PORT }}/api/tracks/$TRACK_ID/image" \
+          RESPONSE=$(curl -sf -X POST -H "X-API-Key: ${{ env.API_KEY }}" \
+            "http://localhost:${{ env.API_PORT }}/api/tracks/$TRACK_ID/image" \
             -H 'Content-Type: application/json' \
             -d "{\"image\":\"data:image/png;base64,$BASE64_IMAGE\"}")
           echo "$RESPONSE" | jq -e '.success == true' > /dev/null
-          echo "✓ Track image uploaded"
 
-          # Test: Get track image
-          echo "Test: Get track image"
-          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -H 'X-API-Key: test-api-key-12345' "http://localhost:${{ env.API_PORT }}/api/tracks/$TRACK_ID/image")
+      - name: "Track: Get image"
+        if: matrix.suite == 'tracks'
+        run: |
+          TRACK_ID=$(docker exec aeron-test-db psql -U aeron -d aeron_db -t -c "SELECT titleid FROM aeron.track LIMIT 1;" | tr -d ' ')
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -H "X-API-Key: ${{ env.API_KEY }}" \
+            "http://localhost:${{ env.API_PORT }}/api/tracks/$TRACK_ID/image")
           [ "$HTTP_CODE" = "200" ]
-          echo "✓ Track image retrieved"
 
-          # Test: Delete track image
-          echo "Test: Delete track image"
-          RESPONSE=$(curl -sf -X DELETE -H 'X-API-Key: test-api-key-12345' "http://localhost:${{ env.API_PORT }}/api/tracks/$TRACK_ID/image")
+      - name: "Track: Delete image"
+        if: matrix.suite == 'tracks'
+        run: |
+          TRACK_ID=$(docker exec aeron-test-db psql -U aeron -d aeron_db -t -c "SELECT titleid FROM aeron.track LIMIT 1;" | tr -d ' ')
+          RESPONSE=$(curl -sf -X DELETE -H "X-API-Key: ${{ env.API_KEY }}" \
+            "http://localhost:${{ env.API_PORT }}/api/tracks/$TRACK_ID/image")
           echo "$RESPONSE" | jq -e '.success == true' > /dev/null
-          echo "✓ Track image deleted"
 
-      - name: Run maintenance tests
+      # ==================== MAINTENANCE TESTS ====================
+      - name: "Maintenance: Database health endpoint"
         if: matrix.suite == 'maintenance'
         run: |
-          echo "=== DATABASE MAINTENANCE TESTS ==="
-
-          # Test: Database health
-          echo "Test: Database health endpoint"
-          RESPONSE=$(curl -sf -H 'X-API-Key: test-api-key-12345' http://localhost:${{ env.API_PORT }}/api/db/health)
+          RESPONSE=$(curl -sf -H "X-API-Key: ${{ env.API_KEY }}" http://localhost:${{ env.API_PORT }}/api/db/health)
           echo "$RESPONSE" | jq -e '.success == true and .data.database_name != null' > /dev/null
-          TABLE_COUNT=$(echo "$RESPONSE" | jq '.data.tables | length')
-          echo "✓ Database health endpoint works ($TABLE_COUNT tables)"
 
-          # Test: Vacuum dry-run
-          echo "Test: Vacuum dry-run"
-          RESPONSE=$(curl -sf -X POST -H 'X-API-Key: test-api-key-12345' \
+      - name: "Maintenance: Vacuum dry-run"
+        if: matrix.suite == 'maintenance'
+        run: |
+          RESPONSE=$(curl -sf -X POST -H "X-API-Key: ${{ env.API_KEY }}" \
             -H 'Content-Type: application/json' \
             http://localhost:${{ env.API_PORT }}/api/db/vacuum \
             -d '{"dry_run": true}')
           echo "$RESPONSE" | jq -e '.success == true and .data.dry_run == true' > /dev/null
-          echo "✓ Vacuum dry-run works"
 
-          # Test: Vacuum specific table
-          echo "Test: Vacuum specific table (dry-run)"
-          RESPONSE=$(curl -sf -X POST -H 'X-API-Key: test-api-key-12345' \
+      - name: "Maintenance: Vacuum specific table"
+        if: matrix.suite == 'maintenance'
+        run: |
+          RESPONSE=$(curl -sf -X POST -H "X-API-Key: ${{ env.API_KEY }}" \
             -H 'Content-Type: application/json' \
             http://localhost:${{ env.API_PORT }}/api/db/vacuum \
             -d '{"tables": ["artist"], "dry_run": true}')
           echo "$RESPONSE" | jq -e '.success == true and .data.tables_total == 1' > /dev/null
-          echo "✓ Vacuum specific table works"
 
-          # Test: Vacuum with analyze
-          echo "Test: Vacuum with analyze (dry-run)"
-          RESPONSE=$(curl -sf -X POST -H 'X-API-Key: test-api-key-12345' \
+      - name: "Maintenance: Vacuum with analyze"
+        if: matrix.suite == 'maintenance'
+        run: |
+          RESPONSE=$(curl -sf -X POST -H "X-API-Key: ${{ env.API_KEY }}" \
             -H 'Content-Type: application/json' \
             http://localhost:${{ env.API_PORT }}/api/db/vacuum \
             -d '{"tables": ["track"], "analyze": true, "dry_run": true}')
           echo "$RESPONSE" | jq -e '.success == true' > /dev/null
-          echo "✓ Vacuum with analyze works"
 
-          # Test: Non-existent table
-          echo "Test: Vacuum non-existent table"
-          RESPONSE=$(curl -sf -X POST -H 'X-API-Key: test-api-key-12345' \
+      - name: "Maintenance: Non-existent table skipped"
+        if: matrix.suite == 'maintenance'
+        run: |
+          RESPONSE=$(curl -sf -X POST -H "X-API-Key: ${{ env.API_KEY }}" \
             -H 'Content-Type: application/json' \
             http://localhost:${{ env.API_PORT }}/api/db/vacuum \
             -d '{"tables": ["nonexistent_table"], "dry_run": true}')
           echo "$RESPONSE" | jq -e '.success == true and .data.tables_skipped == 1' > /dev/null
-          echo "✓ Non-existent table skipped correctly"
 
-          # Test: Analyze endpoint
-          echo "Test: Analyze endpoint"
-          RESPONSE=$(curl -sf -X POST -H 'X-API-Key: test-api-key-12345' \
+      - name: "Maintenance: Analyze endpoint"
+        if: matrix.suite == 'maintenance'
+        run: |
+          RESPONSE=$(curl -sf -X POST -H "X-API-Key: ${{ env.API_KEY }}" \
             -H 'Content-Type: application/json' \
             http://localhost:${{ env.API_PORT }}/api/db/analyze \
             -d '{"tables": ["artist"]}')
           echo "$RESPONSE" | jq -e '.success == true' > /dev/null
-          echo "✓ Analyze endpoint works"
 
-          # Test: Actual vacuum
-          echo "Test: Execute actual vacuum"
-          RESPONSE=$(curl -sf -X POST -H 'X-API-Key: test-api-key-12345' \
+      - name: "Maintenance: Execute actual vacuum"
+        if: matrix.suite == 'maintenance'
+        run: |
+          RESPONSE=$(curl -sf -X POST -H "X-API-Key: ${{ env.API_KEY }}" \
             -H 'Content-Type: application/json' \
             http://localhost:${{ env.API_PORT }}/api/db/vacuum \
             -d '{"tables": ["artist"], "analyze": true}')
           echo "$RESPONSE" | jq -e '.success == true and .data.tables_success >= 1' > /dev/null
-          echo "✓ Actual vacuum executed successfully"
 
-      - name: Run backup tests
+      # ==================== BACKUP TESTS ====================
+      - name: "Backup: List backups (empty)"
         if: matrix.suite == 'backup'
         run: |
-          echo "=== DATABASE BACKUP TESTS ==="
-
-          # Test: List backups (empty)
-          echo "Test: List backups (empty)"
-          RESPONSE=$(curl -sf -H 'X-API-Key: test-api-key-12345' http://localhost:${{ env.API_PORT }}/api/db/backups)
+          RESPONSE=$(curl -sf -H "X-API-Key: ${{ env.API_KEY }}" http://localhost:${{ env.API_PORT }}/api/db/backups)
           echo "$RESPONSE" | jq -e '.success == true and .data.total_count == 0' > /dev/null
-          echo "✓ Empty backup list"
 
-          # Test: Backup dry-run
-          echo "Test: Backup dry-run"
-          RESPONSE=$(curl -sf -X POST -H 'X-API-Key: test-api-key-12345' \
+      - name: "Backup: Dry-run"
+        if: matrix.suite == 'backup'
+        run: |
+          RESPONSE=$(curl -sf -X POST -H "X-API-Key: ${{ env.API_KEY }}" \
             -H 'Content-Type: application/json' \
             http://localhost:${{ env.API_PORT }}/api/db/backup \
             -d '{"format": "custom", "dry_run": true}')
           echo "$RESPONSE" | jq -e '.success == true and .data.dry_run == true' > /dev/null
-          echo "✓ Backup dry-run works"
 
-          # Test: Create actual backup
-          echo "Test: Create backup (custom format)"
-          RESPONSE=$(curl -sf -X POST -H 'X-API-Key: test-api-key-12345' \
+      - name: "Backup: Create (custom format)"
+        if: matrix.suite == 'backup'
+        run: |
+          RESPONSE=$(curl -sf -X POST -H "X-API-Key: ${{ env.API_KEY }}" \
             -H 'Content-Type: application/json' \
             http://localhost:${{ env.API_PORT }}/api/db/backup \
             -d '{"format": "custom", "compression": 6}')
           echo "$RESPONSE" | jq -e '.success == true and .data.filename != null' > /dev/null
-          FILENAME=$(echo "$RESPONSE" | jq -r '.data.filename')
-          echo "✓ Backup created: $FILENAME"
+          echo "BACKUP_FILENAME=$(echo "$RESPONSE" | jq -r '.data.filename')" >> $GITHUB_ENV
 
-          # Test: Create plain SQL backup
-          echo "Test: Create backup (plain format)"
-          RESPONSE=$(curl -sf -X POST -H 'X-API-Key: test-api-key-12345' \
+      - name: "Backup: Create (plain SQL)"
+        if: matrix.suite == 'backup'
+        run: |
+          RESPONSE=$(curl -sf -X POST -H "X-API-Key: ${{ env.API_KEY }}" \
             -H 'Content-Type: application/json' \
             http://localhost:${{ env.API_PORT }}/api/db/backup \
             -d '{"format": "plain"}')
           echo "$RESPONSE" | jq -e '.success == true and .data.format == "plain"' > /dev/null
-          echo "✓ Plain SQL backup created"
 
-          # Test: List backups (with files)
-          echo "Test: List backups (with files)"
-          RESPONSE=$(curl -sf -H 'X-API-Key: test-api-key-12345' http://localhost:${{ env.API_PORT }}/api/db/backups)
+      - name: "Backup: List backups (2 files)"
+        if: matrix.suite == 'backup'
+        run: |
+          RESPONSE=$(curl -sf -H "X-API-Key: ${{ env.API_KEY }}" http://localhost:${{ env.API_PORT }}/api/db/backups)
           echo "$RESPONSE" | jq -e '.success == true and .data.total_count == 2' > /dev/null
-          echo "✓ Backup list shows 2 files"
 
-          # Test: Download backup
-          echo "Test: Download backup"
-          HTTP_CODE=$(curl -s -o /tmp/backup_download.dump -w "%{http_code}" \
-            -H 'X-API-Key: test-api-key-12345' \
-            "http://localhost:${{ env.API_PORT }}/api/db/backups/$FILENAME")
-          [ "$HTTP_CODE" = "200" ] && [ -s /tmp/backup_download.dump ]
-          echo "✓ Backup downloaded"
+      - name: "Backup: Download file"
+        if: matrix.suite == 'backup'
+        run: |
+          HTTP_CODE=$(curl -s -o /tmp/backup.dump -w "%{http_code}" \
+            -H "X-API-Key: ${{ env.API_KEY }}" \
+            "http://localhost:${{ env.API_PORT }}/api/db/backups/${{ env.BACKUP_FILENAME }}")
+          [ "$HTTP_CODE" = "200" ] && [ -s /tmp/backup.dump ]
 
-          # Test: Stream backup
-          echo "Test: Stream backup download"
+      - name: "Backup: Stream download"
+        if: matrix.suite == 'backup'
+        run: |
           HTTP_CODE=$(curl -s -o /tmp/backup_stream.dump -w "%{http_code}" \
-            -H 'X-API-Key: test-api-key-12345' \
+            -H "X-API-Key: ${{ env.API_KEY }}" \
             "http://localhost:${{ env.API_PORT }}/api/db/backup/download?format=custom&compression=3")
           [ "$HTTP_CODE" = "200" ] && [ -s /tmp/backup_stream.dump ]
-          echo "✓ Backup streamed"
 
-          # Test: Delete without confirmation
-          echo "Test: Delete backup without confirmation"
-          RESPONSE=$(curl -s -X DELETE -H 'X-API-Key: test-api-key-12345' \
-            "http://localhost:${{ env.API_PORT }}/api/db/backups/$FILENAME")
+      - name: "Backup: Delete without confirmation rejected"
+        if: matrix.suite == 'backup'
+        run: |
+          RESPONSE=$(curl -s -X DELETE -H "X-API-Key: ${{ env.API_KEY }}" \
+            "http://localhost:${{ env.API_PORT }}/api/db/backups/${{ env.BACKUP_FILENAME }}")
           echo "$RESPONSE" | jq -e '.success == false' > /dev/null
-          echo "✓ Delete rejected without confirmation"
 
-          # Test: Delete with confirmation
-          echo "Test: Delete backup with confirmation"
+      - name: "Backup: Delete with confirmation"
+        if: matrix.suite == 'backup'
+        run: |
           RESPONSE=$(curl -sf -X DELETE \
-            -H 'X-API-Key: test-api-key-12345' \
-            -H "X-Confirm-Delete: $FILENAME" \
-            "http://localhost:${{ env.API_PORT }}/api/db/backups/$FILENAME")
+            -H "X-API-Key: ${{ env.API_KEY }}" \
+            -H "X-Confirm-Delete: ${{ env.BACKUP_FILENAME }}" \
+            "http://localhost:${{ env.API_PORT }}/api/db/backups/${{ env.BACKUP_FILENAME }}")
           echo "$RESPONSE" | jq -e '.success == true' > /dev/null
-          echo "✓ Backup deleted"
 
-          # Test: Delete non-existent
-          echo "Test: Delete non-existent backup"
+      - name: "Backup: Non-existent returns 404"
+        if: matrix.suite == 'backup'
+        run: |
           HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE \
-            -H 'X-API-Key: test-api-key-12345' \
+            -H "X-API-Key: ${{ env.API_KEY }}" \
             -H "X-Confirm-Delete: aeron-backup-nonexistent.dump" \
             "http://localhost:${{ env.API_PORT }}/api/db/backups/aeron-backup-nonexistent.dump")
           [ "$HTTP_CODE" = "404" ]
-          echo "✓ Non-existent backup returns 404"
 
-          # Test: Invalid format
-          echo "Test: Invalid format validation"
-          RESPONSE=$(curl -s -X POST -H 'X-API-Key: test-api-key-12345' \
+      - name: "Backup: Invalid format rejected"
+        if: matrix.suite == 'backup'
+        run: |
+          RESPONSE=$(curl -s -X POST -H "X-API-Key: ${{ env.API_KEY }}" \
             -H 'Content-Type: application/json' \
             http://localhost:${{ env.API_PORT }}/api/db/backup \
             -d '{"format": "invalid"}')
           echo "$RESPONSE" | jq -e '.success == false' > /dev/null
-          echo "✓ Invalid format rejected"
 
-          # Test: Invalid compression
-          echo "Test: Invalid compression validation"
-          RESPONSE=$(curl -s -X POST -H 'X-API-Key: test-api-key-12345' \
+      - name: "Backup: Invalid compression rejected"
+        if: matrix.suite == 'backup'
+        run: |
+          RESPONSE=$(curl -s -X POST -H "X-API-Key: ${{ env.API_KEY }}" \
             -H 'Content-Type: application/json' \
             http://localhost:${{ env.API_PORT }}/api/db/backup \
             -d '{"compression": 15, "dry_run": true}')
           echo "$RESPONSE" | jq -e '.success == false' > /dev/null
-          echo "✓ Invalid compression rejected"
 
-          # Test: Path traversal
-          echo "Test: Path traversal protection"
+      - name: "Backup: Path traversal blocked"
+        if: matrix.suite == 'backup'
+        run: |
           RESPONSE=$(curl -s -X DELETE \
-            -H 'X-API-Key: test-api-key-12345' \
+            -H "X-API-Key: ${{ env.API_KEY }}" \
             -H "X-Confirm-Delete: ../../../etc/passwd" \
             "http://localhost:${{ env.API_PORT }}/api/db/backups/../../../etc/passwd")
           echo "$RESPONSE" | jq -e '.success == false' > /dev/null
-          echo "✓ Path traversal blocked"
 
-      - name: Run edge case tests
+      # ==================== EDGE CASE TESTS ====================
+      - name: "Edge: Upload to non-existent artist"
         if: matrix.suite == 'edge-cases'
         run: |
-          echo "=== EDGE CASE TESTS ==="
-
-          ARTIST_ID=$(docker exec aeron-test-db psql -U aeron -d aeron_db -t -c "SELECT artistid FROM aeron.artist LIMIT 1;" | tr -d ' ')
-
-          # Test: Upload to non-existent artist
-          echo "Test: Upload to non-existent artist"
-          RESPONSE=$(curl -s -X POST -H 'X-API-Key: test-api-key-12345' \
-            "http://localhost:${{ env.API_PORT }}/api/artists/00000000-0000-4000-8000-000000000001/image" \
+          RESPONSE=$(curl -s -X POST -H "X-API-Key: ${{ env.API_KEY }}" \
+            "http://localhost:${{ env.API_PORT }}/api/artists/${{ env.FAKE_UUID }}/image" \
             -H 'Content-Type: application/json' \
             -d '{"url":"https://picsum.photos/500"}')
           echo "$RESPONSE" | jq -e '.success == false' > /dev/null
-          echo "✓ Non-existent artist rejected"
 
-          # Test: Invalid UUID format
-          echo "Test: Invalid UUID format"
-          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST -H 'X-API-Key: test-api-key-12345' \
+      - name: "Edge: Invalid UUID returns 400"
+        if: matrix.suite == 'edge-cases'
+        run: |
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST -H "X-API-Key: ${{ env.API_KEY }}" \
             "http://localhost:${{ env.API_PORT }}/api/artists/not-a-uuid/image" \
             -H 'Content-Type: application/json' \
             -d '{"url":"https://picsum.photos/500"}')
           [ "$HTTP_CODE" = "400" ]
-          echo "✓ Invalid UUID returns 400"
 
-          # Test: No image source
-          echo "Test: No image source"
-          RESPONSE=$(curl -s -X POST -H 'X-API-Key: test-api-key-12345' \
-            "http://localhost:${{ env.API_PORT }}/api/artists/${ARTIST_ID}/image" \
+      - name: "Edge: No image source rejected"
+        if: matrix.suite == 'edge-cases'
+        run: |
+          RESPONSE=$(curl -s -X POST -H "X-API-Key: ${{ env.API_KEY }}" \
+            "http://localhost:${{ env.API_PORT }}/api/artists/${{ env.ARTIST_ID }}/image" \
             -H 'Content-Type: application/json' \
             -d '{}')
           echo "$RESPONSE" | jq -e '.success == false' > /dev/null
           echo "$RESPONSE" | jq -r '.error' | grep -q 'afbeelding is verplicht'
-          echo "✓ No image source rejected"
 
-          # Test: Both URL and image
-          echo "Test: Both URL and image"
-          RESPONSE=$(curl -s -X POST -H 'X-API-Key: test-api-key-12345' \
-            "http://localhost:${{ env.API_PORT }}/api/artists/${ARTIST_ID}/image" \
+      - name: "Edge: Both URL and image rejected"
+        if: matrix.suite == 'edge-cases'
+        run: |
+          RESPONSE=$(curl -s -X POST -H "X-API-Key: ${{ env.API_KEY }}" \
+            "http://localhost:${{ env.API_PORT }}/api/artists/${{ env.ARTIST_ID }}/image" \
             -H 'Content-Type: application/json' \
             -d '{"url":"https://example.com/img.jpg","image":"data:image/jpeg;base64,/9j/4AAQ"}')
           echo "$RESPONSE" | jq -e '.success == false' > /dev/null
           echo "$RESPONSE" | jq -r '.error' | grep -q 'gebruik óf URL óf upload, niet beide'
-          echo "✓ Both URL and image rejected"
 
-          # Test: Concurrent uploads
-          echo "Test: Concurrent uploads"
+      - name: "Edge: Concurrent uploads"
+        if: matrix.suite == 'edge-cases'
+        run: |
           ARTIST_ID2=$(docker exec aeron-test-db psql -U aeron -d aeron_db -t -c "SELECT artistid FROM aeron.artist OFFSET 1 LIMIT 1;" | tr -d ' ')
           TRACK_ID=$(docker exec aeron-test-db psql -U aeron -d aeron_db -t -c "SELECT titleid FROM aeron.track LIMIT 1;" | tr -d ' ')
 
-          curl -s -X POST -H 'X-API-Key: test-api-key-12345' \
-            "http://localhost:${{ env.API_PORT }}/api/artists/${ARTIST_ID}/image" \
+          curl -s -X POST -H "X-API-Key: ${{ env.API_KEY }}" \
+            "http://localhost:${{ env.API_PORT }}/api/artists/${{ env.ARTIST_ID }}/image" \
             -H 'Content-Type: application/json' \
-            -d '{"url":"https://picsum.photos/1500"}' > /tmp/result1.json &
-          PID1=$!
+            -d '{"url":"https://picsum.photos/1500"}' > /tmp/r1.json &
 
-          curl -s -X POST -H 'X-API-Key: test-api-key-12345' \
+          curl -s -X POST -H "X-API-Key: ${{ env.API_KEY }}" \
             "http://localhost:${{ env.API_PORT }}/api/artists/${ARTIST_ID2}/image" \
             -H 'Content-Type: application/json' \
-            -d '{"url":"https://picsum.photos/1500"}' > /tmp/result2.json &
-          PID2=$!
+            -d '{"url":"https://picsum.photos/1500"}' > /tmp/r2.json &
 
-          curl -s -X POST -H 'X-API-Key: test-api-key-12345' \
+          curl -s -X POST -H "X-API-Key: ${{ env.API_KEY }}" \
             "http://localhost:${{ env.API_PORT }}/api/tracks/${TRACK_ID}/image" \
             -H 'Content-Type: application/json' \
-            -d '{"url":"https://picsum.photos/1500"}' > /tmp/result3.json &
-          PID3=$!
+            -d '{"url":"https://picsum.photos/1500"}' > /tmp/r3.json &
 
-          wait $PID1 $PID2 $PID3
+          wait
+          jq -e '.success == true' /tmp/r1.json > /dev/null
+          jq -e '.success == true' /tmp/r2.json > /dev/null
+          jq -e '.success == true' /tmp/r3.json > /dev/null
 
-          for i in 1 2 3; do
-            jq -e '.success == true' /tmp/result$i.json > /dev/null || (echo "✗ Concurrent upload $i failed" && exit 1)
-          done
-          echo "✓ Concurrent uploads succeeded"
-
+      # ==================== CLEANUP ====================
       - name: Stop API server
         if: always()
         run: |
-          if [ -f api.pid ]; then
-            kill $(cat api.pid) 2>/dev/null || true
-            rm -f api.pid
-          fi
+          [ -f api.pid ] && kill $(cat api.pid) 2>/dev/null || true
 
       - name: Cleanup
         if: always()
         run: |
           cd tests && docker compose -f docker-compose.test.yml down -v 2>/dev/null || true
-          rm -f test_*.png test_*.json /tmp/result*.json /tmp/backup*.dump 2>/dev/null || true
+          rm -f test_*.png test_*.json /tmp/r*.json /tmp/backup*.dump 2>/dev/null || true
