@@ -114,14 +114,14 @@ func getTableHealth(db *sqlx.DB, schema string) ([]TableHealth, error) {
 	statsQuery := `
 		SELECT
 			relname as table_name,
-			n_live_tup as live_tuples,
-			n_dead_tup as dead_tuples,
+			COALESCE(n_live_tup, 0) as live_tuples,
+			COALESCE(n_dead_tup, 0) as dead_tuples,
 			last_vacuum,
 			last_autovacuum,
 			last_analyze,
 			last_autoanalyze,
-			seq_scan,
-			idx_scan
+			COALESCE(seq_scan, 0) as seq_scan,
+			COALESCE(idx_scan, 0) as idx_scan
 		FROM pg_stat_user_tables
 		WHERE schemaname = $1
 		ORDER BY n_live_tup DESC
