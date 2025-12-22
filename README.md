@@ -27,9 +27,22 @@ De primaire functie van deze API is het **beheren van afbeeldingen** voor:
 - **Bulkbewerkingen**: Verwijder alle afbeeldingen van een specifiek type in één handeling
 - **Beveiliging**: Optionele API-sleutelverificatie voor veilige toegang
 
+### Database onderhoud
+
+- **Health monitoring**: Real-time inzicht in databaseprestaties, tabelstatistieken en bloat-detectie
+- **Vacuum**: Voer VACUUM uit op tabellen om ruimte terug te winnen en prestaties te verbeteren
+- **Analyze**: Werk tabelstatistieken bij voor de query optimizer
+- **Aanbevelingen**: Automatische suggesties gebaseerd op configureerbare drempelwaarden
+
+### Backup functionaliteit
+
+- **Backup aanmaken**: Maak database backups in custom (binair) of plain (SQL) formaat
+- **Backup beheer**: Lijst, download en verwijder backups via de API
+- **Automatische opschoning**: Configureerbare retentie en maximum aantal backups
+
 ## Snelstart
 
-### 🐳 Docker (aanbevolen)
+### Docker (aanbevolen)
 ```bash
 # Starten met voorbeeldconfiguratie
 docker run -d -p 8080:8080 --name zwfm-aeronapi ghcr.io/oszuidwest/zwfm-aeronapi:latest
@@ -57,6 +70,19 @@ wget https://raw.githubusercontent.com/oszuidwest/zwfm-aeronapi/main/config.exam
 docker run -d \
   -p 8080:8080 \
   -v $(pwd)/config.yaml:/config.yaml \
+  --name zwfm-aeronapi \
+  --restart unless-stopped \
+  ghcr.io/oszuidwest/zwfm-aeronapi:latest
+```
+
+### Met Docker (inclusief backups)
+
+```bash
+# Start de container met backup volume
+docker run -d \
+  -p 8080:8080 \
+  -v $(pwd)/config.yaml:/config.yaml \
+  -v $(pwd)/backups:/backups \
   --name zwfm-aeronapi \
   --restart unless-stopped \
   ghcr.io/oszuidwest/zwfm-aeronapi:latest
@@ -90,6 +116,21 @@ Raadpleeg [`config.example.yaml`](config.example.yaml) voor:
 - Volledige documentatie van alle configuratie-opties
 - Voorbeelden voor verschillende omgevingen
 - Gedetailleerde uitleg van elke instelling
+
+### Belangrijke configuratie-opties
+
+| Sectie | Optie | Beschrijving | Standaard |
+|--------|-------|--------------|-----------|
+| `database` | `max_open_conns` | Maximum aantal open database verbindingen | 25 |
+| `database` | `max_idle_conns` | Maximum aantal idle verbindingen | 5 |
+| `database` | `conn_max_lifetime` | Maximale levensduur verbinding (minuten) | 5 |
+| `api` | `request_timeout` | Request timeout in seconden | 30 |
+| `maintenance` | `bloat_threshold` | Bloat % drempel voor vacuum-aanbeveling | 10.0 |
+| `maintenance` | `dead_tuple_threshold` | Dead tuple drempel voor vacuum-aanbeveling | 10000 |
+| `backup` | `enabled` | Backup-endpoints inschakelen | false |
+| `backup` | `path` | Directory voor backups | ./backups |
+| `backup` | `retention_days` | Backups ouder dan dit automatisch verwijderen | 30 |
+| `backup` | `max_backups` | Maximum aantal backups bewaren | 10 |
 
 ## De API-server starten
 
@@ -135,6 +176,20 @@ curl -X POST http://localhost:8080/api/tracks/{trackid}/image \
   -d '{"url":"https://example.com/album.jpg"}'
 ```
 
+### 5. Bekijk database health
+```bash
+curl http://localhost:8080/api/db/health \
+  -H "X-API-Key: jouw-api-sleutel"
+```
+
+### 6. Maak een backup (indien ingeschakeld)
+```bash
+curl -X POST http://localhost:8080/api/db/backup \
+  -H "X-API-Key: jouw-api-sleutel" \
+  -H "Content-Type: application/json" \
+  -d '{"format":"custom"}'
+```
+
 Voor uitgebreide API-documentatie, inclusief alle endpoints, voorbeelden en gebruiksscenario's, raadpleeg [API.md](API.md).
 
 ## Databaseschema
@@ -168,10 +223,8 @@ CREATE TABLE {schema}.playlistitem (
 ## Ontwikkeling
 
 ### Systeemvereisten
-- Go 1.24 of recenter
+- Go 1.25 of recenter
 - PostgreSQL met Aeron-database
-- ImageMagick
-- Jpegli (optioneel, voor geavanceerde compressie)
 
 ### Compileren
 ```bash
