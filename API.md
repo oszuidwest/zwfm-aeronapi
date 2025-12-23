@@ -1043,6 +1043,10 @@ Het gedrag van de API kan worden geconfigureerd via `config.json`:
       "schedule": "0 3 * * *",
       "timezone": ""
     }
+  },
+  "log": {
+    "level": "info",
+    "format": "text"
   }
 }
 ```

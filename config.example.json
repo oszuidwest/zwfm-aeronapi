@@ -39,5 +39,9 @@
       "schedule": "0 3 * * *",
       "timezone": ""
     }
+  },
+  "log": {
+    "level": "info",
+    "format": "text"
   }
 }

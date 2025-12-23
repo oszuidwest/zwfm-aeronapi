@@ -18,13 +18,21 @@ Een **onofficiële** REST API voor het Aeron-radioautomatiseringssysteem met too
 
 ### Docker (aanbevolen)
 
+**Met Docker Compose:**
 ```bash
-# Download en pas configuratie aan
+# Download configuratiebestanden
 wget https://raw.githubusercontent.com/oszuidwest/zwfm-aerontoolbox/main/config.example.json -O config.json
+wget https://raw.githubusercontent.com/oszuidwest/zwfm-aerontoolbox/main/docker-compose.example.yml -O docker-compose.yml
 
-# Start container
+# Pas config.json aan en start
+docker compose up -d
+```
+
+**Of met Docker run:**
+```bash
 docker run -d -p 8080:8080 \
-  -v $(pwd)/config.json:/config.json \
+  -v $(pwd)/config.json:/app/config.json:ro \
+  -v $(pwd)/backups:/backups \
   --name zwfm-aerontoolbox \
   --restart unless-stopped \
   ghcr.io/oszuidwest/zwfm-aerontoolbox:latest
@@ -53,7 +61,8 @@ Kopieer `config.example.json` naar `config.json` en configureer:
 | `database` | PostgreSQL verbinding (host, port, user, password, schema) |
 | `image` | Afbeeldingsoptimalisatie (afmetingen, kwaliteit) |
 | `api` | Authenticatie (API-sleutels) |
-| `backup` | Backup-instellingen (pad, retentie) |
+| `backup` | Backup-instellingen (pad, retentie, scheduler) |
+| `log` | Logging-instellingen (level, format) |
 
 Zie [`config.example.json`](config.example.json) voor alle opties en standaardwaarden.
 
