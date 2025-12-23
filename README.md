@@ -61,7 +61,7 @@ Kopieer `config.example.json` naar `config.json` en configureer:
 | `database` | PostgreSQL verbinding (host, port, user, password, schema) |
 | `image` | Afbeeldingsoptimalisatie (afmetingen, kwaliteit) |
 | `api` | Authenticatie (API-sleutels) |
-| `backup` | Backup-instellingen (pad, retentie, scheduler) |
+| `backup` | Backup-instellingen (pad, retentie, scheduler, S3 sync) |
 | `log` | Logging-instellingen (level, format) |
 
 Zie [`config.example.json`](config.example.json) voor alle opties en standaardwaarden.

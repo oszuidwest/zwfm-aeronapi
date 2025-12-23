@@ -52,6 +52,7 @@ De Aeron Toolbox API biedt RESTful-endpoints voor het Aeron-radioautomatiserings
 | `/api/db/analyze` | POST | ANALYZE uitvoeren op tabellen | Ja |
 | **Backups** |
 | `/api/db/backup` | POST | Nieuwe backup aanmaken | Ja |
+| `/api/db/backup/status` | GET | Backup status opvragen | Ja |
 | `/api/db/backups` | GET | Lijst van alle backups | Ja |
 | `/api/db/backups/{filename}` | GET | Specifieke backup downloaden | Ja |
 | `/api/db/backups/{filename}` | DELETE | Backup verwijderen | Ja |
@@ -711,6 +712,55 @@ Backups kunnen automatisch worden uitgevoerd via de ingebouwde scheduler. Config
 | `0 3 * * 0` | Elke zondag om 3:00 |
 | `0 3 1 * *` | 1e van elke maand om 3:00 |
 
+### S3 synchronisatie
+
+Backups kunnen automatisch worden gesynchroniseerd naar S3-compatibele storage (AWS S3, MinIO, Backblaze B2, DigitalOcean Spaces). Configureer dit in `config.json`:
+
+```json
+"backup": {
+  "s3": {
+    "enabled": true,
+    "bucket": "mijn-backups",
+    "region": "eu-west-1",
+    "endpoint": "",
+    "access_key_id": "AKIAIOSFODNN7EXAMPLE",
+    "secret_access_key": "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+    "path_prefix": "aeron/backups/",
+    "force_path_style": false
+  }
+}
+```
+
+**Parameters:**
+- `enabled`: Schakel S3 synchronisatie in/uit
+- `bucket`: S3 bucket naam
+- `region`: AWS regio (bijv. `eu-west-1`)
+- `endpoint`: Custom endpoint voor S3-compatibele services (optioneel)
+- `access_key_id`: AWS access key ID
+- `secret_access_key`: AWS secret access key
+- `path_prefix`: Prefix voor S3 keys (optioneel, bijv. `backups/`)
+- `force_path_style`: Gebruik path-style URLs (vereist voor MinIO)
+
+**Voorbeeld voor MinIO:**
+```json
+"s3": {
+  "enabled": true,
+  "bucket": "backups",
+  "region": "us-east-1",
+  "endpoint": "http://minio.local:9000",
+  "access_key_id": "minioadmin",
+  "secret_access_key": "minioadmin",
+  "path_prefix": "",
+  "force_path_style": true
+}
+```
+
+**Gedrag:**
+- Na elke succesvolle backup wordt het bestand asynchroon naar S3 geüpload
+- Bij het verwijderen van lokale backups (handmatig of door retention) wordt ook de S3-kopie verwijderd
+- S3-fouten blokkeren de backup niet; de status is zichtbaar via `GET /api/db/backup/status`
+- Uploads gebruiken multipart voor grote bestanden
+
 ### Backup starten
 
 Start een nieuwe database backup op de achtergrond.
@@ -785,6 +835,20 @@ Toont de status van de laatste backup operatie.
 }
 ```
 
+**Response na succesvolle backup met S3 sync:** `200 OK`
+```json
+{
+  "running": false,
+  "started_at": "2024-01-15T03:00:00Z",
+  "ended_at": "2024-01-15T03:00:45Z",
+  "success": true,
+  "filename": "aeron-backup-2024-01-15-030000.dump",
+  "s3_sync": {
+    "synced": true
+  }
+}
+```
+
 **Response na mislukte backup:** `200 OK`
 ```json
 {
@@ -797,6 +861,21 @@ Toont de status van de laatste backup operatie.
 }
 ```
 
+**Response met S3 sync fout:** `200 OK`
+```json
+{
+  "running": false,
+  "started_at": "2024-01-15T03:00:00Z",
+  "ended_at": "2024-01-15T03:00:45Z",
+  "success": true,
+  "filename": "aeron-backup-2024-01-15-030000.dump",
+  "s3_sync": {
+    "synced": false,
+    "error": "S3 upload: upload naar backups/aeron-backup-2024-01-15-030000.dump mislukt: ..."
+  }
+}
+```
+
 **Velden:**
 - `running`: Of er momenteel een backup draait
 - `started_at`: Starttijd van de laatste backup
@@ -804,6 +883,9 @@ Toont de status van de laatste backup operatie.
 - `success`: Of de backup geslaagd is (alleen aanwezig na voltooiing)
 - `error`: Foutmelding (alleen aanwezig bij mislukking)
 - `filename`: Bestandsnaam (kan leeg zijn bij vroege fouten)
+- `s3_sync`: S3 synchronisatiestatus (alleen aanwezig indien S3 is ingeschakeld)
+  - `synced`: Of de backup naar S3 is geüpload
+  - `error`: Foutmelding bij sync-fout
 
 ### Lijst van backups ophalen
 
@@ -1095,6 +1177,16 @@ Het gedrag van de API kan worden geconfigureerd via `config.json`:
       "enabled": false,
       "schedule": "0 3 * * *",
       "timezone": ""
+    },
+    "s3": {
+      "enabled": false,
+      "bucket": "mijn-backups",
+      "region": "eu-west-1",
+      "endpoint": "",
+      "access_key_id": "",
+      "secret_access_key": "",
+      "path_prefix": "backups/",
+      "force_path_style": false
     }
   },
   "log": {
