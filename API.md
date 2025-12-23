@@ -722,13 +722,15 @@ Start een nieuwe database backup op de achtergrond.
 ```json
 {
   "format": "custom",
-  "compression": 9
+  "compression": 9,
+  "schema_only": false
 }
 ```
 
 **Parameters:**
 - `format` (optioneel): `"custom"` (binair, standaard) of `"plain"` (SQL-tekst)
 - `compression` (optioneel): Compressieniveau 0-9 (standaard: 9, alleen voor custom format)
+- `schema_only` (optioneel): Alleen schema exporteren, geen data (standaard: false)
 
 **Response:** `202 Accepted`
 ```json
@@ -740,10 +742,21 @@ Start een nieuwe database backup op de achtergrond.
 
 De backup wordt asynchroon uitgevoerd. Controleer `GET /api/db/backups` om te zien wanneer de backup klaar is.
 
-**Foutresponse:** `400 Bad Request`
+> **Let op:** Er kan slechts één backup tegelijk draaien. Een tweede aanvraag tijdens een lopende backup retourneert een fout.
+
+**Foutresponses:**
+
+`400 Bad Request` - Backup niet ingeschakeld:
 ```json
 {
   "error": "backup functionaliteit is niet ingeschakeld"
+}
+```
+
+`500 Internal Server Error` - Backup al bezig:
+```json
+{
+  "error": "backup starten mislukt: backup is al bezig"
 }
 ```
 

@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/oszuidwest/zwfm-aerontoolbox/internal/config"
@@ -29,6 +30,7 @@ type BackupService struct {
 	backupRoot *os.Root
 	done       chan struct{}
 	wg         sync.WaitGroup
+	running    atomic.Bool
 }
 
 // newBackupService returns a BackupService for database backup operations.
@@ -68,20 +70,6 @@ type BackupRequest struct {
 	Format      string `json:"format"`
 	Compression int    `json:"compression"`
 	SchemaOnly  bool   `json:"schema_only"`
-	DryRun      bool   `json:"dry_run"`
-}
-
-// BackupResult represents the result of a backup operation.
-type BackupResult struct {
-	Filename      string    `json:"filename"`
-	FilePath      string    `json:"file_path,omitzero"`
-	Format        string    `json:"format"`
-	Size          int64     `json:"size_bytes,omitzero"`
-	SizeFormatted string    `json:"size,omitzero"`
-	Duration      string    `json:"duration,omitzero"`
-	CreatedAt     time.Time `json:"created_at,omitzero"`
-	DryRun        bool      `json:"dry_run,omitzero"`
-	Command       string    `json:"command,omitzero"`
 }
 
 // BackupInfo represents metadata about an existing backup file.
@@ -221,9 +209,9 @@ func (s *BackupService) executePgDump(ctx context.Context, pgDumpPath, filename,
 // --- Public methods ---
 
 // Start starts a database backup in the background.
-// Returns immediately after basic validation. Check GET /backups for status.
+// Returns immediately after validation. Check GET /backups for status.
+// Returns error if a backup is already running.
 func (s *BackupService) Start(req BackupRequest) error {
-	// Fail-fast validation for immediate HTTP feedback
 	if err := s.checkEnabled(); err != nil {
 		return err
 	}
@@ -234,20 +222,37 @@ func (s *BackupService) Start(req BackupRequest) error {
 		return err
 	}
 
+	if !s.running.CompareAndSwap(false, true) {
+		return types.NewOperationError("backup starten", errors.New("backup is al bezig"))
+	}
+
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
+		defer s.running.Store(false)
+
 		ctx, cancel := context.WithTimeout(context.Background(), s.config.Backup.GetTimeout())
 		defer cancel()
-		_ = s.Run(ctx, req) // Logging handled internally
+
+		s.execute(ctx, req)
 	}()
 
 	return nil
 }
 
-// Run executes a backup synchronously. Used by Start() and scheduler.
-// Handles all logging internally - callers don't need to log.
+// Run executes a backup synchronously. Used by scheduler.
+// Returns error if a backup is already running.
 func (s *BackupService) Run(ctx context.Context, req BackupRequest) error {
+	if !s.running.CompareAndSwap(false, true) {
+		return types.NewOperationError("backup starten", errors.New("backup is al bezig"))
+	}
+	defer s.running.Store(false)
+
+	return s.execute(ctx, req)
+}
+
+// execute is the internal backup implementation.
+func (s *BackupService) execute(ctx context.Context, req BackupRequest) error {
 	if err := s.checkEnabled(); err != nil {
 		return err
 	}
@@ -275,7 +280,6 @@ func (s *BackupService) Run(ctx context.Context, req BackupRequest) error {
 
 	fileInfo, duration, err := s.executePgDump(ctx, pgDumpPath, filename, fullPath, args)
 	if err != nil {
-		// executePgDump already logs errors
 		return err
 	}
 
