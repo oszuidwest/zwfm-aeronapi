@@ -2,6 +2,8 @@ name: Comprehensive Test
 permissions:
   contents: read
 on:
+  pull_request:
+    branches: [main]
   workflow_call:
     inputs:
       skip_tests:
