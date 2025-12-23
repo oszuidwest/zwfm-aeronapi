@@ -52,7 +52,6 @@ De Aeron Toolbox API biedt RESTful-endpoints voor het Aeron-radioautomatiserings
 | `/api/db/analyze` | POST | ANALYZE uitvoeren op tabellen | Ja |
 | **Backups** |
 | `/api/db/backup` | POST | Nieuwe backup aanmaken | Ja |
-| `/api/db/backup/download` | GET | Laatste backup downloaden | Ja |
 | `/api/db/backups` | GET | Lijst van alle backups | Ja |
 | `/api/db/backups/{filename}` | GET | Specifieke backup downloaden | Ja |
 | `/api/db/backups/{filename}` | DELETE | Backup verwijderen | Ja |
@@ -668,12 +667,27 @@ Werk tabelstatistieken bij voor de PostgreSQL query optimizer.
 
 > **Let op:** Backup-endpoints zijn alleen beschikbaar indien `backup.enabled: true` in de configuratie.
 
+### Backup workflow
+
+Backups worden asynchroon uitgevoerd:
+
+1. **Backup starten:** `POST /api/db/backup` → retourneert direct `202 Accepted`
+2. **Status controleren:** `GET /api/db/backup/status` → toont voortgang en eventuele fouten
+3. **Backup downloaden:** `GET /api/db/backups/{filename}` → download het bestand
+
+Deze aanpak biedt voordelen:
+- Request retourneert direct (geen timeout issues)
+- Fouten zijn zichtbaar via het status endpoint
+- Er kan slechts één backup tegelijk draaien
+- Bij connectieverlies loopt backup door op de server
+
 ### Automatische backups
 
 Backups kunnen automatisch worden uitgevoerd via de ingebouwde scheduler. Configureer dit in `config.json`:
 
 ```json
 "backup": {
+  "timeout_minutes": 30,
   "scheduler": {
     "enabled": true,
     "schedule": "0 3 * * *",
@@ -683,6 +697,7 @@ Backups kunnen automatisch worden uitgevoerd via de ingebouwde scheduler. Config
 ```
 
 **Parameters:**
+- `timeout_minutes`: Maximale tijd voor pg_dump (standaard: 30 minuten)
 - `enabled`: Schakel automatische backups in/uit
 - `schedule`: Cron-expressie voor het backup-schema
 - `timezone`: IANA-tijdzone (optioneel, standaard: systeemtijd)
@@ -696,9 +711,9 @@ Backups kunnen automatisch worden uitgevoerd via de ingebouwde scheduler. Config
 | `0 3 * * 0` | Elke zondag om 3:00 |
 | `0 3 1 * *` | 1e van elke maand om 3:00 |
 
-### Backup aanmaken
+### Backup starten
 
-Maak een nieuwe database backup.
+Start een nieuwe database backup op de achtergrond.
 
 **Endpoint:** `POST /api/db/backup`
 **Authenticatie:** Vereist
@@ -715,43 +730,80 @@ Maak een nieuwe database backup.
 - `format` (optioneel): `"custom"` (binair, standaard) of `"plain"` (SQL-tekst)
 - `compression` (optioneel): Compressieniveau 0-9 (standaard: 9, alleen voor custom format)
 
-**Response:** `200 OK`
+**Response:** `202 Accepted`
 ```json
 {
-  "filename": "aeron-backup-2025-12-22-143000.dump",
-  "format": "custom",
-  "size_bytes": 52428800,
-  "size": "50.0 MB",
-  "duration": "12.5s",
-  "created_at": "2025-12-22T14:30:00Z"
+  "message": "Backup gestart op achtergrond",
+  "check": "/api/db/backup/status"
 }
 ```
 
-**Foutresponse:** `400 Bad Request`
+De backup wordt asynchroon uitgevoerd. Controleer `GET /api/db/backup/status` voor de voortgang.
+
+> **Let op:** Er kan slechts één backup tegelijk draaien. Een tweede aanvraag tijdens een lopende backup retourneert een fout.
+
+**Foutresponses:**
+
+`400 Bad Request` - Backup niet ingeschakeld:
 ```json
 {
   "error": "backup functionaliteit is niet ingeschakeld"
 }
 ```
 
-### Laatste backup downloaden
-
-Download de meest recente backup direct.
-
-**Endpoint:** `GET /api/db/backup/download`
-**Authenticatie:** Vereist
-
-**Response:** `200 OK`
-- Content-Type: `application/octet-stream` (custom) of `application/sql` (plain)
-- Content-Disposition: `attachment; filename=aeron-backup-....dump`
-- Binaire backup data
-
-**Foutresponse:** `404 Not Found`
+`500 Internal Server Error` - Backup al bezig:
 ```json
 {
-  "error": "geen backups beschikbaar"
+  "error": "backup starten mislukt: backup is al bezig"
 }
 ```
+
+### Backup status
+
+Toont de status van de laatste backup operatie.
+
+**Endpoint:** `GET /api/db/backup/status`
+**Authenticatie:** Vereist
+
+**Response tijdens backup:** `200 OK`
+```json
+{
+  "running": true,
+  "started_at": "2024-01-15T03:00:00Z",
+  "filename": "aeron-backup-2024-01-15-030000.dump"
+}
+```
+
+**Response na succesvolle backup:** `200 OK`
+```json
+{
+  "running": false,
+  "started_at": "2024-01-15T03:00:00Z",
+  "ended_at": "2024-01-15T03:00:45Z",
+  "success": true,
+  "filename": "aeron-backup-2024-01-15-030000.dump"
+}
+```
+
+**Response na mislukte backup:** `200 OK`
+```json
+{
+  "running": false,
+  "started_at": "2024-01-15T03:00:00Z",
+  "ended_at": "2024-01-15T03:00:05Z",
+  "success": false,
+  "error": "backup timeout na 30m0s (configureer backup.timeout_minutes)",
+  "filename": "aeron-backup-2024-01-15-030000.dump"
+}
+```
+
+**Velden:**
+- `running`: Of er momenteel een backup draait
+- `started_at`: Starttijd van de laatste backup
+- `ended_at`: Eindtijd (alleen aanwezig na voltooiing)
+- `success`: Of de backup geslaagd is (alleen aanwezig na voltooiing)
+- `error`: Foutmelding (alleen aanwezig bij mislukking)
+- `filename`: Bestandsnaam (kan leeg zijn bij vroege fouten)
 
 ### Lijst van backups ophalen
 
@@ -1038,6 +1090,7 @@ Het gedrag van de API kan worden geconfigureerd via `config.json`:
     "max_backups": 10,
     "default_format": "custom",
     "default_compression": 9,
+    "timeout_minutes": 30,
     "scheduler": {
       "enabled": false,
       "schedule": "0 3 * * *",

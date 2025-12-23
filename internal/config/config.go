@@ -65,6 +65,7 @@ type BackupConfig struct {
 	MaxBackups         int             `json:"max_backups"`
 	DefaultFormat      string          `json:"default_format"`
 	DefaultCompression int             `json:"default_compression"`
+	TimeoutMinutes     int             `json:"timeout_minutes"`
 	Scheduler          SchedulerConfig `json:"scheduler"`
 }
 
@@ -97,6 +98,7 @@ const (
 	DefaultBackupFormat              = "custom"
 	DefaultBackupCompression         = 9
 	DefaultBackupPath                = "./backups"
+	DefaultBackupTimeoutMinutes      = 30
 )
 
 // GetMaxDownloadBytes returns the maximum allowed image download size in bytes.
@@ -157,6 +159,11 @@ func (c *BackupConfig) GetDefaultFormat() string {
 // GetDefaultCompression returns the compression level (0-9) for custom format backups.
 func (c *BackupConfig) GetDefaultCompression() int {
 	return min(cmp.Or(c.DefaultCompression, DefaultBackupCompression), 9)
+}
+
+// GetTimeout returns the maximum duration for backup operations.
+func (c *BackupConfig) GetTimeout() time.Duration {
+	return time.Duration(cmp.Or(c.TimeoutMinutes, DefaultBackupTimeoutMinutes)) * time.Minute
 }
 
 // GetLevel returns the configured log level.
@@ -250,7 +257,10 @@ func validate(config *Config) error {
 		errs = append(errs, fmt.Errorf("image.quality moet tussen 1-100 zijn"))
 	}
 
-	// Validate scheduler config
+	// Validate backup config
+	if config.Backup.TimeoutMinutes < 0 {
+		errs = append(errs, fmt.Errorf("backup.timeout_minutes moet positief zijn"))
+	}
 	if config.Backup.Scheduler.Enabled {
 		if config.Backup.Scheduler.Schedule == "" {
 			errs = append(errs, fmt.Errorf("backup.scheduler.schedule is verplicht wanneer scheduler is ingeschakeld"))

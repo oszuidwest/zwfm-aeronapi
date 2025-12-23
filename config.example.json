@@ -34,6 +34,7 @@
     "max_backups": 10,
     "default_format": "custom",
     "default_compression": 9,
+    "timeout_minutes": 30,
     "scheduler": {
       "enabled": false,
       "schedule": "0 3 * * *",

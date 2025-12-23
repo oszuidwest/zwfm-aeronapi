@@ -3,9 +3,7 @@ package api
 
 import (
 	"encoding/json"
-	"log/slog"
 	"net/http"
-	"strconv"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -18,6 +16,12 @@ type BackupDeleteResponse struct {
 	Filename string `json:"filename"`
 }
 
+// BackupStartResponse represents the response when a backup is started.
+type BackupStartResponse struct {
+	Message string `json:"message"`
+	Check   string `json:"check"`
+}
+
 func (s *Server) handleCreateBackup(w http.ResponseWriter, r *http.Request) {
 	var req service.BackupRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err.Error() != "EOF" {
@@ -25,54 +29,15 @@ func (s *Server) handleCreateBackup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := s.service.Backup.Create(r.Context(), req)
-	if err != nil {
-		statusCode := errorCode(err)
-		respondError(w, statusCode, err.Error())
+	if err := s.service.Backup.Start(req); err != nil {
+		respondError(w, errorCode(err), err.Error())
 		return
 	}
 
-	respondJSON(w, http.StatusOK, result)
-}
-
-func (s *Server) handleBackupDownload(w http.ResponseWriter, r *http.Request) {
-	cfg := s.service.Config()
-	query := r.URL.Query()
-	format := query.Get("format")
-	if format == "" {
-		format = cfg.Backup.GetDefaultFormat()
-	}
-
-	compression := cfg.Backup.GetDefaultCompression()
-	if c := query.Get("compression"); c != "" {
-		if val, err := strconv.Atoi(c); err == nil {
-			compression = val
-		}
-	}
-
-	// Generate filename for download
-	filenamePrefix := "download"
-	var ext string
-	if format == "custom" {
-		ext = "dump"
-	} else {
-		ext = "sql"
-	}
-	filename := "aeron-backup-" + filenamePrefix + "." + ext
-
-	// Set headers for file download
-	w.Header().Del("Content-Type")
-	if format == "custom" {
-		w.Header().Set("Content-Type", "application/octet-stream")
-	} else {
-		w.Header().Set("Content-Type", "application/sql")
-	}
-	w.Header().Set("Content-Disposition", "attachment; filename="+filename)
-
-	if err := s.service.Backup.Stream(r.Context(), w, format, compression); err != nil {
-		// Headers already sent, can't send error JSON
-		slog.Error("Backup stream mislukt", "error", err)
-	}
+	respondJSON(w, http.StatusAccepted, BackupStartResponse{
+		Message: "Backup gestart op achtergrond",
+		Check:   "/api/db/backup/status",
+	})
 }
 
 func (s *Server) handleListBackups(w http.ResponseWriter, r *http.Request) {
@@ -84,6 +49,10 @@ func (s *Server) handleListBackups(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respondJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) handleBackupStatus(w http.ResponseWriter, r *http.Request) {
+	respondJSON(w, http.StatusOK, s.service.Backup.Status())
 }
 
 func (s *Server) handleDownloadBackupFile(w http.ResponseWriter, r *http.Request) {

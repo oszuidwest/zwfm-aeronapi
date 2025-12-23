@@ -3,8 +3,8 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/oszuidwest/zwfm-aerontoolbox/internal/config"
@@ -29,6 +30,20 @@ type BackupService struct {
 	backupRoot *os.Root
 	done       chan struct{}
 	wg         sync.WaitGroup
+	running    atomic.Bool
+
+	statusMu   sync.RWMutex
+	lastStatus *BackupStatus
+}
+
+// BackupStatus represents the status of the last backup operation.
+type BackupStatus struct {
+	Running   bool       `json:"running"`
+	StartedAt *time.Time `json:"started_at,omitempty"`
+	EndedAt   *time.Time `json:"ended_at,omitempty"`
+	Success   bool       `json:"success"`
+	Error     string     `json:"error,omitempty"`
+	Filename  string     `json:"filename,omitempty"`
 }
 
 // newBackupService returns a BackupService for database backup operations.
@@ -67,21 +82,6 @@ func (s *BackupService) Close() {
 type BackupRequest struct {
 	Format      string `json:"format"`
 	Compression int    `json:"compression"`
-	SchemaOnly  bool   `json:"schema_only"`
-	DryRun      bool   `json:"dry_run"`
-}
-
-// BackupResult represents the result of a backup operation.
-type BackupResult struct {
-	Filename      string    `json:"filename"`
-	FilePath      string    `json:"file_path,omitzero"`
-	Format        string    `json:"format"`
-	Size          int64     `json:"size_bytes,omitzero"`
-	SizeFormatted string    `json:"size,omitzero"`
-	Duration      string    `json:"duration,omitzero"`
-	CreatedAt     time.Time `json:"created_at,omitzero"`
-	DryRun        bool      `json:"dry_run,omitzero"`
-	Command       string    `json:"command,omitzero"`
 }
 
 // BackupInfo represents metadata about an existing backup file.
@@ -188,8 +188,22 @@ func (s *BackupService) executePgDump(ctx context.Context, pgDumpPath, filename,
 		if removeErr := s.backupRoot.Remove(filename); removeErr != nil && !os.IsNotExist(removeErr) {
 			slog.Warn("Opruimen van mislukte backup gefaald", "filename", filename, "error", removeErr)
 		}
-		slog.Error("Backup mislukt", "error", err, "output", string(output))
-		return nil, 0, types.NewOperationError("backup maken", fmt.Errorf("%s", strings.TrimSpace(string(output))))
+
+		// Provide clear error message based on error type
+		var errMsg string
+		switch {
+		case ctx.Err() == context.DeadlineExceeded:
+			errMsg = fmt.Sprintf("backup timeout na %s (configureer backup.timeout_minutes)", duration.Round(time.Second))
+		case ctx.Err() == context.Canceled:
+			errMsg = "backup geannuleerd"
+		case len(output) > 0:
+			errMsg = strings.TrimSpace(string(output))
+		default:
+			errMsg = err.Error()
+		}
+
+		slog.Error("Backup mislukt", "error", err, "duration", duration, "output", string(output))
+		return nil, 0, types.NewOperationError("backup maken", errors.New(errMsg))
 	}
 
 	fileInfo, err := s.backupRoot.Stat(filename)
@@ -206,113 +220,148 @@ func (s *BackupService) executePgDump(ctx context.Context, pgDumpPath, filename,
 
 // --- Public methods ---
 
-// Create creates a database backup using pg_dump.
-func (s *BackupService) Create(ctx context.Context, req BackupRequest) (*BackupResult, error) {
+// Start starts a database backup in the background.
+// Returns immediately after validation. Check GET /backups for status.
+// Returns error if a backup is already running.
+func (s *BackupService) Start(req BackupRequest) error {
 	if err := s.checkEnabled(); err != nil {
-		return nil, err
+		return err
+	}
+	if _, err := findPgDump(); err != nil {
+		return err
+	}
+	if _, _, err := s.validateRequest(req); err != nil {
+		return err
+	}
+
+	if !s.running.CompareAndSwap(false, true) {
+		return types.NewOperationError("backup starten", errors.New("backup is al bezig"))
+	}
+
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		defer s.running.Store(false)
+
+		ctx, cancel := context.WithTimeout(context.Background(), s.config.Backup.GetTimeout())
+		defer cancel()
+
+		_ = s.execute(ctx, req) // Error tracked in status
+	}()
+
+	return nil
+}
+
+// Run executes a backup synchronously. Used by scheduler.
+// Returns error if a backup is already running.
+func (s *BackupService) Run(ctx context.Context, req BackupRequest) error {
+	if !s.running.CompareAndSwap(false, true) {
+		return types.NewOperationError("backup starten", errors.New("backup is al bezig"))
+	}
+	defer s.running.Store(false)
+
+	return s.execute(ctx, req)
+}
+
+// execute is the internal backup implementation.
+func (s *BackupService) execute(ctx context.Context, req BackupRequest) error {
+	// Record start immediately so status is always consistent
+	s.setStatusStarted()
+
+	if err := s.checkEnabled(); err != nil {
+		s.setStatusDone(false, "", err.Error())
+		return err
 	}
 
 	pgDumpPath, err := findPgDump()
 	if err != nil {
-		return nil, err
+		s.setStatusDone(false, "", err.Error())
+		return err
 	}
 
 	format, compression, err := s.validateRequest(req)
 	if err != nil {
-		return nil, err
+		s.setStatusDone(false, "", err.Error())
+		return err
 	}
 
 	filename := generateBackupFilename(format)
 	fullPath := filepath.Join(s.config.Backup.GetPath(), filename)
 	args := s.buildPgDumpArgs(format, compression)
 
-	if req.SchemaOnly {
-		args = append(args, "--schema-only")
-	}
 	args = append(args, "--file="+fullPath)
-	slog.Debug("pg_dump voorbereid", "format", format, "compression", compression, "schemaOnly", req.SchemaOnly, "filename", filename)
 
-	if req.DryRun {
-		return &BackupResult{
-			Filename:  filename,
-			FilePath:  fullPath,
-			Format:    format,
-			DryRun:    true,
-			Command:   fmt.Sprintf("pg_dump %s", strings.Join(args, " ")),
-			CreatedAt: time.Now(),
-		}, nil
-	}
+	s.setStatusFilename(filename)
+	slog.Info("Backup gestart", "filename", filename, "format", format)
 
 	fileInfo, duration, err := s.executePgDump(ctx, pgDumpPath, filename, fullPath, args)
 	if err != nil {
-		return nil, err
+		s.setStatusDone(false, filename, err.Error())
+		return err
 	}
 
-	slog.Info("Backup succesvol gemaakt",
+	s.setStatusDone(true, filename, "")
+	slog.Info("Backup voltooid",
 		"filename", filename,
 		"size", util.FormatBytes(fileInfo.Size()),
 		"duration", duration.Round(time.Millisecond).String())
 
-	// Run cleanup in background with proper lifecycle management
-	s.wg.Add(1)
-	go func() {
-		defer s.wg.Done()
-		select {
-		case <-s.done:
-			return
-		default:
-			s.cleanupOldBackups()
-		}
-	}()
-
-	return &BackupResult{
-		Filename:      filename,
-		FilePath:      fullPath,
-		Format:        format,
-		Size:          fileInfo.Size(),
-		SizeFormatted: util.FormatBytes(fileInfo.Size()),
-		Duration:      duration.Round(time.Millisecond).String(),
-		CreatedAt:     fileInfo.ModTime(),
-		DryRun:        false,
-	}, nil
+	s.cleanupOldBackups()
+	return nil
 }
 
-// Stream writes a backup directly to the provided writer.
-func (s *BackupService) Stream(ctx context.Context, w io.Writer, format string, compression int) error {
-	if err := s.checkEnabled(); err != nil {
-		return err
+// Status returns the status of the last backup operation.
+// Running state always comes from the atomic bool, not stored state.
+func (s *BackupService) Status() *BackupStatus {
+	s.statusMu.RLock()
+	defer s.statusMu.RUnlock()
+
+	if s.lastStatus == nil {
+		return &BackupStatus{Running: s.running.Load()}
 	}
 
-	pgDumpPath, err := findPgDump()
-	if err != nil {
-		return err
+	status := *s.lastStatus
+	status.Running = s.running.Load()
+	return &status
+}
+
+// setStatusStarted records that a backup has started.
+// Called at the very beginning of execute() to ensure StartedAt is always set.
+func (s *BackupService) setStatusStarted() {
+	s.statusMu.Lock()
+	defer s.statusMu.Unlock()
+
+	now := time.Now()
+	s.lastStatus = &BackupStatus{
+		StartedAt: &now,
 	}
+}
 
-	if format == "" {
-		format = s.config.Backup.GetDefaultFormat()
+// setStatusFilename updates the filename once it's known.
+func (s *BackupService) setStatusFilename(filename string) {
+	s.statusMu.Lock()
+	defer s.statusMu.Unlock()
+
+	if s.lastStatus != nil {
+		s.lastStatus.Filename = filename
 	}
-	if format != "custom" && format != "plain" {
-		return types.NewValidationError("format", fmt.Sprintf("ongeldig backup formaat: %s", format))
+}
+
+// setStatusDone records that a backup has completed (success or failure).
+func (s *BackupService) setStatusDone(success bool, filename, errMsg string) {
+	s.statusMu.Lock()
+	defer s.statusMu.Unlock()
+
+	now := time.Now()
+	if s.lastStatus == nil {
+		s.lastStatus = &BackupStatus{StartedAt: &now}
 	}
-
-	if compression == 0 {
-		compression = s.config.Backup.GetDefaultCompression()
+	s.lastStatus.EndedAt = &now
+	s.lastStatus.Success = success
+	s.lastStatus.Error = errMsg
+	if filename != "" {
+		s.lastStatus.Filename = filename
 	}
-
-	args := s.buildPgDumpArgs(format, compression)
-
-	cmd := exec.CommandContext(ctx, pgDumpPath, args...)
-	cmd.Env = append(os.Environ(), "PGPASSWORD="+s.config.Database.Password)
-	cmd.Stdout = w
-
-	var stderr strings.Builder
-	cmd.Stderr = &stderr
-
-	if err := cmd.Run(); err != nil {
-		return types.NewOperationError("backup streamen", fmt.Errorf("%s", strings.TrimSpace(stderr.String())))
-	}
-
-	return nil
 }
 
 // List returns a list of available backup files.
