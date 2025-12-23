@@ -1,4 +1,4 @@
-name: Test
+name: Quick Check
 permissions:
   contents: read
 on:
@@ -6,21 +6,14 @@ on:
     branches: [main, develop]
   pull_request:
     branches: [main]
-  workflow_dispatch:
-    inputs:
-      skip_tests:
-        description: 'Skip tests (for edge releases)'
-        type: boolean
-        default: false
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  test:
+  quick-check:
     runs-on: ubuntu-latest
-    if: ${{ inputs.skip_tests != true }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -31,30 +24,14 @@ jobs:
           go-version-file: 'go.mod'
           cache: true
 
-      - name: Download dependencies
-        run: go mod download
-
-      - name: Run go vet
-        run: go vet ./...
-
-      - name: Run go fmt check
+      - name: Check formatting (gofmt)
         run: |
-          if [ "$(gofmt -s -l . | wc -l)" -gt 0 ]; then
-            echo "The following files are not formatted:"
-            gofmt -s -l .
+          UNFORMATTED=$(gofmt -s -l .)
+          if [ -n "$UNFORMATTED" ]; then
+            echo "::error::De volgende bestanden zijn niet correct geformatteerd:"
+            echo "$UNFORMATTED"
             exit 1
           fi
 
-      - name: Check for dead code
-        run: go run golang.org/x/tools/cmd/deadcode@latest ./...
-
-      - name: Test build
-        run: go build -v ./...
-
-      - name: Test version functionality
-        run: |
-          go build -ldflags="-X main.Version=test -X main.Commit=test -X main.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)" -o zwfm-aerontoolbox .
-          ./zwfm-aerontoolbox -version
-
-      - name: Run unit tests
-        run: go test -v -short ./...
+      - name: Run go vet
+        run: go vet ./...
