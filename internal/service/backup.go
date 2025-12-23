@@ -31,6 +31,19 @@ type BackupService struct {
 	done       chan struct{}
 	wg         sync.WaitGroup
 	running    atomic.Bool
+
+	statusMu   sync.RWMutex
+	lastStatus *BackupStatus
+}
+
+// BackupStatus represents the status of the last backup operation.
+type BackupStatus struct {
+	Running   bool       `json:"running"`
+	StartedAt *time.Time `json:"started_at,omitempty"`
+	EndedAt   *time.Time `json:"ended_at,omitempty"`
+	Success   bool       `json:"success"`
+	Error     string     `json:"error,omitempty"`
+	Filename  string     `json:"filename,omitempty"`
 }
 
 // newBackupService returns a BackupService for database backup operations.
@@ -253,16 +266,19 @@ func (s *BackupService) Run(ctx context.Context, req BackupRequest) error {
 // execute is the internal backup implementation.
 func (s *BackupService) execute(ctx context.Context, req BackupRequest) error {
 	if err := s.checkEnabled(); err != nil {
+		s.setStatus(false, "", err.Error())
 		return err
 	}
 
 	pgDumpPath, err := findPgDump()
 	if err != nil {
+		s.setStatus(false, "", err.Error())
 		return err
 	}
 
 	format, compression, err := s.validateRequest(req)
 	if err != nil {
+		s.setStatus(false, "", err.Error())
 		return err
 	}
 
@@ -272,13 +288,16 @@ func (s *BackupService) execute(ctx context.Context, req BackupRequest) error {
 
 	args = append(args, "--file="+fullPath)
 
+	s.setStatusRunning(filename)
 	slog.Info("Backup gestart", "filename", filename, "format", format)
 
 	fileInfo, duration, err := s.executePgDump(ctx, pgDumpPath, filename, fullPath, args)
 	if err != nil {
+		s.setStatus(false, filename, err.Error())
 		return err
 	}
 
+	s.setStatus(true, filename, "")
 	slog.Info("Backup voltooid",
 		"filename", filename,
 		"size", util.FormatBytes(fileInfo.Size()),
@@ -286,6 +305,49 @@ func (s *BackupService) execute(ctx context.Context, req BackupRequest) error {
 
 	s.cleanupOldBackups()
 	return nil
+}
+
+// Status returns the status of the last backup operation.
+func (s *BackupService) Status() *BackupStatus {
+	s.statusMu.RLock()
+	defer s.statusMu.RUnlock()
+
+	if s.lastStatus == nil {
+		return &BackupStatus{Running: s.running.Load()}
+	}
+
+	status := *s.lastStatus
+	status.Running = s.running.Load()
+	return &status
+}
+
+func (s *BackupService) setStatusRunning(filename string) {
+	s.statusMu.Lock()
+	defer s.statusMu.Unlock()
+
+	now := time.Now()
+	s.lastStatus = &BackupStatus{
+		Running:   true,
+		StartedAt: &now,
+		Filename:  filename,
+	}
+}
+
+func (s *BackupService) setStatus(success bool, filename, errMsg string) {
+	s.statusMu.Lock()
+	defer s.statusMu.Unlock()
+
+	now := time.Now()
+	if s.lastStatus == nil {
+		s.lastStatus = &BackupStatus{}
+	}
+	s.lastStatus.Running = false
+	s.lastStatus.EndedAt = &now
+	s.lastStatus.Success = success
+	s.lastStatus.Error = errMsg
+	if filename != "" {
+		s.lastStatus.Filename = filename
+	}
 }
 
 // List returns a list of available backup files.

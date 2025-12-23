@@ -734,13 +734,39 @@ Start een nieuwe database backup op de achtergrond.
 ```json
 {
   "message": "Backup gestart op achtergrond",
-  "check": "/api/db/backups"
+  "check": "/api/db/backup/status"
 }
 ```
 
-De backup wordt asynchroon uitgevoerd. Controleer `GET /api/db/backups` om te zien wanneer de backup klaar is.
+De backup wordt asynchroon uitgevoerd. Controleer `GET /api/db/backup/status` voor de voortgang.
 
 > **Let op:** Er kan slechts één backup tegelijk draaien. Een tweede aanvraag tijdens een lopende backup retourneert een fout.
+
+### Backup status
+
+Toont de status van de laatste backup operatie.
+
+**Endpoint:** `GET /api/db/backup/status`
+**Authenticatie:** Vereist
+
+**Response:** `200 OK`
+```json
+{
+  "running": false,
+  "started_at": "2024-01-15T03:00:00Z",
+  "ended_at": "2024-01-15T03:00:45Z",
+  "success": true,
+  "filename": "aeron-backup-2024-01-15-030000.dump"
+}
+```
+
+**Velden:**
+- `running`: Of er momenteel een backup draait
+- `started_at`: Starttijd van de laatste backup
+- `ended_at`: Eindtijd van de laatste backup (alleen bij voltooide backup)
+- `success`: Of de laatste backup geslaagd is
+- `error`: Foutmelding (alleen bij mislukte backup)
+- `filename`: Bestandsnaam van de backup
 
 **Foutresponses:**
 

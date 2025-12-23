@@ -72,8 +72,8 @@ func (s *Server) Start(port string) error {
 				r.Post("/vacuum", s.handleVacuum)
 				r.Post("/analyze", s.handleAnalyze)
 
-				// Non-backup routes only
 				r.Get("/backups", s.handleListBackups)
+				r.Get("/backup/status", s.handleBackupStatus)
 				r.Delete("/backups/{filename}", s.handleDeleteBackup)
 			})
 		})

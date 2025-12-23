@@ -36,7 +36,7 @@ func (s *Server) handleCreateBackup(w http.ResponseWriter, r *http.Request) {
 
 	respondJSON(w, http.StatusAccepted, BackupStartResponse{
 		Message: "Backup gestart op achtergrond",
-		Check:   "/api/db/backups",
+		Check:   "/api/db/backup/status",
 	})
 }
 
@@ -49,6 +49,10 @@ func (s *Server) handleListBackups(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respondJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) handleBackupStatus(w http.ResponseWriter, r *http.Request) {
+	respondJSON(w, http.StatusOK, s.service.Backup.Status())
 }
 
 func (s *Server) handleDownloadBackupFile(w http.ResponseWriter, r *http.Request) {
