@@ -39,6 +39,16 @@
       "enabled": false,
       "schedule": "0 3 * * *",
       "timezone": ""
+    },
+    "s3": {
+      "enabled": false,
+      "bucket": "",
+      "region": "",
+      "endpoint": "",
+      "access_key_id": "",
+      "secret_access_key": "",
+      "path_prefix": "",
+      "force_path_style": false
     }
   },
   "log": {

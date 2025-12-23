@@ -57,6 +57,18 @@ type SchedulerConfig struct {
 	Timezone string `json:"timezone"` // Optional IANA timezone, e.g., "Europe/Amsterdam"
 }
 
+// S3Config contains settings for S3-compatible storage synchronization.
+type S3Config struct {
+	Enabled         bool   `json:"enabled"`
+	Bucket          string `json:"bucket"`
+	Region          string `json:"region"`
+	Endpoint        string `json:"endpoint"` // Custom endpoint for S3-compatible services (MinIO, Backblaze B2, etc.)
+	AccessKeyID     string `json:"access_key_id"`
+	SecretAccessKey string `json:"secret_access_key"`
+	PathPrefix      string `json:"path_prefix"`      // Prefix for S3 keys, e.g., "backups/"
+	ForcePathStyle  bool   `json:"force_path_style"` // Use path-style URLs (required for MinIO)
+}
+
 // BackupConfig contains settings for database backup functionality.
 type BackupConfig struct {
 	Enabled            bool            `json:"enabled"`
@@ -67,6 +79,7 @@ type BackupConfig struct {
 	DefaultCompression int             `json:"default_compression"`
 	TimeoutMinutes     int             `json:"timeout_minutes"`
 	Scheduler          SchedulerConfig `json:"scheduler"`
+	S3                 S3Config        `json:"s3"`
 }
 
 // LogConfig contains logging configuration.
@@ -164,6 +177,15 @@ func (c *BackupConfig) GetDefaultCompression() int {
 // GetTimeout returns the maximum duration for backup operations.
 func (c *BackupConfig) GetTimeout() time.Duration {
 	return time.Duration(cmp.Or(c.TimeoutMinutes, DefaultBackupTimeoutMinutes)) * time.Minute
+}
+
+// GetPathPrefix returns the S3 path prefix, ensuring it ends with a slash if non-empty.
+func (c *S3Config) GetPathPrefix() string {
+	prefix := c.PathPrefix
+	if prefix != "" && !strings.HasSuffix(prefix, "/") {
+		prefix += "/"
+	}
+	return prefix
 }
 
 // GetLevel returns the configured log level.
@@ -269,6 +291,23 @@ func validate(config *Config) error {
 	if config.Backup.Scheduler.Timezone != "" {
 		if _, err := time.LoadLocation(config.Backup.Scheduler.Timezone); err != nil {
 			errs = append(errs, fmt.Errorf("backup.scheduler.timezone is ongeldig: %s", config.Backup.Scheduler.Timezone))
+		}
+	}
+
+	// Validate S3 config
+	if config.Backup.S3.Enabled {
+		if config.Backup.S3.Bucket == "" {
+			errs = append(errs, fmt.Errorf("backup.s3.bucket is verplicht wanneer S3 is ingeschakeld"))
+		}
+		if config.Backup.S3.AccessKeyID == "" {
+			errs = append(errs, fmt.Errorf("backup.s3.access_key_id is verplicht wanneer S3 is ingeschakeld"))
+		}
+		if config.Backup.S3.SecretAccessKey == "" {
+			errs = append(errs, fmt.Errorf("backup.s3.secret_access_key is verplicht wanneer S3 is ingeschakeld"))
+		}
+		// Region is required unless a custom endpoint is provided
+		if config.Backup.S3.Region == "" && config.Backup.S3.Endpoint == "" {
+			errs = append(errs, fmt.Errorf("backup.s3.region is verplicht wanneer geen custom endpoint is opgegeven"))
 		}
 	}
 

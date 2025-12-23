@@ -28,6 +28,7 @@ type BackupService struct {
 	repo       *database.Repository
 	config     *config.Config
 	backupRoot *os.Root
+	s3         *s3Service // nil if S3 is disabled
 	done       chan struct{}
 	wg         sync.WaitGroup
 	running    atomic.Bool
@@ -38,12 +39,19 @@ type BackupService struct {
 
 // BackupStatus represents the status of the last backup operation.
 type BackupStatus struct {
-	Running   bool       `json:"running"`
-	StartedAt *time.Time `json:"started_at,omitempty"`
-	EndedAt   *time.Time `json:"ended_at,omitempty"`
-	Success   bool       `json:"success"`
-	Error     string     `json:"error,omitempty"`
-	Filename  string     `json:"filename,omitempty"`
+	Running   bool          `json:"running"`
+	StartedAt *time.Time    `json:"started_at,omitempty"`
+	EndedAt   *time.Time    `json:"ended_at,omitempty"`
+	Success   bool          `json:"success"`
+	Error     string        `json:"error,omitempty"`
+	Filename  string        `json:"filename,omitempty"`
+	S3Sync    *S3SyncStatus `json:"s3_sync,omitempty"`
+}
+
+// S3SyncStatus represents the status of S3 synchronization.
+type S3SyncStatus struct {
+	Synced bool   `json:"synced"`
+	Error  string `json:"error,omitempty"`
 }
 
 // newBackupService returns a BackupService for database backup operations.
@@ -65,6 +73,13 @@ func newBackupService(repo *database.Repository, cfg *config.Config) (*BackupSer
 			return nil, types.NewConfigError("backup.path", fmt.Sprintf("backup directory niet te openen: %v", err))
 		}
 		svc.backupRoot = root
+
+		// Initialize S3 backend if configured
+		s3svc, err := newS3Service(&cfg.Backup.S3)
+		if err != nil {
+			return nil, err
+		}
+		svc.s3 = s3svc
 	}
 
 	return svc, nil
@@ -306,6 +321,24 @@ func (s *BackupService) execute(ctx context.Context, req BackupRequest) error {
 		"size", util.FormatBytes(fileInfo.Size()),
 		"duration", duration.Round(time.Millisecond).String())
 
+	// Sync to S3 in background (non-blocking)
+	if s.s3 != nil {
+		s.wg.Add(1)
+		go func() {
+			defer s.wg.Done()
+
+			uploadCtx, cancel := context.WithTimeout(context.Background(), s.config.Backup.GetTimeout())
+			defer cancel()
+
+			if err := s.s3.upload(uploadCtx, filename, fullPath); err != nil {
+				slog.Error("S3 synchronisatie mislukt", "filename", filename, "error", err)
+				s.setS3SyncStatus(false, err.Error())
+			} else {
+				s.setS3SyncStatus(true, "")
+			}
+		}()
+	}
+
 	s.cleanupOldBackups()
 	return nil
 }
@@ -361,6 +394,19 @@ func (s *BackupService) setStatusDone(success bool, filename, errMsg string) {
 	s.lastStatus.Error = errMsg
 	if filename != "" {
 		s.lastStatus.Filename = filename
+	}
+}
+
+// setS3SyncStatus records the result of S3 synchronization.
+func (s *BackupService) setS3SyncStatus(synced bool, errMsg string) {
+	s.statusMu.Lock()
+	defer s.statusMu.Unlock()
+
+	if s.lastStatus != nil {
+		s.lastStatus.S3Sync = &S3SyncStatus{
+			Synced: synced,
+			Error:  errMsg,
+		}
 	}
 }
 
@@ -451,6 +497,22 @@ func (s *BackupService) Delete(filename string) error {
 	}
 
 	slog.Info("Backup verwijderd", "filename", filename)
+
+	// Also delete from S3 in background (non-blocking)
+	if s.s3 != nil {
+		s.wg.Add(1)
+		go func() {
+			defer s.wg.Done()
+
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+
+			if err := s.s3.delete(ctx, filename); err != nil {
+				slog.Warn("S3 backup verwijderen mislukt", "filename", filename, "error", err)
+			}
+		}()
+	}
+
 	return nil
 }
 
