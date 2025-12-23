@@ -2,6 +2,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -69,7 +70,12 @@ func (s *Server) handleBackupDownload(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Disposition", "attachment; filename="+filename)
 
-	if err := s.service.Backup.Stream(r.Context(), w, format, compression); err != nil {
+	// Create timeout context - chi timeout middleware is not used for streaming
+	// to avoid conflicts with already-sent headers
+	ctx, cancel := context.WithTimeout(r.Context(), cfg.Backup.GetTimeout())
+	defer cancel()
+
+	if err := s.service.Backup.Stream(ctx, w, format, compression); err != nil {
 		// Headers already sent, can't send error JSON
 		slog.Error("Backup stream mislukt", "error", err)
 	}

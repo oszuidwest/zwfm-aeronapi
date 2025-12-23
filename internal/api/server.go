@@ -42,7 +42,6 @@ func (s *Server) Start(port string) error {
 	router.Use(middleware.Recoverer)
 	router.Use(middleware.RealIP)
 	router.Use(middleware.Compress(5))
-	router.Use(middleware.Timeout(s.service.Config().API.GetRequestTimeout()))
 
 	router.NotFound(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -58,8 +57,10 @@ func (s *Server) Start(port string) error {
 
 		r.Get("/health", s.handleHealth)
 
+		// Routes with standard request timeout
 		r.Group(func(r chi.Router) {
 			r.Use(s.authMiddleware)
+			r.Use(middleware.Timeout(s.service.Config().API.GetRequestTimeout()))
 
 			s.setupEntityRoutes(r, "/artists", types.EntityTypeArtist)
 			s.setupEntityRoutes(r, "/tracks", types.EntityTypeTrack)
@@ -71,12 +72,28 @@ func (s *Server) Start(port string) error {
 				r.Post("/vacuum", s.handleVacuum)
 				r.Post("/analyze", s.handleAnalyze)
 
-				r.Post("/backup", s.handleCreateBackup)
-				r.Get("/backup/download", s.handleBackupDownload)
+				// Non-backup routes only
 				r.Get("/backups", s.handleListBackups)
-				r.Get("/backups/{filename}", s.handleDownloadBackupFile)
 				r.Delete("/backups/{filename}", s.handleDeleteBackup)
 			})
+		})
+
+		// Backup create - returns JSON, chi timeout middleware is safe
+		r.Group(func(r chi.Router) {
+			r.Use(s.authMiddleware)
+			r.Use(middleware.Timeout(s.service.Config().Backup.GetTimeout()))
+
+			r.Post("/db/backup", s.handleCreateBackup)
+		})
+
+		// Backup download/stream - NO chi timeout middleware
+		// Chi's timeout middleware conflicts with streaming (tries to write 503 after headers sent)
+		// These handlers manage their own timeouts via context
+		r.Group(func(r chi.Router) {
+			r.Use(s.authMiddleware)
+
+			r.Get("/db/backup/download", s.handleBackupDownload)
+			r.Get("/db/backups/{filename}", s.handleDownloadBackupFile)
 		})
 	})
 

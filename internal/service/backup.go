@@ -3,6 +3,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -188,8 +189,22 @@ func (s *BackupService) executePgDump(ctx context.Context, pgDumpPath, filename,
 		if removeErr := s.backupRoot.Remove(filename); removeErr != nil && !os.IsNotExist(removeErr) {
 			slog.Warn("Opruimen van mislukte backup gefaald", "filename", filename, "error", removeErr)
 		}
-		slog.Error("Backup mislukt", "error", err, "output", string(output))
-		return nil, 0, types.NewOperationError("backup maken", fmt.Errorf("%s", strings.TrimSpace(string(output))))
+
+		// Provide clear error message based on error type
+		var errMsg string
+		switch {
+		case ctx.Err() == context.DeadlineExceeded:
+			errMsg = fmt.Sprintf("backup timeout na %s (configureer backup.timeout_minutes)", duration.Round(time.Second))
+		case ctx.Err() == context.Canceled:
+			errMsg = "backup geannuleerd"
+		case len(output) > 0:
+			errMsg = strings.TrimSpace(string(output))
+		default:
+			errMsg = err.Error()
+		}
+
+		slog.Error("Backup mislukt", "error", err, "duration", duration, "output", string(output))
+		return nil, 0, types.NewOperationError("backup maken", errors.New(errMsg))
 	}
 
 	fileInfo, err := s.backupRoot.Stat(filename)
@@ -207,7 +222,9 @@ func (s *BackupService) executePgDump(ctx context.Context, pgDumpPath, filename,
 // --- Public methods ---
 
 // Create creates a database backup using pg_dump.
-func (s *BackupService) Create(ctx context.Context, req BackupRequest) (*BackupResult, error) {
+// Uses a background context because the backup writes to a file - even if the client
+// disconnects, we want the backup file to be created successfully.
+func (s *BackupService) Create(_ context.Context, req BackupRequest) (*BackupResult, error) {
 	if err := s.checkEnabled(); err != nil {
 		return nil, err
 	}
@@ -243,7 +260,11 @@ func (s *BackupService) Create(ctx context.Context, req BackupRequest) (*BackupR
 		}, nil
 	}
 
-	fileInfo, duration, err := s.executePgDump(ctx, pgDumpPath, filename, fullPath, args)
+	// Use background context - backup writes to file, should complete even if client disconnects
+	backupCtx, cancel := context.WithTimeout(context.Background(), s.config.Backup.GetTimeout())
+	defer cancel()
+
+	fileInfo, duration, err := s.executePgDump(backupCtx, pgDumpPath, filename, fullPath, args)
 	if err != nil {
 		return nil, err
 	}
@@ -278,6 +299,8 @@ func (s *BackupService) Create(ctx context.Context, req BackupRequest) (*BackupR
 }
 
 // Stream writes a backup directly to the provided writer.
+// Uses the request context because streaming should stop if the client disconnects.
+// The route should have an appropriate timeout configured (backup.timeout_minutes).
 func (s *BackupService) Stream(ctx context.Context, w io.Writer, format string, compression int) error {
 	if err := s.checkEnabled(); err != nil {
 		return err
@@ -297,6 +320,9 @@ func (s *BackupService) Stream(ctx context.Context, w io.Writer, format string, 
 
 	if compression == 0 {
 		compression = s.config.Backup.GetDefaultCompression()
+	}
+	if compression < 0 || compression > 9 {
+		return types.NewValidationError("compression", fmt.Sprintf("ongeldige compressie waarde: %d (gebruik 0-9)", compression))
 	}
 
 	args := s.buildPgDumpArgs(format, compression)
