@@ -672,13 +672,13 @@ Werk tabelstatistieken bij voor de PostgreSQL query optimizer.
 Backups worden asynchroon uitgevoerd:
 
 1. **Backup starten:** `POST /api/db/backup` → retourneert direct `202 Accepted`
-2. **Status controleren:** `GET /api/db/backups` → nieuwe backup verschijnt wanneer klaar
+2. **Status controleren:** `GET /api/db/backup/status` → toont voortgang en eventuele fouten
 3. **Backup downloaden:** `GET /api/db/backups/{filename}` → download het bestand
 
 Deze aanpak biedt voordelen:
 - Request retourneert direct (geen timeout issues)
-- Werkt met alle proxies en load balancers
-- Download ondersteunt resume via HTTP Range headers
+- Fouten zijn zichtbaar via het status endpoint
+- Er kan slechts één backup tegelijk draaien
 - Bij connectieverlies loopt backup door op de server
 
 ### Automatische backups
@@ -742,32 +742,6 @@ De backup wordt asynchroon uitgevoerd. Controleer `GET /api/db/backup/status` vo
 
 > **Let op:** Er kan slechts één backup tegelijk draaien. Een tweede aanvraag tijdens een lopende backup retourneert een fout.
 
-### Backup status
-
-Toont de status van de laatste backup operatie.
-
-**Endpoint:** `GET /api/db/backup/status`
-**Authenticatie:** Vereist
-
-**Response:** `200 OK`
-```json
-{
-  "running": false,
-  "started_at": "2024-01-15T03:00:00Z",
-  "ended_at": "2024-01-15T03:00:45Z",
-  "success": true,
-  "filename": "aeron-backup-2024-01-15-030000.dump"
-}
-```
-
-**Velden:**
-- `running`: Of er momenteel een backup draait
-- `started_at`: Starttijd van de laatste backup
-- `ended_at`: Eindtijd van de laatste backup (alleen bij voltooide backup)
-- `success`: Of de laatste backup geslaagd is
-- `error`: Foutmelding (alleen bij mislukte backup)
-- `filename`: Bestandsnaam van de backup
-
 **Foutresponses:**
 
 `400 Bad Request` - Backup niet ingeschakeld:
@@ -783,6 +757,53 @@ Toont de status van de laatste backup operatie.
   "error": "backup starten mislukt: backup is al bezig"
 }
 ```
+
+### Backup status
+
+Toont de status van de laatste backup operatie.
+
+**Endpoint:** `GET /api/db/backup/status`
+**Authenticatie:** Vereist
+
+**Response tijdens backup:** `200 OK`
+```json
+{
+  "running": true,
+  "started_at": "2024-01-15T03:00:00Z",
+  "filename": "aeron-backup-2024-01-15-030000.dump"
+}
+```
+
+**Response na succesvolle backup:** `200 OK`
+```json
+{
+  "running": false,
+  "started_at": "2024-01-15T03:00:00Z",
+  "ended_at": "2024-01-15T03:00:45Z",
+  "success": true,
+  "filename": "aeron-backup-2024-01-15-030000.dump"
+}
+```
+
+**Response na mislukte backup:** `200 OK`
+```json
+{
+  "running": false,
+  "started_at": "2024-01-15T03:00:00Z",
+  "ended_at": "2024-01-15T03:00:05Z",
+  "success": false,
+  "error": "backup timeout na 30m0s (configureer backup.timeout_minutes)",
+  "filename": "aeron-backup-2024-01-15-030000.dump"
+}
+```
+
+**Velden:**
+- `running`: Of er momenteel een backup draait
+- `started_at`: Starttijd van de laatste backup
+- `ended_at`: Eindtijd (alleen aanwezig na voltooiing)
+- `success`: Of de backup geslaagd is (alleen aanwezig na voltooiing)
+- `error`: Foutmelding (alleen aanwezig bij mislukking)
+- `filename`: Bestandsnaam (kan leeg zijn bij vroege fouten)
 
 ### Lijst van backups ophalen
 
