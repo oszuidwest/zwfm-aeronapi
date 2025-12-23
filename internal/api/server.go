@@ -68,10 +68,15 @@ func (s *Server) Start(port string) error {
 			r.Get("/playlist", s.handlePlaylist)
 
 			r.Route("/db", func(r chi.Router) {
-				r.Get("/health", s.handleDatabaseHealth)
-				r.Post("/vacuum", s.handleVacuum)
-				r.Post("/analyze", s.handleAnalyze)
+				// Maintenance endpoints (async)
+				r.Route("/maintenance", func(r chi.Router) {
+					r.Get("/health", s.handleDatabaseHealth)
+					r.Post("/vacuum", s.handleVacuum)
+					r.Post("/analyze", s.handleAnalyze)
+					r.Get("/status", s.handleMaintenanceStatus)
+				})
 
+				// Backup endpoints
 				r.Get("/backups", s.handleListBackups)
 				r.Get("/backup/status", s.handleBackupStatus)
 				r.Get("/backups/{filename}/validate", s.handleValidateBackup)

@@ -17,6 +17,12 @@ type Response struct {
 	Error   string `json:"error,omitempty"`
 }
 
+// AsyncStartResponse is the response for async operations (backup, vacuum, analyze).
+type AsyncStartResponse struct {
+	Message string `json:"message"`
+	Check   string `json:"check"`
+}
+
 func respondJSON(w http.ResponseWriter, statusCode int, data any) {
 	w.WriteHeader(statusCode)
 	if err := json.NewEncoder(w).Encode(Response{

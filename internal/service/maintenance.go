@@ -4,8 +4,10 @@ package service
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
+	"github.com/oszuidwest/zwfm-aerontoolbox/internal/async"
 	"github.com/oszuidwest/zwfm-aerontoolbox/internal/config"
 	"github.com/oszuidwest/zwfm-aerontoolbox/internal/database"
 	"github.com/oszuidwest/zwfm-aerontoolbox/internal/types"
@@ -14,8 +16,25 @@ import (
 
 // MaintenanceService handles database health monitoring and maintenance operations.
 type MaintenanceService struct {
-	repo   *database.Repository
-	config *config.Config
+	repo     *database.Repository
+	config   *config.Config
+	runner   *async.Runner
+	statusMu sync.RWMutex
+	status   *MaintenanceStatus
+}
+
+// MaintenanceStatus tracks the progress of an async maintenance operation.
+type MaintenanceStatus struct {
+	Running      bool                 `json:"running"`
+	Operation    string               `json:"operation,omitempty"`
+	StartedAt    *time.Time           `json:"started_at,omitempty"`
+	EndedAt      *time.Time           `json:"ended_at,omitempty"`
+	Success      bool                 `json:"success"`
+	TablesTotal  int                  `json:"tables_total"`
+	TablesDone   int                  `json:"tables_done"`
+	CurrentTable string               `json:"current_table,omitempty"`
+	LastResult   *MaintenanceResponse `json:"last_result,omitempty"`
+	Error        string               `json:"error,omitempty"`
 }
 
 // newMaintenanceService creates a new MaintenanceService instance.
@@ -23,21 +42,28 @@ func newMaintenanceService(repo *database.Repository, cfg *config.Config) *Maint
 	return &MaintenanceService{
 		repo:   repo,
 		config: cfg,
+		runner: async.New(),
 	}
+}
+
+// Close stops the maintenance service and waits for any running operation to complete.
+func (s *MaintenanceService) Close() {
+	s.runner.Close()
 }
 
 // --- Types ---
 
 // DatabaseHealth represents the overall health status of the database.
 type DatabaseHealth struct {
-	DatabaseName    string        `json:"database_name"`
-	DatabaseVersion string        `json:"database_version"`
-	DatabaseSize    string        `json:"database_size"`
-	DatabaseSizeRaw int64         `json:"database_size_bytes"`
-	SchemaName      string        `json:"schema_name"`
-	Tables          []TableHealth `json:"tables"`
-	Recommendations []string      `json:"recommendations"`
-	CheckedAt       time.Time     `json:"checked_at"`
+	DatabaseName     string        `json:"database_name"`
+	DatabaseVersion  string        `json:"database_version"`
+	DatabaseSize     string        `json:"database_size"`
+	DatabaseSizeRaw  int64         `json:"database_size_bytes"`
+	SchemaName       string        `json:"schema_name"`
+	Tables           []TableHealth `json:"tables"`
+	NeedsMaintenance bool          `json:"needs_maintenance"`
+	Recommendations  []string      `json:"recommendations"`
+	CheckedAt        time.Time     `json:"checked_at"`
 }
 
 // TableHealth represents health statistics for a single table.
@@ -45,6 +71,8 @@ type TableHealth struct {
 	Name            string     `json:"name"`
 	RowCount        int64      `json:"row_count"`
 	DeadTuples      int64      `json:"dead_tuples"`
+	DeadTupleRatio  float64    `json:"dead_tuple_ratio"`
+	ModSinceAnalyze int64      `json:"modifications_since_analyze"`
 	TotalSize       string     `json:"total_size"`
 	TotalSizeRaw    int64      `json:"total_size_bytes"`
 	TableSize       string     `json:"table_size"`
@@ -57,34 +85,33 @@ type TableHealth struct {
 	LastAutovacuum  *time.Time `json:"last_autovacuum"`
 	LastAnalyze     *time.Time `json:"last_analyze"`
 	LastAutoanalyze *time.Time `json:"last_autoanalyze"`
-	BloatPercent    float64    `json:"bloat_percent"`
 	SeqScans        int64      `json:"seq_scans"`
 	IdxScans        int64      `json:"idx_scans"`
+	NeedsVacuum     bool       `json:"needs_vacuum"`
+	NeedsAnalyze    bool       `json:"needs_analyze"`
 }
 
 // VacuumOptions configures vacuum operation parameters.
 type VacuumOptions struct {
-	Tables  []string // Specific tables to vacuum (empty = auto-select based on bloat)
+	Tables  []string // Specific tables to vacuum (empty = auto-select based on need)
 	Analyze bool     // Run ANALYZE after VACUUM
-	DryRun  bool     // Only show what would be done, don't execute
 }
 
 // MaintenanceResult represents the result of a maintenance operation (vacuum or analyze) on a single table.
 type MaintenanceResult struct {
-	Table         string  `json:"table"`
-	Success       bool    `json:"success"`
-	Message       string  `json:"message"`
-	DeadTuples    int64   `json:"dead_tuples_before"`
-	BloatPercent  float64 `json:"bloat_percent_before"`
-	Duration      string  `json:"duration,omitempty"`
-	Analyzed      bool    `json:"analyzed"`
-	Skipped       bool    `json:"skipped,omitempty"`
-	SkippedReason string  `json:"skipped_reason,omitempty"`
+	Table          string  `json:"table"`
+	Success        bool    `json:"success"`
+	Message        string  `json:"message"`
+	DeadTuples     int64   `json:"dead_tuples_before"`
+	DeadTupleRatio float64 `json:"dead_tuple_ratio_before"`
+	Duration       string  `json:"duration,omitempty"`
+	Analyzed       bool    `json:"analyzed"`
+	Skipped        bool    `json:"skipped,omitempty"`
+	SkippedReason  string  `json:"skipped_reason,omitempty"`
 }
 
 // MaintenanceResponse represents the overall result of maintenance operations (vacuum/analyze).
 type MaintenanceResponse struct {
-	DryRun        bool                `json:"dry_run"`
 	TablesTotal   int                 `json:"tables_total"`
 	TablesSuccess int                 `json:"tables_success"`
 	TablesFailed  int                 `json:"tables_failed"`
@@ -98,6 +125,7 @@ type tableHealthRow struct {
 	TableName       string     `db:"table_name"`
 	LiveTuples      int64      `db:"live_tuples"`
 	DeadTuples      int64      `db:"dead_tuples"`
+	ModSinceAnalyze int64      `db:"mod_since_analyze"`
 	LastVacuum      *time.Time `db:"last_vacuum"`
 	LastAutovacuum  *time.Time `db:"last_autovacuum"`
 	LastAnalyze     *time.Time `db:"last_analyze"`
@@ -148,6 +176,14 @@ func (s *MaintenanceService) GetHealth(ctx context.Context) (*DatabaseHealth, er
 
 	health.Recommendations = s.generateRecommendations(tables)
 
+	// Determine if any maintenance is needed
+	for i := range tables {
+		if tables[i].NeedsVacuum || tables[i].NeedsAnalyze {
+			health.NeedsMaintenance = true
+			break
+		}
+	}
+
 	return health, nil
 }
 
@@ -168,6 +204,7 @@ func (s *MaintenanceService) getTableHealth(ctx context.Context) ([]TableHealth,
 			s.relname as table_name,
 			COALESCE(s.n_live_tup, 0) as live_tuples,
 			COALESCE(s.n_dead_tup, 0) as dead_tuples,
+			COALESCE(s.n_mod_since_analyze, 0) as mod_since_analyze,
 			s.last_vacuum,
 			s.last_autovacuum,
 			s.last_analyze,
@@ -190,12 +227,14 @@ func (s *MaintenanceService) getTableHealth(ctx context.Context) ([]TableHealth,
 		return nil, types.NewOperationError("ophalen tabel statistieken", err)
 	}
 
+	cfg := s.config.Maintenance
 	tables := make([]TableHealth, 0, len(rows))
 	for _, row := range rows {
 		table := TableHealth{
 			Name:            row.TableName,
 			RowCount:        row.LiveTuples,
 			DeadTuples:      row.DeadTuples,
+			ModSinceAnalyze: row.ModSinceAnalyze,
 			LastVacuum:      row.LastVacuum,
 			LastAutovacuum:  row.LastAutovacuum,
 			LastAnalyze:     row.LastAnalyze,
@@ -213,8 +252,17 @@ func (s *MaintenanceService) getTableHealth(ctx context.Context) ([]TableHealth,
 		}
 
 		if row.LiveTuples > 0 {
-			table.BloatPercent = float64(row.DeadTuples) / float64(row.LiveTuples+row.DeadTuples) * 100
+			table.DeadTupleRatio = float64(row.DeadTuples) / float64(row.LiveTuples+row.DeadTuples) * 100
 		}
+
+		// Calculate NeedsVacuum
+		table.NeedsVacuum = table.DeadTupleRatio > cfg.GetBloatThreshold() ||
+			table.DeadTuples > cfg.GetDeadTupleThreshold()
+
+		// Calculate NeedsAnalyze
+		neverAnalyzed := table.LastAnalyze == nil && table.LastAutoanalyze == nil && table.RowCount > 0
+		staleStats := table.RowCount > 0 && table.ModSinceAnalyze > (table.RowCount*int64(cfg.GetStaleStatsThreshold())/100)
+		table.NeedsAnalyze = neverAnalyzed || staleStats
 
 		tables = append(tables, table)
 	}
@@ -225,12 +273,10 @@ func (s *MaintenanceService) getTableHealth(ctx context.Context) ([]TableHealth,
 // generateRecommendations returns maintenance recommendations for tables requiring attention.
 func (s *MaintenanceService) generateRecommendations(tables []TableHealth) []string {
 	var recs []string
-	bloatThreshold := s.config.Maintenance.GetBloatThreshold()
-	deadTupleThreshold := s.config.Maintenance.GetDeadTupleThreshold()
 
 	for i := range tables {
 		t := &tables[i]
-		recs = s.checkTableHealth(t, recs, bloatThreshold, deadTupleThreshold)
+		recs = s.checkTableHealth(t, recs)
 	}
 
 	if len(recs) == 0 {
@@ -239,32 +285,43 @@ func (s *MaintenanceService) generateRecommendations(tables []TableHealth) []str
 	return recs
 }
 
-func (s *MaintenanceService) checkTableHealth(t *TableHealth, recs []string, bloatThreshold float64, deadTupleThreshold int64) []string {
-	if t.BloatPercent > bloatThreshold {
-		recs = append(recs, fmt.Sprintf("Tabel '%s' heeft %.1f%% bloat - VACUUM aanbevolen", t.Name, t.BloatPercent))
+func (s *MaintenanceService) checkTableHealth(t *TableHealth, recs []string) []string {
+	cfg := s.config.Maintenance
+	minRows := cfg.GetMinRowsForRecommendation()
+
+	if t.DeadTupleRatio > cfg.GetBloatThreshold() {
+		recs = append(recs, fmt.Sprintf("Tabel '%s' heeft %.1f%% dead tuples - VACUUM aanbevolen", t.Name, t.DeadTupleRatio))
 	}
 
-	if t.DeadTuples > deadTupleThreshold {
+	if t.DeadTuples > cfg.GetDeadTupleThreshold() {
 		recs = append(recs, fmt.Sprintf("Tabel '%s' heeft %d dead tuples - VACUUM aanbevolen", t.Name, t.DeadTuples))
 	}
 
-	if t.LastVacuum == nil && t.LastAutovacuum == nil && t.RowCount > 1000 {
+	if t.LastVacuum == nil && t.LastAutovacuum == nil && t.RowCount > minRows {
 		recs = append(recs, fmt.Sprintf("Tabel '%s' is nog nooit gevacuumd", t.Name))
 	}
 
-	if lastVac := lastVacuumTime(t); lastVac != nil && time.Since(*lastVac) > 7*24*time.Hour && t.RowCount > 1000 {
-		recs = append(recs, fmt.Sprintf("Tabel '%s' is meer dan 7 dagen niet gevacuumd", t.Name))
+	if lastVac := lastVacuumTime(t); lastVac != nil && time.Since(*lastVac) > cfg.GetVacuumStaleness() && t.RowCount > minRows {
+		recs = append(recs, fmt.Sprintf("Tabel '%s' is meer dan %d dagen niet gevacuumd", t.Name, cfg.GetVacuumStalenessDays()))
 	}
 
-	if t.LastAnalyze == nil && t.LastAutoanalyze == nil && t.RowCount > 1000 {
+	if t.LastAnalyze == nil && t.LastAutoanalyze == nil && t.RowCount > minRows {
 		recs = append(recs, fmt.Sprintf("Tabel '%s' is nog nooit geanalyseerd - ANALYZE aanbevolen", t.Name))
 	}
 
-	if t.SeqScans > 1000 && t.IdxScans > 0 && float64(t.SeqScans)/float64(t.IdxScans) > 10 {
+	// Check for stale statistics based on modifications since last analyze
+	if t.RowCount > 0 && t.ModSinceAnalyze > 0 {
+		threshold := t.RowCount * int64(cfg.GetStaleStatsThreshold()) / 100
+		if t.ModSinceAnalyze > threshold {
+			recs = append(recs, fmt.Sprintf("Tabel '%s' heeft %d wijzigingen sinds laatste ANALYZE - statistieken verouderd", t.Name, t.ModSinceAnalyze))
+		}
+	}
+
+	if t.SeqScans > 1000 && t.IdxScans > 0 && float64(t.SeqScans)/float64(t.IdxScans) > cfg.GetSeqScanRatioThreshold() {
 		recs = append(recs, fmt.Sprintf("Tabel '%s' heeft veel sequential scans (%d) vs index scans (%d) - mogelijk ontbrekende index", t.Name, t.SeqScans, t.IdxScans))
 	}
 
-	if t.ToastSizeRaw > 500*1024*1024 {
+	if t.ToastSizeRaw > cfg.GetToastSizeWarningBytes() {
 		recs = append(recs, fmt.Sprintf("Tabel '%s' heeft %s aan TOAST data (afbeeldingen)", t.Name, t.ToastSize))
 	}
 
@@ -278,7 +335,7 @@ func lastVacuumTime(t *TableHealth) *time.Time {
 	return t.LastAutovacuum
 }
 
-// --- Vacuum operations ---
+// --- Maintenance operations ---
 
 // newMaintenanceContext loads current table health data for maintenance operations.
 func (s *MaintenanceService) newMaintenanceContext(ctx context.Context) (*maintenanceContext, error) {
@@ -330,74 +387,6 @@ func (mctx *maintenanceContext) selectTablesToProcess(requestedTables []string, 
 	return tablesToProcess, skipped
 }
 
-// Vacuum reclaims storage from tables with high bloat or dead tuples.
-func (s *MaintenanceService) Vacuum(ctx context.Context, opts VacuumOptions) (*MaintenanceResponse, error) {
-	response := &MaintenanceResponse{
-		DryRun:     opts.DryRun,
-		ExecutedAt: time.Now(),
-		Results:    []MaintenanceResult{},
-	}
-
-	mctx, err := s.newMaintenanceContext(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	bloatThreshold := s.config.Maintenance.GetBloatThreshold()
-	deadTupleThreshold := s.config.Maintenance.GetDeadTupleThreshold()
-
-	autoSelect := func(t TableHealth) bool {
-		return t.BloatPercent > bloatThreshold || t.DeadTuples > deadTupleThreshold
-	}
-
-	tablesToVacuum, skipped := mctx.selectTablesToProcess(opts.Tables, autoSelect)
-	response.Results = append(response.Results, skipped...)
-	response.TablesSkipped = len(skipped)
-	response.TablesTotal = len(tablesToVacuum) + len(skipped)
-
-	for i := range tablesToVacuum {
-		result := MaintenanceResult{
-			Table:        tablesToVacuum[i].Name,
-			DeadTuples:   tablesToVacuum[i].DeadTuples,
-			BloatPercent: tablesToVacuum[i].BloatPercent,
-			Analyzed:     opts.Analyze,
-		}
-
-		if opts.DryRun {
-			result.Success = true
-			if opts.Analyze {
-				result.Message = fmt.Sprintf("Zou VACUUM ANALYZE uitvoeren op '%s'", tablesToVacuum[i].Name)
-			} else {
-				result.Message = fmt.Sprintf("Zou VACUUM uitvoeren op '%s'", tablesToVacuum[i].Name)
-			}
-			response.TablesSuccess++
-		} else {
-			start := time.Now()
-			err := s.executeVacuum(ctx, tablesToVacuum[i].Name, opts.Analyze)
-			duration := time.Since(start)
-			result.Duration = duration.Round(time.Millisecond).String()
-
-			if err != nil {
-				result.Success = false
-				result.Message = fmt.Sprintf("VACUUM mislukt: %v", err)
-				response.TablesFailed++
-			} else {
-				result.Success = true
-				if opts.Analyze {
-					result.Message = fmt.Sprintf("VACUUM ANALYZE succesvol uitgevoerd op '%s'", tablesToVacuum[i].Name)
-				} else {
-					result.Message = fmt.Sprintf("VACUUM succesvol uitgevoerd op '%s'", tablesToVacuum[i].Name)
-				}
-				response.TablesSuccess++
-			}
-		}
-
-		response.Results = append(response.Results, result)
-	}
-
-	return response, nil
-}
-
 // executeVacuum executes VACUUM on a table with optional ANALYZE.
 func (s *MaintenanceService) executeVacuum(ctx context.Context, tableName string, analyze bool) error {
 	if !types.IsValidIdentifier(tableName) {
@@ -416,59 +405,6 @@ func (s *MaintenanceService) executeVacuum(ctx context.Context, tableName string
 	return err
 }
 
-// --- Analyze operations ---
-
-// Analyze updates query planner statistics for tables in the schema.
-func (s *MaintenanceService) Analyze(ctx context.Context, tableNames []string) (*MaintenanceResponse, error) {
-	response := &MaintenanceResponse{
-		DryRun:     false,
-		ExecutedAt: time.Now(),
-		Results:    []MaintenanceResult{},
-	}
-
-	mctx, err := s.newMaintenanceContext(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	autoSelect := func(t TableHealth) bool {
-		return t.LastAnalyze == nil && t.LastAutoanalyze == nil && t.RowCount > 0
-	}
-
-	tablesToAnalyze, skipped := mctx.selectTablesToProcess(tableNames, autoSelect)
-	response.Results = append(response.Results, skipped...)
-	response.TablesSkipped = len(skipped)
-	response.TablesTotal = len(tablesToAnalyze) + len(skipped)
-
-	for i := range tablesToAnalyze {
-		result := MaintenanceResult{
-			Table:        tablesToAnalyze[i].Name,
-			DeadTuples:   tablesToAnalyze[i].DeadTuples,
-			BloatPercent: tablesToAnalyze[i].BloatPercent,
-			Analyzed:     true,
-		}
-
-		start := time.Now()
-		err := s.executeAnalyze(ctx, tablesToAnalyze[i].Name)
-		duration := time.Since(start)
-		result.Duration = duration.Round(time.Millisecond).String()
-
-		if err != nil {
-			result.Success = false
-			result.Message = fmt.Sprintf("ANALYZE mislukt: %v", err)
-			response.TablesFailed++
-		} else {
-			result.Success = true
-			result.Message = fmt.Sprintf("ANALYZE succesvol uitgevoerd op '%s'", tablesToAnalyze[i].Name)
-			response.TablesSuccess++
-		}
-
-		response.Results = append(response.Results, result)
-	}
-
-	return response, nil
-}
-
 // executeAnalyze executes ANALYZE on the specified table.
 func (s *MaintenanceService) executeAnalyze(ctx context.Context, tableName string) error {
 	if !types.IsValidIdentifier(tableName) {
@@ -479,4 +415,196 @@ func (s *MaintenanceService) executeAnalyze(ctx context.Context, tableName strin
 	query := fmt.Sprintf("ANALYZE %s.%s", schema, tableName)
 	_, err := s.repo.DB().ExecContext(ctx, query)
 	return err
+}
+
+// --- Async operations ---
+
+// maintenanceTask defines parameters for a generic maintenance operation.
+type maintenanceTask struct {
+	operationName string                                     // "VACUUM", "VACUUM ANALYZE", "ANALYZE"
+	tables        []string                                   // Requested tables (empty = auto-select)
+	autoSelect    func(TableHealth) bool                     // Auto-selection criteria
+	execute       func(ctx context.Context, table string) error // Execute operation on a table
+	analyzed      bool                                       // Whether this operation includes ANALYZE
+}
+
+// Status returns the current state and result of the last maintenance operation.
+func (s *MaintenanceService) Status() *MaintenanceStatus {
+	s.statusMu.RLock()
+	defer s.statusMu.RUnlock()
+
+	if s.status == nil {
+		return &MaintenanceStatus{Running: s.runner.IsRunning()}
+	}
+
+	status := *s.status
+	status.Running = s.runner.IsRunning()
+	return &status
+}
+
+// StartVacuum starts an async vacuum operation.
+// Returns an error if a maintenance operation is already running.
+func (s *MaintenanceService) StartVacuum(opts VacuumOptions) error {
+	if !s.runner.TryStart() {
+		return types.NewConflictError("maintenance", "er loopt al een maintenance operatie")
+	}
+
+	statusKey, opName := "vacuum", "VACUUM"
+	if opts.Analyze {
+		statusKey, opName = "vacuum_analyze", "VACUUM ANALYZE"
+	}
+	s.initStatus(statusKey)
+
+	cfg := s.config.Maintenance
+	task := maintenanceTask{
+		operationName: opName,
+		tables:        opts.Tables,
+		autoSelect: func(t TableHealth) bool {
+			return t.DeadTupleRatio > cfg.GetBloatThreshold() || t.DeadTuples > cfg.GetDeadTupleThreshold()
+		},
+		execute: func(ctx context.Context, table string) error {
+			return s.executeVacuum(ctx, table, opts.Analyze)
+		},
+		analyzed: opts.Analyze,
+	}
+
+	s.runner.Go(func() {
+		ctx, cancel := s.runner.Context(s.config.Maintenance.GetTimeout())
+		defer cancel()
+		s.runMaintenance(ctx, task)
+	})
+	return nil
+}
+
+// StartAnalyze starts an async analyze operation.
+// Returns an error if a maintenance operation is already running.
+func (s *MaintenanceService) StartAnalyze(tableNames []string) error {
+	if !s.runner.TryStart() {
+		return types.NewConflictError("maintenance", "er loopt al een maintenance operatie")
+	}
+
+	s.initStatus("analyze")
+
+	cfg := s.config.Maintenance
+	task := maintenanceTask{
+		operationName: "ANALYZE",
+		tables:        tableNames,
+		autoSelect: func(t TableHealth) bool {
+			if t.LastAnalyze == nil && t.LastAutoanalyze == nil && t.RowCount > 0 {
+				return true
+			}
+			if t.RowCount > 0 {
+				threshold := t.RowCount * int64(cfg.GetStaleStatsThreshold()) / 100
+				if t.ModSinceAnalyze > threshold {
+					return true
+				}
+			}
+			return false
+		},
+		execute: func(ctx context.Context, table string) error {
+			return s.executeAnalyze(ctx, table)
+		},
+		analyzed: true,
+	}
+
+	s.runner.Go(func() {
+		ctx, cancel := s.runner.Context(s.config.Maintenance.GetTimeout())
+		defer cancel()
+		s.runMaintenance(ctx, task)
+	})
+	return nil
+}
+
+// initStatus initializes the status for a new maintenance operation.
+func (s *MaintenanceService) initStatus(operation string) {
+	now := time.Now()
+	s.statusMu.Lock()
+	s.status = &MaintenanceStatus{
+		Operation: operation,
+		StartedAt: &now,
+	}
+	s.statusMu.Unlock()
+}
+
+// runMaintenance executes a maintenance task. Context is managed by the caller via runner.Go().
+func (s *MaintenanceService) runMaintenance(ctx context.Context, task maintenanceTask) {
+	mctx, err := s.newMaintenanceContext(ctx)
+	if err != nil {
+		s.completeWithError(err.Error())
+		return
+	}
+
+	tables, skipped := mctx.selectTablesToProcess(task.tables, task.autoSelect)
+
+	response := &MaintenanceResponse{
+		ExecutedAt:    time.Now(),
+		Results:       skipped,
+		TablesTotal:   len(tables) + len(skipped),
+		TablesSkipped: len(skipped),
+	}
+
+	s.statusMu.Lock()
+	s.status.TablesTotal = response.TablesTotal
+	s.statusMu.Unlock()
+
+	for i := range tables {
+		// Check for shutdown/timeout before processing each table
+		if ctx.Err() != nil {
+			s.completeWithError("operatie geannuleerd")
+			return
+		}
+
+		s.statusMu.Lock()
+		s.status.CurrentTable = tables[i].Name
+		s.status.TablesDone = i
+		s.statusMu.Unlock()
+
+		result := MaintenanceResult{
+			Table:          tables[i].Name,
+			DeadTuples:     tables[i].DeadTuples,
+			DeadTupleRatio: tables[i].DeadTupleRatio,
+			Analyzed:       task.analyzed,
+		}
+
+		start := time.Now()
+		err := task.execute(ctx, tables[i].Name)
+		result.Duration = time.Since(start).Round(time.Millisecond).String()
+
+		if err != nil {
+			result.Success = false
+			result.Message = fmt.Sprintf("%s mislukt op '%s': %v", task.operationName, tables[i].Name, err)
+			response.TablesFailed++
+		} else {
+			result.Success = true
+			result.Message = fmt.Sprintf("%s succesvol uitgevoerd op '%s'", task.operationName, tables[i].Name)
+			response.TablesSuccess++
+		}
+
+		response.Results = append(response.Results, result)
+	}
+
+	s.completeWithResult(response)
+}
+
+// completeWithResult marks the maintenance operation as completed with a result.
+func (s *MaintenanceService) completeWithResult(result *MaintenanceResponse) {
+	now := time.Now()
+	s.statusMu.Lock()
+	defer s.statusMu.Unlock()
+	s.status.EndedAt = &now
+	s.status.Success = true
+	s.status.CurrentTable = ""
+	s.status.TablesDone = s.status.TablesTotal
+	s.status.LastResult = result
+}
+
+// completeWithError marks the maintenance operation as completed with an error.
+func (s *MaintenanceService) completeWithError(errMsg string) {
+	now := time.Now()
+	s.statusMu.Lock()
+	defer s.statusMu.Unlock()
+	s.status.EndedAt = &now
+	s.status.Success = false
+	s.status.CurrentTable = ""
+	s.status.Error = errMsg
 }

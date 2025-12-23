@@ -44,10 +44,16 @@ type APIConfig struct {
 	RequestTimeoutSeconds int      `json:"request_timeout_seconds"`
 }
 
-// MaintenanceConfig contains thresholds for database maintenance recommendations.
+// MaintenanceConfig contains thresholds and settings for database maintenance operations.
 type MaintenanceConfig struct {
-	BloatThreshold     float64 `json:"bloat_threshold"`
-	DeadTupleThreshold int64   `json:"dead_tuple_threshold"`
+	BloatThreshold           float64 `json:"bloat_threshold"`
+	DeadTupleThreshold       int64   `json:"dead_tuple_threshold"`
+	VacuumStalenessDays      int     `json:"vacuum_staleness_days"`
+	MinRowsForRecommendation int64   `json:"min_rows_for_recommendation"`
+	ToastSizeWarningBytes    int64   `json:"toast_size_warning_bytes"`
+	StaleStatsThresholdPct   int     `json:"stale_stats_threshold_pct"`
+	SeqScanRatioThreshold    float64 `json:"seq_scan_ratio_threshold"`
+	TimeoutMinutes           int     `json:"timeout_minutes"`
 }
 
 // SchedulerConfig contains settings for automatic scheduled backups.
@@ -107,6 +113,12 @@ const (
 	DefaultRequestTimeoutSeconds     = 30
 	DefaultBloatThreshold            = 10.0
 	DefaultDeadTupleThreshold        = 10000
+	DefaultVacuumStalenessDays       = 7
+	DefaultMinRowsForRecommendation  = 1000
+	DefaultToastSizeWarningBytes     = 500 * 1024 * 1024
+	DefaultStaleStatsThresholdPct    = 10
+	DefaultSeqScanRatioThreshold     = 10.0
+	DefaultMaintenanceTimeoutMinutes = 30
 	DefaultBackupRetentionDays       = 30
 	DefaultBackupMaxBackups          = 10
 	DefaultBackupCompression         = 9
@@ -147,6 +159,41 @@ func (c *MaintenanceConfig) GetBloatThreshold() float64 {
 // GetDeadTupleThreshold returns the dead tuple count that triggers vacuum recommendations.
 func (c *MaintenanceConfig) GetDeadTupleThreshold() int64 {
 	return cmp.Or(c.DeadTupleThreshold, DefaultDeadTupleThreshold)
+}
+
+// GetVacuumStalenessDays returns the number of days after which a table is considered stale.
+func (c *MaintenanceConfig) GetVacuumStalenessDays() int {
+	return cmp.Or(c.VacuumStalenessDays, DefaultVacuumStalenessDays)
+}
+
+// GetVacuumStaleness returns the staleness threshold as a Duration.
+func (c *MaintenanceConfig) GetVacuumStaleness() time.Duration {
+	return time.Duration(c.GetVacuumStalenessDays()) * 24 * time.Hour
+}
+
+// GetMinRowsForRecommendation returns the minimum row count for maintenance recommendations.
+func (c *MaintenanceConfig) GetMinRowsForRecommendation() int64 {
+	return cmp.Or(c.MinRowsForRecommendation, DefaultMinRowsForRecommendation)
+}
+
+// GetToastSizeWarningBytes returns the TOAST size threshold for warnings.
+func (c *MaintenanceConfig) GetToastSizeWarningBytes() int64 {
+	return cmp.Or(c.ToastSizeWarningBytes, DefaultToastSizeWarningBytes)
+}
+
+// GetStaleStatsThreshold returns the percentage of modified rows that triggers ANALYZE.
+func (c *MaintenanceConfig) GetStaleStatsThreshold() int {
+	return cmp.Or(c.StaleStatsThresholdPct, DefaultStaleStatsThresholdPct)
+}
+
+// GetSeqScanRatioThreshold returns the seq_scan/idx_scan ratio for missing index warnings.
+func (c *MaintenanceConfig) GetSeqScanRatioThreshold() float64 {
+	return cmp.Or(c.SeqScanRatioThreshold, DefaultSeqScanRatioThreshold)
+}
+
+// GetTimeout returns the maximum duration for maintenance operations.
+func (c *MaintenanceConfig) GetTimeout() time.Duration {
+	return time.Duration(cmp.Or(c.TimeoutMinutes, DefaultMaintenanceTimeoutMinutes)) * time.Minute
 }
 
 // GetPath returns the directory path where backup files are stored.

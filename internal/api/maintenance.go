@@ -11,9 +11,8 @@ import (
 
 // VacuumRequest represents the JSON request body for vacuum operations.
 type VacuumRequest struct {
-	Tables  []string `json:"tables"`  // Specific tables to vacuum (empty = auto-select based on bloat)
+	Tables  []string `json:"tables"`  // Specific tables to vacuum (empty = auto-select)
 	Analyze bool     `json:"analyze"` // Run ANALYZE after VACUUM
-	DryRun  bool     `json:"dry_run"` // Only show what would be done, don't execute
 }
 
 // AnalyzeRequest represents the JSON request body for analyze operations.
@@ -25,7 +24,7 @@ func (s *Server) handleDatabaseHealth(w http.ResponseWriter, r *http.Request) {
 	health, err := s.service.Maintenance.GetHealth(r.Context())
 	if err != nil {
 		slog.Error("Database health check mislukt", "error", err)
-		respondError(w, http.StatusInternalServerError, err.Error())
+		respondError(w, errorCode(err), err.Error())
 		return
 	}
 
@@ -39,18 +38,25 @@ func (s *Server) handleVacuum(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := s.service.Maintenance.Vacuum(r.Context(), service.VacuumOptions{
+	err := s.service.Maintenance.StartVacuum(service.VacuumOptions{
 		Tables:  req.Tables,
 		Analyze: req.Analyze,
-		DryRun:  req.DryRun,
 	})
 	if err != nil {
-		slog.Error("Vacuum operatie mislukt", "tables", req.Tables, "error", err)
-		respondError(w, http.StatusInternalServerError, err.Error())
+		slog.Error("Vacuum starten mislukt", "tables", req.Tables, "error", err)
+		respondError(w, errorCode(err), err.Error())
 		return
 	}
 
-	respondJSON(w, http.StatusOK, result)
+	msg := "Vacuum gestart"
+	if req.Analyze {
+		msg = "Vacuum met analyze gestart"
+	}
+	slog.Info(msg, "tables", req.Tables)
+	respondJSON(w, http.StatusAccepted, AsyncStartResponse{
+		Message: msg,
+		Check:   "/api/db/maintenance/status",
+	})
 }
 
 func (s *Server) handleAnalyze(w http.ResponseWriter, r *http.Request) {
@@ -60,12 +66,20 @@ func (s *Server) handleAnalyze(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := s.service.Maintenance.Analyze(r.Context(), req.Tables)
+	err := s.service.Maintenance.StartAnalyze(req.Tables)
 	if err != nil {
-		slog.Error("Analyze operatie mislukt", "tables", req.Tables, "error", err)
-		respondError(w, http.StatusInternalServerError, err.Error())
+		slog.Error("Analyze starten mislukt", "tables", req.Tables, "error", err)
+		respondError(w, errorCode(err), err.Error())
 		return
 	}
 
-	respondJSON(w, http.StatusOK, result)
+	slog.Info("Analyze gestart", "tables", req.Tables)
+	respondJSON(w, http.StatusAccepted, AsyncStartResponse{
+		Message: "Analyze gestart",
+		Check:   "/api/db/maintenance/status",
+	})
+}
+
+func (s *Server) handleMaintenanceStatus(w http.ResponseWriter, r *http.Request) {
+	respondJSON(w, http.StatusOK, s.service.Maintenance.Status())
 }

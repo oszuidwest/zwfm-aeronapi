@@ -15,12 +15,6 @@ type BackupDeleteResponse struct {
 	Filename string `json:"filename"`
 }
 
-// BackupStartResponse represents the response when a backup is started.
-type BackupStartResponse struct {
-	Message string `json:"message"`
-	Check   string `json:"check"`
-}
-
 func (s *Server) handleCreateBackup(w http.ResponseWriter, r *http.Request) {
 	var req service.BackupRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err.Error() != "EOF" {
@@ -33,7 +27,7 @@ func (s *Server) handleCreateBackup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	respondJSON(w, http.StatusAccepted, BackupStartResponse{
+	respondJSON(w, http.StatusAccepted, AsyncStartResponse{
 		Message: "Backup gestart op achtergrond",
 		Check:   "/api/db/backup/status",
 	})

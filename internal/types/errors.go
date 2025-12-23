@@ -80,6 +80,25 @@ func NewOperationError(operation string, err error) *OperationError {
 	return &OperationError{Operation: operation, Err: err}
 }
 
+// ConflictError indicates a resource conflict (e.g., operation already running).
+type ConflictError struct {
+	Resource string
+	Message  string
+}
+
+// Error returns the conflict error message.
+func (e *ConflictError) Error() string {
+	return e.Message
+}
+
+// StatusCode returns HTTP 409 Conflict.
+func (e *ConflictError) StatusCode() int { return http.StatusConflict }
+
+// NewConflictError creates a ConflictError for the specified resource.
+func NewConflictError(resource, message string) *ConflictError {
+	return &ConflictError{Resource: resource, Message: message}
+}
+
 // ConfigError indicates invalid configuration.
 type ConfigError struct {
 	Field   string

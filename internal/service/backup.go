@@ -14,9 +14,9 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
+	"github.com/oszuidwest/zwfm-aerontoolbox/internal/async"
 	"github.com/oszuidwest/zwfm-aerontoolbox/internal/config"
 	"github.com/oszuidwest/zwfm-aerontoolbox/internal/database"
 	"github.com/oszuidwest/zwfm-aerontoolbox/internal/types"
@@ -29,15 +29,13 @@ type BackupService struct {
 	config     *config.Config
 	backupRoot *os.Root
 	s3         *s3Service // nil if S3 is disabled
-	done       chan struct{}
-	wg         sync.WaitGroup
-	running    atomic.Bool
+	runner     *async.Runner
 
 	pgDumpPath    string
 	pgRestorePath string
 
-	statusMu   sync.RWMutex
-	lastStatus *BackupStatus
+	statusMu sync.RWMutex
+	status   *BackupStatus
 }
 
 // BackupStatus represents the status of the last backup operation.
@@ -62,7 +60,7 @@ func newBackupService(repo *database.Repository, cfg *config.Config) (*BackupSer
 	svc := &BackupService{
 		repo:   repo,
 		config: cfg,
-		done:   make(chan struct{}),
+		runner: async.New(),
 	}
 
 	if cfg.Backup.Enabled {
@@ -103,8 +101,7 @@ func newBackupService(repo *database.Repository, cfg *config.Config) (*BackupSer
 
 // Close stops the backup service and waits for any running backup to complete.
 func (s *BackupService) Close() {
-	close(s.done)
-	s.wg.Wait()
+	s.runner.Close()
 }
 
 // --- Types ---
@@ -268,35 +265,30 @@ func (s *BackupService) Start(req BackupRequest) error {
 		return err
 	}
 
-	if !s.running.CompareAndSwap(false, true) {
-		return types.NewOperationError("backup starten", errors.New("backup is al bezig"))
+	if !s.runner.TryStart() {
+		return types.NewConflictError("backup", "backup is al bezig")
 	}
 
 	// Initialize status before spawning goroutine to prevent race condition
 	s.setStatusStarted()
 
-	s.wg.Add(1)
-	go func() {
-		defer s.wg.Done()
-		defer s.running.Store(false)
-
-		ctx, cancel := context.WithTimeout(context.Background(), s.config.Backup.GetTimeout())
+	s.runner.Go(func() {
+		ctx, cancel := s.runner.Context(s.config.Backup.GetTimeout())
 		defer cancel()
 
 		_ = s.execute(ctx, req) // Error tracked in status
-	}()
+	})
 
 	return nil
 }
 
 // Run executes a database backup synchronously, blocking until completion.
 func (s *BackupService) Run(ctx context.Context, req BackupRequest) error {
-	if !s.running.CompareAndSwap(false, true) {
-		return types.NewOperationError("backup starten", errors.New("backup is al bezig"))
+	if !s.runner.TryStart() {
+		return types.NewConflictError("backup", "backup is al bezig")
 	}
-	defer s.running.Store(false)
+	defer s.runner.Done()
 
-	// Initialize status before executing
 	s.setStatusStarted()
 
 	return s.execute(ctx, req)
@@ -353,10 +345,7 @@ func (s *BackupService) execute(ctx context.Context, req BackupRequest) error {
 
 	// Sync to S3 in background (non-blocking)
 	if s.s3 != nil {
-		s.wg.Add(1)
-		go func() {
-			defer s.wg.Done()
-
+		s.runner.GoBackground(func() {
 			uploadCtx, cancel := context.WithTimeout(context.Background(), s.config.Backup.GetTimeout())
 			defer cancel()
 
@@ -366,7 +355,7 @@ func (s *BackupService) execute(ctx context.Context, req BackupRequest) error {
 			} else {
 				s.setS3SyncStatus(true, "")
 			}
-		}()
+		})
 	}
 
 	s.cleanupOldBackups()
@@ -378,12 +367,12 @@ func (s *BackupService) Status() *BackupStatus {
 	s.statusMu.RLock()
 	defer s.statusMu.RUnlock()
 
-	if s.lastStatus == nil {
-		return &BackupStatus{Running: s.running.Load()}
+	if s.status == nil {
+		return &BackupStatus{Running: s.runner.IsRunning()}
 	}
 
-	status := *s.lastStatus
-	status.Running = s.running.Load()
+	status := *s.status
+	status.Running = s.runner.IsRunning()
 	return &status
 }
 
@@ -391,14 +380,14 @@ func (s *BackupService) setStatusStarted() {
 	s.statusMu.Lock()
 	defer s.statusMu.Unlock()
 	now := time.Now()
-	s.lastStatus = &BackupStatus{StartedAt: &now}
+	s.status = &BackupStatus{StartedAt: &now}
 }
 
 func (s *BackupService) setStatusFilename(filename string) {
 	s.statusMu.Lock()
 	defer s.statusMu.Unlock()
-	if s.lastStatus != nil {
-		s.lastStatus.Filename = filename
+	if s.status != nil {
+		s.status.Filename = filename
 	}
 }
 
@@ -406,22 +395,22 @@ func (s *BackupService) setStatusDone(success bool, filename, errMsg string) {
 	s.statusMu.Lock()
 	defer s.statusMu.Unlock()
 	now := time.Now()
-	if s.lastStatus == nil {
-		s.lastStatus = &BackupStatus{StartedAt: &now}
+	if s.status == nil {
+		s.status = &BackupStatus{StartedAt: &now}
 	}
-	s.lastStatus.EndedAt = &now
-	s.lastStatus.Success = success
-	s.lastStatus.Error = errMsg
+	s.status.EndedAt = &now
+	s.status.Success = success
+	s.status.Error = errMsg
 	if filename != "" {
-		s.lastStatus.Filename = filename
+		s.status.Filename = filename
 	}
 }
 
 func (s *BackupService) setS3SyncStatus(synced bool, errMsg string) {
 	s.statusMu.Lock()
 	defer s.statusMu.Unlock()
-	if s.lastStatus != nil {
-		s.lastStatus.S3Sync = &S3SyncStatus{Synced: synced, Error: errMsg}
+	if s.status != nil {
+		s.status.S3Sync = &S3SyncStatus{Synced: synced, Error: errMsg}
 	}
 }
 
@@ -504,17 +493,14 @@ func (s *BackupService) Delete(filename string) error {
 
 	// Also delete from S3 in background (non-blocking)
 	if s.s3 != nil {
-		s.wg.Add(1)
-		go func() {
-			defer s.wg.Done()
-
+		s.runner.GoBackground(func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 
 			if err := s.s3.delete(ctx, filename); err != nil {
 				slog.Warn("S3 backup verwijderen mislukt", "filename", filename, "error", err)
 			}
-		}()
+		})
 	}
 
 	return nil
