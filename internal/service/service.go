@@ -43,7 +43,7 @@ func New(db DB, cfg *config.Config) (*AeronService, error) {
 
 	if cfg.Backup.Enabled {
 		backupPath := cfg.Backup.GetPath()
-		if err := os.MkdirAll(backupPath, 0750); err != nil {
+		if err := os.MkdirAll(backupPath, 0o750); err != nil {
 			return nil, &types.ConfigurationError{Field: "backup.path", Message: fmt.Sprintf("backup directory niet toegankelijk: %v", err)}
 		}
 

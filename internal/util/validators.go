@@ -20,7 +20,7 @@ import (
 var uuidRegex = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
 
 // ValidateEntityID validates that an ID is a proper UUID v4 format.
-func ValidateEntityID(id string, entityLabel string) error {
+func ValidateEntityID(id, entityLabel string) error {
 	if id == "" {
 		return types.NewValidationError("id", fmt.Sprintf("ongeldige %s-ID: mag niet leeg zijn", entityLabel))
 	}

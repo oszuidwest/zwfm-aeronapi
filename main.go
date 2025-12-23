@@ -34,116 +34,60 @@ func main() {
 }
 
 func run() error {
-	var (
-		configFile = flag.String("config", "", "Path to config file (default: config.json)")
-		serverPort = flag.String("port", "8080", "API server port (default: 8080)")
-		version    = flag.Bool("version", false, "Show version information")
-	)
+	configFile := flag.String("config", "", "Path to config file (default: config.json)")
+	port := flag.String("port", "8080", "API server port (default: 8080)")
+	showVersion := flag.Bool("version", false, "Show version information")
 	flag.Parse()
 
-	if *version {
-		fmt.Printf("Aeron Toolbox %s (%s)\n", Version, Commit)
-		fmt.Printf("Build time: %s\n", BuildTime)
+	if *showVersion {
+		printVersion()
 		return nil
 	}
 
-	// Load configuration
 	cfg, err := config.Load(*configFile)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Configuratiefout: %v\n", err)
 		return err
 	}
 
-	// Initialize simple logger to stdout
-	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, nil)))
+	initLogger()
 
-	// Connect to database
-	db, err := connectDatabase(cfg)
+	db, dbClose, err := setupDatabase(cfg)
 	if err != nil {
 		return err
 	}
-	defer func() {
-		if err := db.Close(); err != nil {
-			slog.Error("Fout bij sluiten database", "error", err)
-		}
-	}()
+	defer dbClose()
 
-	// Create service and API server
 	svc, err := service.New(db, cfg)
 	if err != nil {
 		slog.Error("Service initialisatie mislukt", "error", err)
 		return err
 	}
 
-	// Create and start backup scheduler if enabled
-	var scheduler *service.BackupScheduler
-	if cfg.Backup.Enabled && cfg.Backup.Scheduler.Enabled {
-		scheduler, err = service.NewBackupScheduler(svc)
-		if err != nil {
-			slog.Error("Backup scheduler initialisatie mislukt", "error", err)
-			return err
-		}
-		scheduler.Start()
-	}
+	scheduler := startSchedulerIfEnabled(cfg, svc)
 
 	api.Version = Version
-	apiServer := api.New(svc, cfg)
+	server := api.New(svc, cfg)
 
-	// Setup signal handling for graceful shutdown
-	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
-
-	// Start API server in goroutine
-	serverErr := make(chan error, 1)
-	go func() {
-		slog.Info("API-server gestart op poort", "poort", *serverPort)
-		if err := apiServer.Start(*serverPort); err != nil && err != http.ErrServerClosed {
-			serverErr <- err
-		}
-	}()
-
-	// Wait for shutdown signal or server error
-	select {
-	case <-stop:
-		slog.Info("Shutdown signaal ontvangen, server wordt gestopt...")
-	case err := <-serverErr:
-		slog.Error("API server fout", "error", err)
-		return err
-	}
-
-	// Stop scheduler first (before database closes)
-	if scheduler != nil {
-		ctx := scheduler.Stop()
-		select {
-		case <-ctx.Done():
-			slog.Info("Backup scheduler succesvol gestopt")
-		case <-time.After(35 * time.Second):
-			slog.Warn("Backup scheduler stop timeout, forceer afsluiten")
-		}
-	}
-
-	// Graceful shutdown API server
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	if err := apiServer.Shutdown(ctx); err != nil {
-		slog.Error("Fout bij graceful shutdown", "error", err)
-		return err
-	}
-
-	slog.Info("Server succesvol gestopt")
-	return nil
+	return serveUntilShutdown(server, *port, scheduler)
 }
 
-// connectDatabase establishes a connection to the PostgreSQL database with configured pool settings.
-func connectDatabase(cfg *config.Config) (*sqlx.DB, error) {
+func printVersion() {
+	fmt.Printf("Aeron Toolbox %s (%s)\n", Version, Commit)
+	fmt.Printf("Build time: %s\n", BuildTime)
+}
+
+func initLogger() {
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, nil)))
+}
+
+func setupDatabase(cfg *config.Config) (*sqlx.DB, func(), error) {
 	db, err := sqlx.Open("postgres", cfg.Database.ConnectionString())
 	if err != nil {
 		slog.Error("Database verbinding mislukt", "error", err)
-		return nil, err
+		return nil, nil, err
 	}
 
-	// Configure connection pool
 	db.SetMaxOpenConns(cfg.Database.GetMaxOpenConns())
 	db.SetMaxIdleConns(cfg.Database.GetMaxIdleConns())
 	db.SetConnMaxLifetime(cfg.Database.GetConnMaxLifetime())
@@ -155,8 +99,76 @@ func connectDatabase(cfg *config.Config) (*sqlx.DB, error) {
 
 	if err := db.Ping(); err != nil {
 		slog.Error("Database ping mislukt", "error", err)
-		return nil, err
+		_ = db.Close()
+		return nil, nil, err
 	}
 
-	return db, nil
+	cleanup := func() {
+		if err := db.Close(); err != nil {
+			slog.Error("Fout bij sluiten database", "error", err)
+		}
+	}
+
+	return db, cleanup, nil
+}
+
+func startSchedulerIfEnabled(cfg *config.Config, svc *service.AeronService) *service.BackupScheduler {
+	if !cfg.Backup.Enabled || !cfg.Backup.Scheduler.Enabled {
+		return nil
+	}
+
+	scheduler, err := service.NewBackupScheduler(svc)
+	if err != nil {
+		slog.Error("Backup scheduler initialisatie mislukt", "error", err)
+		return nil
+	}
+
+	scheduler.Start()
+	return scheduler
+}
+
+func serveUntilShutdown(server *api.Server, port string, scheduler *service.BackupScheduler) error {
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+
+	serverErr := make(chan error, 1)
+	go func() {
+		slog.Info("API-server gestart op poort", "poort", port)
+		if err := server.Start(port); err != nil && err != http.ErrServerClosed {
+			serverErr <- err
+		}
+	}()
+
+	select {
+	case <-stop:
+		slog.Info("Shutdown signaal ontvangen, server wordt gestopt...")
+	case err := <-serverErr:
+		slog.Error("API server fout", "error", err)
+		return err
+	}
+
+	return gracefulShutdown(server, scheduler)
+}
+
+func gracefulShutdown(server *api.Server, scheduler *service.BackupScheduler) error {
+	if scheduler != nil {
+		ctx := scheduler.Stop()
+		select {
+		case <-ctx.Done():
+			slog.Info("Backup scheduler succesvol gestopt")
+		case <-time.After(35 * time.Second):
+			slog.Warn("Backup scheduler stop timeout, forceer afsluiten")
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	if err := server.Shutdown(ctx); err != nil {
+		slog.Error("Fout bij graceful shutdown", "error", err)
+		return err
+	}
+
+	slog.Info("Server succesvol gestopt")
+	return nil
 }

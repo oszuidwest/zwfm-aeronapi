@@ -33,16 +33,16 @@ func (s *AeronService) AnalyzeTables(ctx context.Context, tableNames []string) (
 	response.TablesTotal = len(tablesToAnalyze) + len(skipped)
 
 	// Process each table
-	for _, table := range tablesToAnalyze {
+	for i := range tablesToAnalyze {
 		result := MaintenanceResult{
-			Table:        table.Name,
-			DeadTuples:   table.DeadTuples,
-			BloatPercent: table.BloatPercent,
+			Table:        tablesToAnalyze[i].Name,
+			DeadTuples:   tablesToAnalyze[i].DeadTuples,
+			BloatPercent: tablesToAnalyze[i].BloatPercent,
 			Analyzed:     true,
 		}
 
 		start := time.Now()
-		err := s.executeAnalyze(ctx, table.Name)
+		err := s.executeAnalyze(ctx, tablesToAnalyze[i].Name)
 		duration := time.Since(start)
 		result.Duration = duration.Round(time.Millisecond).String()
 
@@ -52,7 +52,7 @@ func (s *AeronService) AnalyzeTables(ctx context.Context, tableNames []string) (
 			response.TablesFailed++
 		} else {
 			result.Success = true
-			result.Message = fmt.Sprintf("ANALYZE succesvol uitgevoerd op '%s'", table.Name)
+			result.Message = fmt.Sprintf("ANALYZE succesvol uitgevoerd op '%s'", tablesToAnalyze[i].Name)
 			response.TablesSuccess++
 		}
 

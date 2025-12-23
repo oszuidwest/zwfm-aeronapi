@@ -63,8 +63,8 @@ func getImageInfo(data []byte) (format string, width, height int, err error) {
 }
 
 // OptimizeImage processes and optimizes image data according to the configured settings.
-func (o *Optimizer) OptimizeImage(data []byte) ([]byte, string, string, error) {
-	_, format, err := image.DecodeConfig(bytes.NewReader(data))
+func (o *Optimizer) OptimizeImage(data []byte) (optimized []byte, format, encoder string, err error) {
+	_, format, err = image.DecodeConfig(bytes.NewReader(data))
 	if err != nil {
 		return nil, "", "", err
 	}
@@ -79,8 +79,9 @@ func (o *Optimizer) OptimizeImage(data []byte) ([]byte, string, string, error) {
 	}
 }
 
-func (o *Optimizer) optimizeJPEG(data []byte) ([]byte, string, string, error) {
-	sourceImage, err := jpeg.Decode(bytes.NewReader(data))
+func (o *Optimizer) optimizeJPEG(data []byte) (optimized []byte, format, encoder string, err error) {
+	var sourceImage image.Image
+	sourceImage, err = jpeg.Decode(bytes.NewReader(data))
 	if err != nil {
 		return nil, "", "", &types.ImageProcessingError{Message: fmt.Sprintf("decoderen van JPEG mislukt: %v", err)}
 	}
@@ -88,8 +89,9 @@ func (o *Optimizer) optimizeJPEG(data []byte) ([]byte, string, string, error) {
 	return o.processImage(sourceImage, data, "jpeg")
 }
 
-func (o *Optimizer) convertPNGToJPEG(data []byte) ([]byte, string, string, error) {
-	sourceImage, err := png.Decode(bytes.NewReader(data))
+func (o *Optimizer) convertPNGToJPEG(data []byte) (optimized []byte, format, encoder string, err error) {
+	var sourceImage image.Image
+	sourceImage, err = png.Decode(bytes.NewReader(data))
 	if err != nil {
 		return nil, "", "", &types.ImageProcessingError{Message: fmt.Sprintf("decoderen van PNG mislukt: %v", err)}
 	}
@@ -97,7 +99,7 @@ func (o *Optimizer) convertPNGToJPEG(data []byte) ([]byte, string, string, error
 	return o.processImage(sourceImage, data, "jpeg")
 }
 
-func (o *Optimizer) processImage(sourceImage image.Image, originalData []byte, outputFormat string) ([]byte, string, string, error) {
+func (o *Optimizer) processImage(sourceImage image.Image, originalData []byte, outputFormat string) (optimized []byte, format, encoder string, err error) {
 	bounds := sourceImage.Bounds()
 	width, height := bounds.Dx(), bounds.Dy()
 

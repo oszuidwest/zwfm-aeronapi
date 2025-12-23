@@ -55,8 +55,8 @@ func (s *AeronService) newMaintenanceContext(ctx context.Context) (*maintenanceC
 	}
 
 	tablesByName := make(map[string]TableHealth, len(tables))
-	for _, t := range tables {
-		tablesByName[t.Name] = t
+	for i := range tables {
+		tablesByName[tables[i].Name] = tables[i]
 	}
 
 	return &maintenanceContext{
@@ -89,9 +89,9 @@ func (mctx *maintenanceContext) selectTablesToProcess(requestedTables []string, 
 		}
 	} else {
 		// Auto-select tables based on criteria
-		for _, t := range mctx.tables {
-			if autoSelectFn(t) {
-				tablesToProcess = append(tablesToProcess, t)
+		for i := range mctx.tables {
+			if autoSelectFn(mctx.tables[i]) {
+				tablesToProcess = append(tablesToProcess, mctx.tables[i])
 			}
 		}
 	}
@@ -127,25 +127,25 @@ func (s *AeronService) VacuumTables(ctx context.Context, opts VacuumOptions) (*V
 	response.TablesTotal = len(tablesToVacuum) + len(skipped)
 
 	// Process each table
-	for _, table := range tablesToVacuum {
+	for i := range tablesToVacuum {
 		result := MaintenanceResult{
-			Table:        table.Name,
-			DeadTuples:   table.DeadTuples,
-			BloatPercent: table.BloatPercent,
+			Table:        tablesToVacuum[i].Name,
+			DeadTuples:   tablesToVacuum[i].DeadTuples,
+			BloatPercent: tablesToVacuum[i].BloatPercent,
 			Analyzed:     opts.Analyze,
 		}
 
 		if opts.DryRun {
 			result.Success = true
 			if opts.Analyze {
-				result.Message = fmt.Sprintf("Zou VACUUM ANALYZE uitvoeren op '%s'", table.Name)
+				result.Message = fmt.Sprintf("Zou VACUUM ANALYZE uitvoeren op '%s'", tablesToVacuum[i].Name)
 			} else {
-				result.Message = fmt.Sprintf("Zou VACUUM uitvoeren op '%s'", table.Name)
+				result.Message = fmt.Sprintf("Zou VACUUM uitvoeren op '%s'", tablesToVacuum[i].Name)
 			}
 			response.TablesSuccess++
 		} else {
 			start := time.Now()
-			err := s.executeVacuum(ctx, table.Name, opts.Analyze)
+			err := s.executeVacuum(ctx, tablesToVacuum[i].Name, opts.Analyze)
 			duration := time.Since(start)
 			result.Duration = duration.Round(time.Millisecond).String()
 
@@ -156,9 +156,9 @@ func (s *AeronService) VacuumTables(ctx context.Context, opts VacuumOptions) (*V
 			} else {
 				result.Success = true
 				if opts.Analyze {
-					result.Message = fmt.Sprintf("VACUUM ANALYZE succesvol uitgevoerd op '%s'", table.Name)
+					result.Message = fmt.Sprintf("VACUUM ANALYZE succesvol uitgevoerd op '%s'", tablesToVacuum[i].Name)
 				} else {
-					result.Message = fmt.Sprintf("VACUUM succesvol uitgevoerd op '%s'", table.Name)
+					result.Message = fmt.Sprintf("VACUUM succesvol uitgevoerd op '%s'", tablesToVacuum[i].Name)
 				}
 				response.TablesSuccess++
 			}
