@@ -78,21 +78,12 @@ func (s *Server) Start(port string) error {
 			})
 		})
 
-		// Backup create - returns JSON, chi timeout middleware is safe
+		// Backup routes with dedicated timeout (pg_dump can take minutes)
 		r.Group(func(r chi.Router) {
 			r.Use(s.authMiddleware)
 			r.Use(middleware.Timeout(s.service.Config().Backup.GetTimeout()))
 
 			r.Post("/db/backup", s.handleCreateBackup)
-		})
-
-		// Backup download/stream - NO chi timeout middleware
-		// Chi's timeout middleware conflicts with streaming (tries to write 503 after headers sent)
-		// These handlers manage their own timeouts via context
-		r.Group(func(r chi.Router) {
-			r.Use(s.authMiddleware)
-
-			r.Get("/db/backup/download", s.handleBackupDownload)
 			r.Get("/db/backups/{filename}", s.handleDownloadBackupFile)
 		})
 	})

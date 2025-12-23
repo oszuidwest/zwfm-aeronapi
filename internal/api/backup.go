@@ -2,11 +2,8 @@
 package api
 
 import (
-	"context"
 	"encoding/json"
-	"log/slog"
 	"net/http"
-	"strconv"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -34,51 +31,6 @@ func (s *Server) handleCreateBackup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respondJSON(w, http.StatusOK, result)
-}
-
-func (s *Server) handleBackupDownload(w http.ResponseWriter, r *http.Request) {
-	cfg := s.service.Config()
-	query := r.URL.Query()
-	format := query.Get("format")
-	if format == "" {
-		format = cfg.Backup.GetDefaultFormat()
-	}
-
-	compression := cfg.Backup.GetDefaultCompression()
-	if c := query.Get("compression"); c != "" {
-		if val, err := strconv.Atoi(c); err == nil {
-			compression = val
-		}
-	}
-
-	// Generate filename for download
-	filenamePrefix := "download"
-	var ext string
-	if format == "custom" {
-		ext = "dump"
-	} else {
-		ext = "sql"
-	}
-	filename := "aeron-backup-" + filenamePrefix + "." + ext
-
-	// Set headers for file download
-	w.Header().Del("Content-Type")
-	if format == "custom" {
-		w.Header().Set("Content-Type", "application/octet-stream")
-	} else {
-		w.Header().Set("Content-Type", "application/sql")
-	}
-	w.Header().Set("Content-Disposition", "attachment; filename="+filename)
-
-	// Create timeout context - chi timeout middleware is not used for streaming
-	// to avoid conflicts with already-sent headers
-	ctx, cancel := context.WithTimeout(r.Context(), cfg.Backup.GetTimeout())
-	defer cancel()
-
-	if err := s.service.Backup.Stream(ctx, w, format, compression); err != nil {
-		// Headers already sent, can't send error JSON
-		slog.Error("Backup stream mislukt", "error", err)
-	}
 }
 
 func (s *Server) handleListBackups(w http.ResponseWriter, r *http.Request) {

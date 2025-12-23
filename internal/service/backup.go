@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -296,49 +295,6 @@ func (s *BackupService) Create(_ context.Context, req BackupRequest) (*BackupRes
 		CreatedAt:     fileInfo.ModTime(),
 		DryRun:        false,
 	}, nil
-}
-
-// Stream writes a backup directly to the provided writer.
-// Uses the request context because streaming should stop if the client disconnects.
-// The route should have an appropriate timeout configured (backup.timeout_minutes).
-func (s *BackupService) Stream(ctx context.Context, w io.Writer, format string, compression int) error {
-	if err := s.checkEnabled(); err != nil {
-		return err
-	}
-
-	pgDumpPath, err := findPgDump()
-	if err != nil {
-		return err
-	}
-
-	if format == "" {
-		format = s.config.Backup.GetDefaultFormat()
-	}
-	if format != "custom" && format != "plain" {
-		return types.NewValidationError("format", fmt.Sprintf("ongeldig backup formaat: %s", format))
-	}
-
-	if compression == 0 {
-		compression = s.config.Backup.GetDefaultCompression()
-	}
-	if compression < 0 || compression > 9 {
-		return types.NewValidationError("compression", fmt.Sprintf("ongeldige compressie waarde: %d (gebruik 0-9)", compression))
-	}
-
-	args := s.buildPgDumpArgs(format, compression)
-
-	cmd := exec.CommandContext(ctx, pgDumpPath, args...)
-	cmd.Env = append(os.Environ(), "PGPASSWORD="+s.config.Database.Password)
-	cmd.Stdout = w
-
-	var stderr strings.Builder
-	cmd.Stderr = &stderr
-
-	if err := cmd.Run(); err != nil {
-		return types.NewOperationError("backup streamen", fmt.Errorf("%s", strings.TrimSpace(stderr.String())))
-	}
-
-	return nil
 }
 
 // List returns a list of available backup files.
