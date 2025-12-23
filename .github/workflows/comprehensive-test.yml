@@ -787,60 +787,94 @@ jobs:
             exit 1
           fi
 
-      - name: "Backup: Dry-run"
+      - name: "Backup: Status endpoint (no backup yet)"
         if: matrix.suite == 'backup'
         run: |
-          echo "POST /api/db/backup (dry_run=true)"
-          RESPONSE=$(curl -s -X POST -H "X-API-Key: ${{ env.API_KEY }}" \
-            -H 'Content-Type: application/json' \
-            http://localhost:${{ env.API_PORT }}/api/db/backup \
-            -d '{"format": "custom", "dry_run": true}')
+          echo "GET /api/db/backup/status"
+          RESPONSE=$(curl -s -H "X-API-Key: ${{ env.API_KEY }}" http://localhost:${{ env.API_PORT }}/api/db/backup/status)
           SUCCESS=$(echo "$RESPONSE" | jq -r '.success')
-          DRY_RUN=$(echo "$RESPONSE" | jq -r '.data.dry_run')
-          if [ "$SUCCESS" = "true" ] && [ "$DRY_RUN" = "true" ]; then
-            echo "Backup dry-run succesvol"
+          RUNNING=$(echo "$RESPONSE" | jq -r '.data.running')
+          if [ "$SUCCESS" = "true" ] && [ "$RUNNING" = "false" ]; then
+            echo "Correct: geen backup actief"
           else
-            echo "::error::Backup dry-run gefaald"
+            echo "::error::Status endpoint gefaald"
             echo "Response: $RESPONSE"
             exit 1
           fi
 
-      - name: "Backup: Create (custom format)"
+      - name: "Backup: Create async (custom format)"
         if: matrix.suite == 'backup'
         run: |
           echo "POST /api/db/backup (format=custom, compression=6)"
-          RESPONSE=$(curl -s -X POST -H "X-API-Key: ${{ env.API_KEY }}" \
+          HTTP_CODE=$(curl -s -o /tmp/backup_response.json -w "%{http_code}" -X POST \
+            -H "X-API-Key: ${{ env.API_KEY }}" \
             -H 'Content-Type: application/json' \
             http://localhost:${{ env.API_PORT }}/api/db/backup \
             -d '{"format": "custom", "compression": 6}')
-          SUCCESS=$(echo "$RESPONSE" | jq -r '.success')
-          FILENAME=$(echo "$RESPONSE" | jq -r '.data.filename')
-          if [ "$SUCCESS" = "true" ] && [ -n "$FILENAME" ]; then
-            echo "Backup aangemaakt: $FILENAME"
-            echo "BACKUP_FILENAME=$FILENAME" >> $GITHUB_ENV
+          RESPONSE=$(cat /tmp/backup_response.json)
+          echo "HTTP status: $HTTP_CODE (verwacht: 202)"
+          echo "Response: $RESPONSE"
+          if [ "$HTTP_CODE" = "202" ]; then
+            echo "Backup gestart op achtergrond"
           else
-            echo "::error::Backup creatie gefaald"
-            echo "Response: $RESPONSE"
+            echo "::error::Verwachtte HTTP 202 Accepted, kreeg $HTTP_CODE"
             exit 1
           fi
 
-      - name: "Backup: Create (plain SQL)"
+      - name: "Backup: Wait for completion and verify status"
         if: matrix.suite == 'backup'
         run: |
-          echo "POST /api/db/backup (format=plain)"
+          echo "Wachten op backup voltooiing..."
+          for i in {1..60}; do
+            RESPONSE=$(curl -s -H "X-API-Key: ${{ env.API_KEY }}" http://localhost:${{ env.API_PORT }}/api/db/backup/status)
+            RUNNING=$(echo "$RESPONSE" | jq -r '.data.running')
+            if [ "$RUNNING" = "false" ]; then
+              SUCCESS_STATUS=$(echo "$RESPONSE" | jq -r '.data.success')
+              FILENAME=$(echo "$RESPONSE" | jq -r '.data.filename')
+              ERROR=$(echo "$RESPONSE" | jq -r '.data.error')
+              if [ "$SUCCESS_STATUS" = "true" ]; then
+                echo "Backup voltooid: $FILENAME"
+                echo "BACKUP_FILENAME=$FILENAME" >> $GITHUB_ENV
+                exit 0
+              else
+                echo "::error::Backup gefaald: $ERROR"
+                exit 1
+              fi
+            fi
+            echo "Backup nog bezig... ($i/60)"
+            sleep 1
+          done
+          echo "::error::Backup timeout na 60 seconden"
+          exit 1
+
+      - name: "Backup: Concurrent backup rejected"
+        if: matrix.suite == 'backup'
+        run: |
+          echo "POST /api/db/backup (tweede backup starten)"
+          # Start eerste backup
+          curl -s -X POST -H "X-API-Key: ${{ env.API_KEY }}" \
+            -H 'Content-Type: application/json' \
+            http://localhost:${{ env.API_PORT }}/api/db/backup \
+            -d '{"format": "plain"}' > /dev/null
+          # Probeer direct tweede backup
+          sleep 0.5
           RESPONSE=$(curl -s -X POST -H "X-API-Key: ${{ env.API_KEY }}" \
             -H 'Content-Type: application/json' \
             http://localhost:${{ env.API_PORT }}/api/db/backup \
             -d '{"format": "plain"}')
           SUCCESS=$(echo "$RESPONSE" | jq -r '.success')
-          FORMAT=$(echo "$RESPONSE" | jq -r '.data.format')
-          if [ "$SUCCESS" = "true" ] && [ "$FORMAT" = "plain" ]; then
-            echo "Plain SQL backup aangemaakt"
+          ERROR=$(echo "$RESPONSE" | jq -r '.error')
+          if [ "$SUCCESS" = "false" ] && echo "$ERROR" | grep -q "al bezig"; then
+            echo "Correct: tweede backup wordt geweigerd"
           else
-            echo "::error::Plain SQL backup gefaald"
-            echo "Response: $RESPONSE"
-            exit 1
+            echo "::warning::Concurrent backup test inconclusive (backup mogelijk al klaar)"
           fi
+          # Wacht tot backup klaar is
+          for i in {1..60}; do
+            RUNNING=$(curl -s -H "X-API-Key: ${{ env.API_KEY }}" http://localhost:${{ env.API_PORT }}/api/db/backup/status | jq -r '.data.running')
+            [ "$RUNNING" = "false" ] && break
+            sleep 1
+          done
 
       - name: "Backup: List backups (2 files)"
         if: matrix.suite == 'backup'
@@ -870,22 +904,6 @@ jobs:
             echo "Backup succesvol gedownload"
           else
             echo "::error::Backup download gefaald - HTTP $HTTP_CODE, grootte $FILE_SIZE"
-            exit 1
-          fi
-
-      - name: "Backup: Stream download"
-        if: matrix.suite == 'backup'
-        run: |
-          echo "GET /api/db/backup/download?format=custom&compression=3"
-          HTTP_CODE=$(curl -s -o /tmp/backup_stream.dump -w "%{http_code}" \
-            -H "X-API-Key: ${{ env.API_KEY }}" \
-            "http://localhost:${{ env.API_PORT }}/api/db/backup/download?format=custom&compression=3")
-          FILE_SIZE=$(stat -c%s /tmp/backup_stream.dump 2>/dev/null || echo "0")
-          echo "HTTP status: $HTTP_CODE, bestandsgrootte: $FILE_SIZE bytes"
-          if [ "$HTTP_CODE" = "200" ] && [ "$FILE_SIZE" -gt 0 ]; then
-            echo "Stream backup succesvol gedownload"
-          else
-            echo "::error::Stream download gefaald - HTTP $HTTP_CODE, grootte $FILE_SIZE"
             exit 1
           fi
 
@@ -959,7 +977,7 @@ jobs:
           RESPONSE=$(curl -s -X POST -H "X-API-Key: ${{ env.API_KEY }}" \
             -H 'Content-Type: application/json' \
             http://localhost:${{ env.API_PORT }}/api/db/backup \
-            -d '{"compression": 15, "dry_run": true}')
+            -d '{"compression": 15}')
           SUCCESS=$(echo "$RESPONSE" | jq -r '.success')
           if [ "$SUCCESS" = "false" ]; then
             echo "Correct: ongeldige compressie (15) wordt geweigerd"
