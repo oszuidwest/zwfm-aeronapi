@@ -74,6 +74,7 @@ func (s *Server) Start(port string) error {
 
 				r.Get("/backups", s.handleListBackups)
 				r.Get("/backup/status", s.handleBackupStatus)
+				r.Get("/backups/{filename}/validate", s.handleValidateBackup)
 				r.Delete("/backups/{filename}", s.handleDeleteBackup)
 			})
 		})

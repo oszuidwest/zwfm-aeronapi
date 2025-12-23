@@ -315,6 +315,20 @@ func (s *BackupService) execute(ctx context.Context, req BackupRequest) error {
 		return err
 	}
 
+	// Validate backup file integrity
+	slog.Info("Backup valideren", "filename", filename, "format", format)
+
+	validateCtx, validateCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer validateCancel()
+
+	if err := validateBackup(validateCtx, fullPath, format); err != nil {
+		slog.Error("Backup validatie mislukt", "filename", filename, "error", err)
+		s.setStatusDone(false, filename, err.Error())
+		return err
+	}
+
+	slog.Info("Backup gevalideerd", "filename", filename)
+
 	s.setStatusDone(true, filename, "")
 	slog.Info("Backup voltooid",
 		"filename", filename,
@@ -447,13 +461,8 @@ func (s *BackupService) List() (*BackupListResponse, error) {
 			continue
 		}
 
-		var format string
-		switch {
-		case strings.HasSuffix(name, ".dump"):
-			format = "custom"
-		case strings.HasSuffix(name, ".sql"):
-			format = "plain"
-		default:
+		format := detectBackupFormat(name)
+		if format == "" {
 			continue
 		}
 
@@ -531,6 +540,51 @@ func (s *BackupService) GetFilePath(filename string) (string, error) {
 	}
 
 	return filepath.Join(s.config.Backup.GetPath(), filename), nil
+}
+
+// ValidationResult represents the result of on-demand backup validation.
+type ValidationResult struct {
+	Filename string `json:"filename"`
+	Format   string `json:"format"`
+	Valid    bool   `json:"valid"`
+	Error    string `json:"error,omitempty"`
+}
+
+// Validate validates an existing backup file and returns the result.
+func (s *BackupService) Validate(filename string) (*ValidationResult, error) {
+	fullPath, err := s.GetFilePath(filename)
+	if err != nil {
+		return nil, err
+	}
+
+	format := detectBackupFormat(filename)
+	result := &ValidationResult{
+		Filename: filename,
+		Format:   format,
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	if err := validateBackup(ctx, fullPath, format); err != nil {
+		result.Valid = false
+		result.Error = err.Error()
+	} else {
+		result.Valid = true
+	}
+
+	return result, nil
+}
+
+func detectBackupFormat(filename string) string {
+	switch {
+	case strings.HasSuffix(filename, ".dump"):
+		return "custom"
+	case strings.HasSuffix(filename, ".sql"):
+		return "plain"
+	default:
+		return ""
+	}
 }
 
 // --- Background cleanup ---

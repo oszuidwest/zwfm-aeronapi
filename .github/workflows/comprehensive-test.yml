@@ -854,6 +854,34 @@ jobs:
           echo "::error::Backup timeout na 60 seconden"
           exit 1
 
+      - name: "Backup: On-demand validation endpoint"
+        if: matrix.suite == 'backup'
+        run: |
+          echo "GET /api/db/backups/${{ env.BACKUP_FILENAME }}/validate"
+          RESPONSE=$(curl -s -H "X-API-Key: ${{ env.API_KEY }}" \
+            "http://localhost:${{ env.API_PORT }}/api/db/backups/${{ env.BACKUP_FILENAME }}/validate")
+          VALID=$(echo "$RESPONSE" | jq -r '.data.valid')
+          FORMAT=$(echo "$RESPONSE" | jq -r '.data.format')
+          if [ "$VALID" = "true" ]; then
+            echo "On-demand validatie OK (format: $FORMAT)"
+          else
+            echo "::error::Validatie zou moeten slagen"
+            echo "Response: $RESPONSE"
+            exit 1
+          fi
+
+      - name: "Backup: Validate non-existent returns 404"
+        if: matrix.suite == 'backup'
+        run: |
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -H "X-API-Key: ${{ env.API_KEY }}" \
+            "http://localhost:${{ env.API_PORT }}/api/db/backups/aeron-backup-fake.dump/validate")
+          if [ "$HTTP_CODE" = "404" ]; then
+            echo "Correct: niet-bestaand bestand geeft 404"
+          else
+            echo "::error::Verwachtte 404, kreeg $HTTP_CODE"
+            exit 1
+          fi
+
       - name: "Backup: Concurrent backup rejected"
         if: matrix.suite == 'backup'
         run: |

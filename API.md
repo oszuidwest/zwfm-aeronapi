@@ -55,6 +55,7 @@ De Aeron Toolbox API biedt RESTful-endpoints voor het Aeron-radioautomatiserings
 | `/api/db/backup/status` | GET | Backup status opvragen | Ja |
 | `/api/db/backups` | GET | Lijst van alle backups | Ja |
 | `/api/db/backups/{filename}` | GET | Specifieke backup downloaden | Ja |
+| `/api/db/backups/{filename}/validate` | GET | Backup integriteit valideren | Ja |
 | `/api/db/backups/{filename}` | DELETE | Backup verwijderen | Ja |
 
 ## Authenticatie
@@ -676,11 +677,19 @@ Backups worden asynchroon uitgevoerd:
 2. **Status controleren:** `GET /api/db/backup/status` → toont voortgang en eventuele fouten
 3. **Backup downloaden:** `GET /api/db/backups/{filename}` → download het bestand
 
+**Automatische validatie:**
+Na het aanmaken van een backup wordt deze automatisch gevalideerd:
+- **Custom format (.dump):** Validatie via `pg_restore --list` (controleert TOC en checksums)
+- **Plain format (.sql):** Controle op PostgreSQL dump header/footer markers
+
+Alleen gevalideerde backups worden als succesvol gemarkeerd en naar S3 gesynchroniseerd.
+
 Deze aanpak biedt voordelen:
 - Request retourneert direct (geen timeout issues)
 - Fouten zijn zichtbaar via het status endpoint
 - Er kan slechts één backup tegelijk draaien
 - Bij connectieverlies loopt backup door op de server
+- Corrupte backups worden gedetecteerd vóór S3 sync
 
 ### Automatische backups
 
@@ -967,6 +976,48 @@ Verwijder een specifiek backup bestand.
   "error": "Bevestigingsheader ontbreekt: X-Confirm-Delete moet de bestandsnaam bevatten"
 }
 ```
+
+### Backup valideren
+
+Valideer de integriteit van een bestaand backup bestand. Handig voor het controleren van backups na download of herstel van S3.
+
+**Endpoint:** `GET /api/db/backups/{filename}/validate`
+**Authenticatie:** Vereist
+
+**Parameters:**
+- `filename` (pad, vereist): Naam van het backup bestand
+
+**Response:** `200 OK`
+```json
+{
+  "filename": "aeron-backup-2025-12-22-143000.dump",
+  "format": "custom",
+  "valid": true
+}
+```
+
+**Response bij ongeldige backup:** `200 OK`
+```json
+{
+  "filename": "aeron-backup-2025-12-22-143000.dump",
+  "format": "custom",
+  "valid": false,
+  "error": "backup validatie: bestand is corrupt of onleesbaar: pg_restore: error: ..."
+}
+```
+
+**Foutresponse:** `404 Not Found`
+```json
+{
+  "error": "backup bestand niet gevonden"
+}
+```
+
+**Validatiemethode per format:**
+| Format | Methode |
+|--------|---------|
+| `custom` (.dump) | `pg_restore --list` - valideert TOC en interne checksums |
+| `plain` (.sql) | Controle op PostgreSQL dump header/footer markers |
 
 ---
 
