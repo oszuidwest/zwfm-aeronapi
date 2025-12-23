@@ -52,7 +52,6 @@ De Aeron Toolbox API biedt RESTful-endpoints voor het Aeron-radioautomatiserings
 | `/api/db/analyze` | POST | ANALYZE uitvoeren op tabellen | Ja |
 | **Backups** |
 | `/api/db/backup` | POST | Nieuwe backup aanmaken | Ja |
-| `/api/db/backup/download` | GET | Laatste backup downloaden | Ja |
 | `/api/db/backups` | GET | Lijst van alle backups | Ja |
 | `/api/db/backups/{filename}` | GET | Specifieke backup downloaden | Ja |
 | `/api/db/backups/{filename}` | DELETE | Backup verwijderen | Ja |
@@ -668,12 +667,25 @@ Werk tabelstatistieken bij voor de PostgreSQL query optimizer.
 
 > **Let op:** Backup-endpoints zijn alleen beschikbaar indien `backup.enabled: true` in de configuratie.
 
+### Backup workflow
+
+De aanbevolen workflow voor backups is:
+
+1. **Backup aanmaken:** `POST /api/db/backup` → retourneert metadata met filename
+2. **Backup downloaden:** `GET /api/db/backups/{filename}` → download het bestand
+
+Deze aanpak biedt voordelen:
+- Backup wordt geverifieerd voordat de response wordt verstuurd
+- Download ondersteunt resume via HTTP Range headers
+- Bij connectieverlies blijft het backup-bestand beschikbaar voor retry
+
 ### Automatische backups
 
 Backups kunnen automatisch worden uitgevoerd via de ingebouwde scheduler. Configureer dit in `config.json`:
 
 ```json
 "backup": {
+  "timeout_minutes": 30,
   "scheduler": {
     "enabled": true,
     "schedule": "0 3 * * *",
@@ -683,6 +695,7 @@ Backups kunnen automatisch worden uitgevoerd via de ingebouwde scheduler. Config
 ```
 
 **Parameters:**
+- `timeout_minutes`: Maximale tijd voor pg_dump (standaard: 30 minuten)
 - `enabled`: Schakel automatische backups in/uit
 - `schedule`: Cron-expressie voor het backup-schema
 - `timezone`: IANA-tijdzone (optioneel, standaard: systeemtijd)
@@ -731,25 +744,6 @@ Maak een nieuwe database backup.
 ```json
 {
   "error": "backup functionaliteit is niet ingeschakeld"
-}
-```
-
-### Laatste backup downloaden
-
-Download de meest recente backup direct.
-
-**Endpoint:** `GET /api/db/backup/download`
-**Authenticatie:** Vereist
-
-**Response:** `200 OK`
-- Content-Type: `application/octet-stream` (custom) of `application/sql` (plain)
-- Content-Disposition: `attachment; filename=aeron-backup-....dump`
-- Binaire backup data
-
-**Foutresponse:** `404 Not Found`
-```json
-{
-  "error": "geen backups beschikbaar"
 }
 ```
 
@@ -1038,6 +1032,7 @@ Het gedrag van de API kan worden geconfigureerd via `config.json`:
     "max_backups": 10,
     "default_format": "custom",
     "default_compression": 9,
+    "timeout_minutes": 30,
     "scheduler": {
       "enabled": false,
       "schedule": "0 3 * * *",
