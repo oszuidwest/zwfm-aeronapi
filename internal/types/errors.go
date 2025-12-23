@@ -27,7 +27,7 @@ func (e *NotFoundError) Error() string {
 
 func (e *NotFoundError) StatusCode() int { return http.StatusNotFound }
 
-// NewNotFoundError creates a NotFoundError for missing resources.
+// NewNotFoundError returns an error indicating a resource could not be found.
 func NewNotFoundError(resource, id string) *NotFoundError {
 	return &NotFoundError{Resource: resource, ID: id}
 }
@@ -44,7 +44,7 @@ func (e *ValidationError) Error() string {
 
 func (e *ValidationError) StatusCode() int { return http.StatusBadRequest }
 
-// NewValidationError creates a new ValidationError.
+// NewValidationError returns an error indicating input validation failed.
 func NewValidationError(field, message string) *ValidationError {
 	return &ValidationError{Field: field, Message: message}
 }
@@ -68,7 +68,7 @@ func (e *OperationError) Unwrap() error {
 
 func (e *OperationError) StatusCode() int { return http.StatusInternalServerError }
 
-// NewOperationError creates a new OperationError.
+// NewOperationError returns an error indicating a runtime operation failed.
 func NewOperationError(operation string, err error) *OperationError {
 	return &OperationError{Operation: operation, Err: err}
 }
@@ -85,7 +85,7 @@ func (e *ConfigError) Error() string {
 
 func (e *ConfigError) StatusCode() int { return http.StatusInternalServerError }
 
-// NewConfigError creates a new ConfigError.
+// NewConfigError returns an error indicating invalid configuration.
 func NewConfigError(field, message string) *ConfigError {
 	return &ConfigError{Field: field, Message: message}
 }

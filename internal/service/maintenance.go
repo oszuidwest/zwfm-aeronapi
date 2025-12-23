@@ -128,13 +128,11 @@ func (s *MaintenanceService) GetHealth(ctx context.Context) (*DatabaseHealth, er
 		CheckedAt:    time.Now(),
 	}
 
-	// Get PostgreSQL version
 	var version string
 	if err := s.repo.DB().GetContext(ctx, &version, "SELECT version()"); err == nil {
 		health.DatabaseVersion = version
 	}
 
-	// Get database size
 	dbSize, dbSizeRaw, err := s.getDatabaseSize(ctx)
 	if err != nil {
 		return nil, types.NewOperationError("ophalen database grootte", err)
@@ -142,14 +140,12 @@ func (s *MaintenanceService) GetHealth(ctx context.Context) (*DatabaseHealth, er
 	health.DatabaseSize = dbSize
 	health.DatabaseSizeRaw = dbSizeRaw
 
-	// Get table statistics (combined query)
 	tables, err := s.getTableHealth(ctx)
 	if err != nil {
 		return nil, types.NewOperationError("ophalen tabel statistieken", err)
 	}
 	health.Tables = tables
 
-	// Generate recommendations using configurable thresholds
 	health.Recommendations = s.generateRecommendations(tables)
 
 	return health, nil
@@ -164,7 +160,7 @@ func (s *MaintenanceService) getDatabaseSize(ctx context.Context) (size string, 
 	return util.FormatBytes(sizeRaw), sizeRaw, nil
 }
 
-// getTableHealth retrieves health statistics for all tables in the schema using a single combined query.
+// getTableHealth retrieves health statistics for all tables in the schema.
 func (s *MaintenanceService) getTableHealth(ctx context.Context) ([]TableHealth, error) {
 	schema := s.repo.Schema()
 	query := `
@@ -194,7 +190,6 @@ func (s *MaintenanceService) getTableHealth(ctx context.Context) ([]TableHealth,
 		return nil, types.NewOperationError("ophalen tabel statistieken", err)
 	}
 
-	// Convert to TableHealth structs
 	tables := make([]TableHealth, 0, len(rows))
 	for _, row := range rows {
 		table := TableHealth{
@@ -217,7 +212,6 @@ func (s *MaintenanceService) getTableHealth(ctx context.Context) ([]TableHealth,
 			ToastSize:       util.FormatBytes(row.ToastSize),
 		}
 
-		// Calculate bloat estimate based on dead tuples
 		if row.LiveTuples > 0 {
 			table.BloatPercent = float64(row.DeadTuples) / float64(row.LiveTuples+row.DeadTuples) * 100
 		}
@@ -286,7 +280,7 @@ func lastVacuumTime(t *TableHealth) *time.Time {
 
 // --- Vacuum operations ---
 
-// newMaintenanceContext creates a new maintenance context by fetching table health.
+// newMaintenanceContext creates a new maintenance context with current table health data.
 func (s *MaintenanceService) newMaintenanceContext(ctx context.Context) (*maintenanceContext, error) {
 	tables, err := s.getTableHealth(ctx)
 	if err != nil {
@@ -312,7 +306,6 @@ func (mctx *maintenanceContext) selectTablesToProcess(requestedTables []string, 
 	var skipped []MaintenanceResult
 
 	if len(requestedTables) > 0 {
-		// User specified specific tables
 		for _, tableName := range requestedTables {
 			if t, exists := mctx.tablesByName[tableName]; exists {
 				tablesToProcess = append(tablesToProcess, t)
@@ -327,7 +320,6 @@ func (mctx *maintenanceContext) selectTablesToProcess(requestedTables []string, 
 			}
 		}
 	} else {
-		// Auto-select tables based on criteria
 		for i := range mctx.tables {
 			if autoSelectFn(mctx.tables[i]) {
 				tablesToProcess = append(tablesToProcess, mctx.tables[i])
@@ -355,7 +347,6 @@ func (s *MaintenanceService) Vacuum(ctx context.Context, opts VacuumOptions) (*M
 	bloatThreshold := s.config.Maintenance.GetBloatThreshold()
 	deadTupleThreshold := s.config.Maintenance.GetDeadTupleThreshold()
 
-	// Auto-select criteria for vacuum
 	autoSelect := func(t TableHealth) bool {
 		return t.BloatPercent > bloatThreshold || t.DeadTuples > deadTupleThreshold
 	}
@@ -365,7 +356,6 @@ func (s *MaintenanceService) Vacuum(ctx context.Context, opts VacuumOptions) (*M
 	response.TablesSkipped = len(skipped)
 	response.TablesTotal = len(tablesToVacuum) + len(skipped)
 
-	// Process each table
 	for i := range tablesToVacuum {
 		result := MaintenanceResult{
 			Table:        tablesToVacuum[i].Name,
@@ -442,7 +432,6 @@ func (s *MaintenanceService) Analyze(ctx context.Context, tableNames []string) (
 		return nil, err
 	}
 
-	// Auto-select criteria for analyze: tables never analyzed with data
 	autoSelect := func(t TableHealth) bool {
 		return t.LastAnalyze == nil && t.LastAutoanalyze == nil && t.RowCount > 0
 	}
@@ -452,7 +441,6 @@ func (s *MaintenanceService) Analyze(ctx context.Context, tableNames []string) (
 	response.TablesSkipped = len(skipped)
 	response.TablesTotal = len(tablesToAnalyze) + len(skipped)
 
-	// Process each table
 	for i := range tablesToAnalyze {
 		result := MaintenanceResult{
 			Table:        tablesToAnalyze[i].Name,

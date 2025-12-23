@@ -44,7 +44,7 @@ type Optimizer struct {
 	Config Config
 }
 
-// NewOptimizer creates a new Optimizer with the specified configuration.
+// NewOptimizer returns an Optimizer configured with the specified settings.
 func NewOptimizer(config Config) *Optimizer {
 	return &Optimizer{Config: config}
 }

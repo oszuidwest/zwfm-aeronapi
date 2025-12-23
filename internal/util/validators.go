@@ -12,12 +12,15 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync"
 
 	"github.com/doyensec/safeurl"
 	"github.com/oszuidwest/zwfm-aerontoolbox/internal/types"
 )
 
-var uuidRegex = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
+var uuidRegex = sync.OnceValue(func() *regexp.Regexp {
+	return regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
+})
 
 // ValidateEntityID validates that an ID is a proper UUID v4 format.
 func ValidateEntityID(id, entityLabel string) error {
@@ -25,7 +28,7 @@ func ValidateEntityID(id, entityLabel string) error {
 		return types.NewValidationError("id", fmt.Sprintf("ongeldige %s-ID: mag niet leeg zijn", entityLabel))
 	}
 
-	if !uuidRegex.MatchString(id) {
+	if !uuidRegex().MatchString(id) {
 		return types.NewValidationError("id", fmt.Sprintf("ongeldige %s-ID: moet een UUID zijn", entityLabel))
 	}
 

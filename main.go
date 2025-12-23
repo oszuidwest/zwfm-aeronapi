@@ -50,7 +50,7 @@ func run() error {
 		return err
 	}
 
-	initLogger()
+	initLogger(cfg)
 
 	db, dbClose, err := setupDatabase(cfg)
 	if err != nil {
@@ -77,8 +77,19 @@ func printVersion() {
 	fmt.Printf("Build time: %s\n", BuildTime)
 }
 
-func initLogger() {
-	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, nil)))
+func initLogger(cfg *config.Config) {
+	level := cfg.Log.GetLevel()
+	opts := &slog.HandlerOptions{Level: level}
+
+	var handler slog.Handler
+	if cfg.Log.GetFormat() == "json" {
+		handler = slog.NewJSONHandler(os.Stdout, opts)
+	} else {
+		handler = slog.NewTextHandler(os.Stdout, opts)
+	}
+
+	slog.SetDefault(slog.New(handler))
+	slog.Info("Logger geïnitialiseerd", "level", level.String(), "format", cfg.Log.GetFormat())
 }
 
 func setupDatabase(cfg *config.Config) (*sqlx.DB, func(), error) {
@@ -99,7 +110,9 @@ func setupDatabase(cfg *config.Config) (*sqlx.DB, func(), error) {
 
 	if err := db.Ping(); err != nil {
 		slog.Error("Database ping mislukt", "error", err)
-		_ = db.Close()
+		if closeErr := db.Close(); closeErr != nil {
+			slog.Warn("Database sluiten na ping fout mislukt", "error", closeErr)
+		}
 		return nil, nil, err
 	}
 
