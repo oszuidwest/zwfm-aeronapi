@@ -831,11 +831,17 @@ jobs:
             if [ "$RUNNING" = "false" ]; then
               SUCCESS_STATUS=$(echo "$RESPONSE" | jq -r '.data.success')
               FILENAME=$(echo "$RESPONSE" | jq -r '.data.filename')
+              STARTED_AT=$(echo "$RESPONSE" | jq -r '.data.started_at')
+              ENDED_AT=$(echo "$RESPONSE" | jq -r '.data.ended_at')
               ERROR=$(echo "$RESPONSE" | jq -r '.data.error')
-              if [ "$SUCCESS_STATUS" = "true" ]; then
-                echo "Backup voltooid: $FILENAME"
+              echo "Status response: $RESPONSE"
+              if [ "$SUCCESS_STATUS" = "true" ] && [ "$STARTED_AT" != "null" ] && [ "$ENDED_AT" != "null" ]; then
+                echo "Backup voltooid: $FILENAME (started: $STARTED_AT, ended: $ENDED_AT)"
                 echo "BACKUP_FILENAME=$FILENAME" >> $GITHUB_ENV
                 exit 0
+              elif [ "$SUCCESS_STATUS" = "true" ]; then
+                echo "::error::Backup success maar started_at of ended_at ontbreekt"
+                exit 1
               else
                 echo "::error::Backup gefaald: $ERROR"
                 exit 1
