@@ -265,20 +265,23 @@ func (s *BackupService) Run(ctx context.Context, req BackupRequest) error {
 
 // execute is the internal backup implementation.
 func (s *BackupService) execute(ctx context.Context, req BackupRequest) error {
+	// Record start immediately so status is always consistent
+	s.setStatusStarted()
+
 	if err := s.checkEnabled(); err != nil {
-		s.setStatus(false, "", err.Error())
+		s.setStatusDone(false, "", err.Error())
 		return err
 	}
 
 	pgDumpPath, err := findPgDump()
 	if err != nil {
-		s.setStatus(false, "", err.Error())
+		s.setStatusDone(false, "", err.Error())
 		return err
 	}
 
 	format, compression, err := s.validateRequest(req)
 	if err != nil {
-		s.setStatus(false, "", err.Error())
+		s.setStatusDone(false, "", err.Error())
 		return err
 	}
 
@@ -288,16 +291,16 @@ func (s *BackupService) execute(ctx context.Context, req BackupRequest) error {
 
 	args = append(args, "--file="+fullPath)
 
-	s.setStatusRunning(filename)
+	s.setStatusFilename(filename)
 	slog.Info("Backup gestart", "filename", filename, "format", format)
 
 	fileInfo, duration, err := s.executePgDump(ctx, pgDumpPath, filename, fullPath, args)
 	if err != nil {
-		s.setStatus(false, filename, err.Error())
+		s.setStatusDone(false, filename, err.Error())
 		return err
 	}
 
-	s.setStatus(true, filename, "")
+	s.setStatusDone(true, filename, "")
 	slog.Info("Backup voltooid",
 		"filename", filename,
 		"size", util.FormatBytes(fileInfo.Size()),
@@ -308,6 +311,7 @@ func (s *BackupService) execute(ctx context.Context, req BackupRequest) error {
 }
 
 // Status returns the status of the last backup operation.
+// Running state always comes from the atomic bool, not stored state.
 func (s *BackupService) Status() *BackupStatus {
 	s.statusMu.RLock()
 	defer s.statusMu.RUnlock()
@@ -321,27 +325,37 @@ func (s *BackupService) Status() *BackupStatus {
 	return &status
 }
 
-func (s *BackupService) setStatusRunning(filename string) {
+// setStatusStarted records that a backup has started.
+// Called at the very beginning of execute() to ensure StartedAt is always set.
+func (s *BackupService) setStatusStarted() {
 	s.statusMu.Lock()
 	defer s.statusMu.Unlock()
 
 	now := time.Now()
 	s.lastStatus = &BackupStatus{
-		Running:   true,
 		StartedAt: &now,
-		Filename:  filename,
 	}
 }
 
-func (s *BackupService) setStatus(success bool, filename, errMsg string) {
+// setStatusFilename updates the filename once it's known.
+func (s *BackupService) setStatusFilename(filename string) {
+	s.statusMu.Lock()
+	defer s.statusMu.Unlock()
+
+	if s.lastStatus != nil {
+		s.lastStatus.Filename = filename
+	}
+}
+
+// setStatusDone records that a backup has completed (success or failure).
+func (s *BackupService) setStatusDone(success bool, filename, errMsg string) {
 	s.statusMu.Lock()
 	defer s.statusMu.Unlock()
 
 	now := time.Now()
 	if s.lastStatus == nil {
-		s.lastStatus = &BackupStatus{}
+		s.lastStatus = &BackupStatus{StartedAt: &now}
 	}
-	s.lastStatus.Running = false
 	s.lastStatus.EndedAt = &now
 	s.lastStatus.Success = success
 	s.lastStatus.Error = errMsg
