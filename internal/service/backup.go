@@ -220,54 +220,46 @@ func (s *BackupService) executePgDump(ctx context.Context, pgDumpPath, filename,
 
 // --- Public methods ---
 
-// Start starts a database backup in the background using pg_dump.
-// Returns immediately after validation. The backup runs asynchronously.
-// Check GET /backups to see when the backup is complete.
+// Start starts a database backup in the background.
+// Returns immediately after basic validation. Check GET /backups for status.
 func (s *BackupService) Start(req BackupRequest) error {
+	// Fail-fast validation for immediate HTTP feedback
 	if err := s.checkEnabled(); err != nil {
 		return err
 	}
-
 	if _, err := findPgDump(); err != nil {
 		return err
 	}
-
 	if _, _, err := s.validateRequest(req); err != nil {
 		return err
 	}
 
-	slog.Info("Backup gestart op achtergrond")
-
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
-
 		ctx, cancel := context.WithTimeout(context.Background(), s.config.Backup.GetTimeout())
 		defer cancel()
-
-		if _, err := s.Create(ctx, req); err != nil {
-			slog.Error("Async backup mislukt", "error", err)
-		}
+		_ = s.Run(ctx, req) // Logging handled internally
 	}()
 
 	return nil
 }
 
-// Create creates a database backup synchronously using pg_dump.
-// Used by the scheduler and internally by Start().
-func (s *BackupService) Create(ctx context.Context, req BackupRequest) (*BackupResult, error) {
+// Run executes a backup synchronously. Used by Start() and scheduler.
+// Handles all logging internally - callers don't need to log.
+func (s *BackupService) Run(ctx context.Context, req BackupRequest) error {
 	if err := s.checkEnabled(); err != nil {
-		return nil, err
+		return err
 	}
 
 	pgDumpPath, err := findPgDump()
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	format, compression, err := s.validateRequest(req)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	filename := generateBackupFilename(format)
@@ -279,9 +271,12 @@ func (s *BackupService) Create(ctx context.Context, req BackupRequest) (*BackupR
 	}
 	args = append(args, "--file="+fullPath)
 
+	slog.Info("Backup gestart", "filename", filename, "format", format)
+
 	fileInfo, duration, err := s.executePgDump(ctx, pgDumpPath, filename, fullPath, args)
 	if err != nil {
-		return nil, err
+		// executePgDump already logs errors
+		return err
 	}
 
 	slog.Info("Backup voltooid",
@@ -290,16 +285,7 @@ func (s *BackupService) Create(ctx context.Context, req BackupRequest) (*BackupR
 		"duration", duration.Round(time.Millisecond).String())
 
 	s.cleanupOldBackups()
-
-	return &BackupResult{
-		Filename:      filename,
-		FilePath:      fullPath,
-		Format:        format,
-		Size:          fileInfo.Size(),
-		SizeFormatted: util.FormatBytes(fileInfo.Size()),
-		Duration:      duration.Round(time.Millisecond).String(),
-		CreatedAt:     fileInfo.ModTime(),
-	}, nil
+	return nil
 }
 
 // List returns a list of available backup files.

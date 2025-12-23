@@ -3,7 +3,6 @@ package service
 
 import (
 	"context"
-	"errors"
 	"log/slog"
 	"time"
 
@@ -58,33 +57,13 @@ func (s *BackupScheduler) Stop() context.Context {
 
 // runBackup executes the scheduled backup job.
 func (s *BackupScheduler) runBackup() {
-	start := time.Now()
-	slog.Info("Geplande backup gestart")
-
 	cfg := s.service.Config().Backup
-	ctx, cancel := context.WithTimeoutCause(
-		context.Background(),
-		cfg.GetTimeout(),
-		errors.New("scheduled backup timeout"),
-	)
+	ctx, cancel := context.WithTimeout(context.Background(), cfg.GetTimeout())
 	defer cancel()
 
-	result, err := s.service.Backup.Create(ctx, BackupRequest{
+	// Run() handles all logging internally
+	_ = s.service.Backup.Run(ctx, BackupRequest{
 		Format:      cfg.GetDefaultFormat(),
 		Compression: cfg.GetDefaultCompression(),
 	})
-
-	if err != nil {
-		if cause := context.Cause(ctx); cause != nil {
-			slog.Error("Geplande backup mislukt", "error", err, "cause", cause, "duration", time.Since(start))
-		} else {
-			slog.Error("Geplande backup mislukt", "error", err, "duration", time.Since(start))
-		}
-		return
-	}
-
-	slog.Info("Geplande backup voltooid",
-		"filename", result.Filename,
-		"size", result.SizeFormatted,
-		"duration", time.Since(start))
 }
