@@ -13,21 +13,57 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/oszuidwest/zwfm-aerontoolbox/internal/config"
+	"github.com/oszuidwest/zwfm-aerontoolbox/internal/database"
 	"github.com/oszuidwest/zwfm-aerontoolbox/internal/types"
 	"github.com/oszuidwest/zwfm-aerontoolbox/internal/util"
 )
 
-// BackupFormat represents the pg_dump output format.
-type BackupFormat string
+// BackupService handles database backup operations.
+type BackupService struct {
+	repo       *database.Repository
+	config     *config.Config
+	backupRoot *os.Root
+	done       chan struct{}
+	wg         sync.WaitGroup
+}
 
-const (
-	BackupFormatCustom BackupFormat = "custom"
-	BackupFormatPlain  BackupFormat = "plain"
-)
+// newBackupService creates a new BackupService instance.
+func newBackupService(repo *database.Repository, cfg *config.Config) (*BackupService, error) {
+	svc := &BackupService{
+		repo:   repo,
+		config: cfg,
+		done:   make(chan struct{}),
+	}
 
-// BackupRequest represents the JSON request body for backup operations.
+	if cfg.Backup.Enabled {
+		backupPath := cfg.Backup.GetPath()
+		if err := os.MkdirAll(backupPath, 0o750); err != nil {
+			return nil, types.NewConfigError("backup.path", fmt.Sprintf("backup directory niet toegankelijk: %v", err))
+		}
+
+		root, err := os.OpenRoot(backupPath)
+		if err != nil {
+			return nil, types.NewConfigError("backup.path", fmt.Sprintf("backup directory niet te openen: %v", err))
+		}
+		svc.backupRoot = root
+	}
+
+	return svc, nil
+}
+
+// Close gracefully shuts down the backup service and waits for background tasks.
+func (s *BackupService) Close() {
+	close(s.done)
+	s.wg.Wait()
+}
+
+// --- Types ---
+
+// BackupRequest represents the request body for backup operations.
 type BackupRequest struct {
 	Format      string `json:"format"`
 	Compression int    `json:"compression"`
@@ -64,21 +100,21 @@ type BackupListResponse struct {
 	TotalCount int          `json:"total_count"`
 }
 
+// --- Helpers ---
+
 var safeBackupFilenamePattern = regexp.MustCompile(`^[a-zA-Z0-9_\-.]+$`)
 
-// checkBackupEnabled returns an error if backup functionality is not enabled.
-func (s *AeronService) checkBackupEnabled() error {
+func (s *BackupService) checkEnabled() error {
 	if !s.config.Backup.Enabled || s.backupRoot == nil {
-		return &types.ConfigurationError{Field: "backup.enabled", Message: "backup functionaliteit is niet ingeschakeld"}
+		return types.NewConfigError("backup.enabled", "backup functionaliteit is niet ingeschakeld")
 	}
 	return nil
 }
 
-// findPgDump locates the pg_dump executable.
 func findPgDump() (string, error) {
 	path, err := exec.LookPath("pg_dump")
 	if err != nil {
-		return "", &types.ConfigurationError{Field: "pg_dump", Message: "postgresql-client niet geïnstalleerd"}
+		return "", types.NewConfigError("pg_dump", "postgresql-client niet geïnstalleerd")
 	}
 	return path, nil
 }
@@ -93,7 +129,7 @@ func validateBackupFilename(filename string) error {
 	return nil
 }
 
-func (s *AeronService) buildPgDumpArgs(format string, compression int) []string {
+func (s *BackupService) buildPgDumpArgs(format string, compression int) []string {
 	args := []string{
 		"--format=" + format,
 		"--host=" + s.config.Database.Host,
@@ -111,8 +147,7 @@ func (s *AeronService) buildPgDumpArgs(format string, compression int) []string 
 	return args
 }
 
-// validateBackupRequest validates and normalizes backup request parameters.
-func (s *AeronService) validateBackupRequest(req BackupRequest) (format string, compression int, err error) {
+func (s *BackupService) validateRequest(req BackupRequest) (format string, compression int, err error) {
 	format = strings.ToLower(req.Format)
 	if format == "" {
 		format = s.config.Backup.GetDefaultFormat()
@@ -132,7 +167,6 @@ func (s *AeronService) validateBackupRequest(req BackupRequest) (format string, 
 	return format, compression, nil
 }
 
-// generateBackupFilename creates a timestamped backup filename.
 func generateBackupFilename(format string) string {
 	timestamp := time.Now().Format("2006-01-02-150405")
 	ext := "sql"
@@ -142,8 +176,7 @@ func generateBackupFilename(format string) string {
 	return fmt.Sprintf("aeron-backup-%s.%s", timestamp, ext)
 }
 
-// executePgDump runs pg_dump and handles cleanup on failure.
-func (s *AeronService) executePgDump(ctx context.Context, pgDumpPath, filename, fullPath string, args []string) (os.FileInfo, time.Duration, error) {
+func (s *BackupService) executePgDump(ctx context.Context, pgDumpPath, filename, fullPath string, args []string) (os.FileInfo, time.Duration, error) {
 	cmd := exec.CommandContext(ctx, pgDumpPath, args...)
 	cmd.Env = append(os.Environ(), "PGPASSWORD="+s.config.Database.Password)
 
@@ -156,12 +189,12 @@ func (s *AeronService) executePgDump(ctx context.Context, pgDumpPath, filename, 
 			slog.Warn("Opruimen van mislukte backup gefaald", "filename", filename, "error", removeErr)
 		}
 		slog.Error("Backup mislukt", "error", err, "output", string(output))
-		return nil, 0, &types.BackupError{Operation: "maken", Err: fmt.Errorf("%s", strings.TrimSpace(string(output)))}
+		return nil, 0, types.NewOperationError("backup maken", fmt.Errorf("%s", strings.TrimSpace(string(output))))
 	}
 
 	fileInfo, err := s.backupRoot.Stat(filename)
 	if err != nil {
-		return nil, 0, &types.BackupError{Operation: "maken", Err: fmt.Errorf("backup bestand niet gevonden na creatie: %w", err)}
+		return nil, 0, types.NewOperationError("backup maken", fmt.Errorf("backup bestand niet gevonden na creatie: %w", err))
 	}
 
 	if err := os.Chmod(fullPath, 0o600); err != nil {
@@ -171,9 +204,11 @@ func (s *AeronService) executePgDump(ctx context.Context, pgDumpPath, filename, 
 	return fileInfo, duration, nil
 }
 
-// CreateBackup creates a database backup using pg_dump.
-func (s *AeronService) CreateBackup(ctx context.Context, req BackupRequest) (*BackupResult, error) {
-	if err := s.checkBackupEnabled(); err != nil {
+// --- Public methods ---
+
+// Create creates a database backup using pg_dump.
+func (s *BackupService) Create(ctx context.Context, req BackupRequest) (*BackupResult, error) {
+	if err := s.checkEnabled(); err != nil {
 		return nil, err
 	}
 
@@ -182,7 +217,7 @@ func (s *AeronService) CreateBackup(ctx context.Context, req BackupRequest) (*Ba
 		return nil, err
 	}
 
-	format, compression, err := s.validateBackupRequest(req)
+	format, compression, err := s.validateRequest(req)
 	if err != nil {
 		return nil, err
 	}
@@ -217,7 +252,17 @@ func (s *AeronService) CreateBackup(ctx context.Context, req BackupRequest) (*Ba
 		"size", util.FormatBytes(fileInfo.Size()),
 		"duration", duration.Round(time.Millisecond).String())
 
-	go s.cleanupOldBackups()
+	// Run cleanup in background with proper lifecycle management
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		select {
+		case <-s.done:
+			return
+		default:
+			s.cleanupOldBackups()
+		}
+	}()
 
 	return &BackupResult{
 		Filename:      filename,
@@ -231,9 +276,9 @@ func (s *AeronService) CreateBackup(ctx context.Context, req BackupRequest) (*Ba
 	}, nil
 }
 
-// StreamBackup streams a backup directly to a writer (for download).
-func (s *AeronService) StreamBackup(ctx context.Context, w io.Writer, format string, compression int) error {
-	if err := s.checkBackupEnabled(); err != nil {
+// Stream streams a backup directly to a writer (for download).
+func (s *BackupService) Stream(ctx context.Context, w io.Writer, format string, compression int) error {
+	if err := s.checkEnabled(); err != nil {
 		return err
 	}
 
@@ -263,15 +308,15 @@ func (s *AeronService) StreamBackup(ctx context.Context, w io.Writer, format str
 	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
-		return &types.BackupError{Operation: "streamen", Err: fmt.Errorf("%s", strings.TrimSpace(stderr.String()))}
+		return types.NewOperationError("backup streamen", fmt.Errorf("%s", strings.TrimSpace(stderr.String())))
 	}
 
 	return nil
 }
 
-// ListBackups returns a list of available backup files.
-func (s *AeronService) ListBackups() (*BackupListResponse, error) {
-	if err := s.checkBackupEnabled(); err != nil {
+// List returns a list of available backup files.
+func (s *BackupService) List() (*BackupListResponse, error) {
+	if err := s.checkEnabled(); err != nil {
 		return nil, err
 	}
 
@@ -285,7 +330,7 @@ func (s *AeronService) ListBackups() (*BackupListResponse, error) {
 				TotalCount: 0,
 			}, nil
 		}
-		return nil, &types.ConfigurationError{Field: "backup.path", Message: fmt.Sprintf("backup directory niet leesbaar: %v", err)}
+		return nil, types.NewConfigError("backup.path", fmt.Sprintf("backup directory niet leesbaar: %v", err))
 	}
 
 	var backups []BackupInfo
@@ -337,9 +382,9 @@ func (s *AeronService) ListBackups() (*BackupListResponse, error) {
 	}, nil
 }
 
-// DeleteBackup deletes a specific backup file.
-func (s *AeronService) DeleteBackup(filename string) error {
-	if err := s.checkBackupEnabled(); err != nil {
+// Delete deletes a specific backup file.
+func (s *BackupService) Delete(filename string) error {
+	if err := s.checkEnabled(); err != nil {
 		return err
 	}
 
@@ -352,15 +397,34 @@ func (s *AeronService) DeleteBackup(filename string) error {
 	}
 
 	if err := s.backupRoot.Remove(filename); err != nil {
-		return &types.BackupError{Operation: "verwijderen", Err: err}
+		return types.NewOperationError("backup verwijderen", err)
 	}
 
 	slog.Info("Backup verwijderd", "filename", filename)
 	return nil
 }
 
-func (s *AeronService) cleanupOldBackups() {
-	backups, err := s.ListBackups()
+// GetFilePath returns the full path to a backup file if it exists.
+func (s *BackupService) GetFilePath(filename string) (string, error) {
+	if err := s.checkEnabled(); err != nil {
+		return "", err
+	}
+
+	if err := validateBackupFilename(filename); err != nil {
+		return "", err
+	}
+
+	if _, err := s.backupRoot.Stat(filename); os.IsNotExist(err) {
+		return "", types.NewNotFoundError("backup", filename)
+	}
+
+	return filepath.Join(s.config.Backup.GetPath(), filename), nil
+}
+
+// --- Background cleanup ---
+
+func (s *BackupService) cleanupOldBackups() {
+	backups, err := s.List()
 	if err != nil {
 		slog.Error("Kon backups niet ophalen voor cleanup", "error", err)
 		return
@@ -374,17 +438,17 @@ func (s *AeronService) cleanupOldBackups() {
 
 	for _, backup := range backups.Backups {
 		if backup.CreatedAt.Before(cutoff) {
-			if err := s.DeleteBackup(backup.Filename); err == nil {
+			if err := s.Delete(backup.Filename); err == nil {
 				deleted++
 				slog.Info("Oude backup verwijderd (retention)", "filename", backup.Filename)
 			}
 		}
 	}
 
-	backups, _ = s.ListBackups()
+	backups, _ = s.List()
 	if backups != nil && len(backups.Backups) > maxBackups {
 		for i := maxBackups; i < len(backups.Backups); i++ {
-			if err := s.DeleteBackup(backups.Backups[i].Filename); err == nil {
+			if err := s.Delete(backups.Backups[i].Filename); err == nil {
 				deleted++
 				slog.Info("Oude backup verwijderd (max_backups)", "filename", backups.Backups[i].Filename)
 			}
@@ -394,21 +458,4 @@ func (s *AeronService) cleanupOldBackups() {
 	if deleted > 0 {
 		slog.Info("Backup cleanup voltooid", "deleted", deleted)
 	}
-}
-
-// GetBackupFilePath returns the full path to a backup file if it exists.
-func (s *AeronService) GetBackupFilePath(filename string) (string, error) {
-	if err := s.checkBackupEnabled(); err != nil {
-		return "", err
-	}
-
-	if err := validateBackupFilename(filename); err != nil {
-		return "", err
-	}
-
-	if _, err := s.backupRoot.Stat(filename); os.IsNotExist(err) {
-		return "", types.NewNotFoundError("backup", filename)
-	}
-
-	return filepath.Join(s.config.Backup.GetPath(), filename), nil
 }

@@ -83,7 +83,7 @@ func (o *Optimizer) optimizeJPEG(data []byte) (optimized []byte, format, encoder
 	var sourceImage image.Image
 	sourceImage, err = jpeg.Decode(bytes.NewReader(data))
 	if err != nil {
-		return nil, "", "", &types.ImageProcessingError{Message: fmt.Sprintf("decoderen van JPEG mislukt: %v", err)}
+		return nil, "", "", types.NewValidationError("image", fmt.Sprintf("decoderen van JPEG mislukt: %v", err))
 	}
 
 	return o.processImage(sourceImage, data, "jpeg")
@@ -93,7 +93,7 @@ func (o *Optimizer) convertPNGToJPEG(data []byte) (optimized []byte, format, enc
 	var sourceImage image.Image
 	sourceImage, err = png.Decode(bytes.NewReader(data))
 	if err != nil {
-		return nil, "", "", &types.ImageProcessingError{Message: fmt.Sprintf("decoderen van PNG mislukt: %v", err)}
+		return nil, "", "", types.NewValidationError("image", fmt.Sprintf("decoderen van PNG mislukt: %v", err))
 	}
 
 	return o.processImage(sourceImage, data, "jpeg")
@@ -109,7 +109,7 @@ func (o *Optimizer) processImage(sourceImage image.Image, originalData []byte, o
 
 	var jpegBuffer bytes.Buffer
 	if err := jpeg.Encode(&jpegBuffer, sourceImage, &jpeg.Options{Quality: o.Config.Quality}); err != nil {
-		return nil, "", "", &types.ImageProcessingError{Message: fmt.Sprintf("JPEG encoding mislukt: %v", err)}
+		return nil, "", "", types.NewValidationError("image", fmt.Sprintf("JPEG encoding mislukt: %v", err))
 	}
 	optimizedData := jpegBuffer.Bytes()
 
@@ -169,7 +169,7 @@ func validateImage(info *Info, config Config) error {
 func extractImageInfo(imageData []byte) (*Info, error) {
 	format, width, height, err := getImageInfo(imageData)
 	if err != nil {
-		return nil, &types.ImageProcessingError{Message: fmt.Sprintf("ophalen van afbeeldingsinformatie mislukt: %v", err)}
+		return nil, types.NewValidationError("image", fmt.Sprintf("ophalen van afbeeldingsinformatie mislukt: %v", err))
 	}
 
 	return &Info{
@@ -210,7 +210,7 @@ func optimizeImageData(imageData []byte, originalInfo *Info, config Config) (*Pr
 	optimizer := NewOptimizer(config)
 	optimizedData, optFormat, optEncoder, err := optimizer.OptimizeImage(imageData)
 	if err != nil {
-		return nil, &types.ImageProcessingError{Message: fmt.Sprintf("optimaliseren mislukt: %v", err)}
+		return nil, types.NewValidationError("image", fmt.Sprintf("optimaliseren mislukt: %v", err))
 	}
 
 	optimizedInfo, err := extractImageInfo(optimizedData)

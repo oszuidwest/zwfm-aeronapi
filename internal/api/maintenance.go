@@ -21,7 +21,7 @@ type AnalyzeRequest struct {
 }
 
 func (s *Server) handleDatabaseHealth(w http.ResponseWriter, r *http.Request) {
-	health, err := s.service.GetDatabaseHealth(r.Context())
+	health, err := s.service.Maintenance.GetHealth(r.Context())
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -37,7 +37,7 @@ func (s *Server) handleVacuum(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := s.service.VacuumTables(r.Context(), service.VacuumOptions{
+	result, err := s.service.Maintenance.Vacuum(r.Context(), service.VacuumOptions{
 		Tables:  req.Tables,
 		Analyze: req.Analyze,
 		DryRun:  req.DryRun,
@@ -57,7 +57,7 @@ func (s *Server) handleAnalyze(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := s.service.AnalyzeTables(r.Context(), req.Tables)
+	result, err := s.service.Maintenance.Analyze(r.Context(), req.Tables)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, err.Error())
 		return

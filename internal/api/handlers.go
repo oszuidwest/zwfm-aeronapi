@@ -9,11 +9,13 @@ import (
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/oszuidwest/zwfm-aerontoolbox/internal/database"
 	"github.com/oszuidwest/zwfm-aerontoolbox/internal/service"
 	"github.com/oszuidwest/zwfm-aerontoolbox/internal/types"
 	"github.com/oszuidwest/zwfm-aerontoolbox/internal/util"
 )
+
+// PlaylistBlockWithTracks is an alias for service.PlaylistBlockWithTracks for API responses.
+type PlaylistBlockWithTracks = service.PlaylistBlockWithTracks
 
 // ImageUploadRequest represents the JSON request body for image upload operations.
 type ImageUploadRequest struct {
@@ -26,12 +28,6 @@ type ImageStatsResponse struct {
 	Total         int `json:"total"`
 	WithImages    int `json:"with_images"`
 	WithoutImages int `json:"without_images"`
-}
-
-// BlockWithTracks represents a playlist block with its associated tracks.
-type BlockWithTracks struct {
-	database.PlaylistBlock
-	Tracks []database.PlaylistItem `json:"tracks"`
 }
 
 // HealthResponse represents the response for the health check endpoint.
@@ -77,14 +73,14 @@ func (s *Server) validateAndGetEntityID(w http.ResponseWriter, r *http.Request, 
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	dbStatus := "connected"
-	if err := s.service.DB().PingContext(r.Context()); err != nil {
+	if err := s.service.Repository().Ping(r.Context()); err != nil {
 		dbStatus = "disconnected"
 		slog.Warn("Database health check mislukt", "error", err)
 	}
 
 	respondJSON(w, http.StatusOK, HealthResponse{
 		Status:         "healthy",
-		Version:        Version,
+		Version:        s.version,
 		Database:       s.service.Config().Database.Name,
 		DatabaseStatus: dbStatus,
 	})
@@ -92,7 +88,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleStats(entityType types.EntityType) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		stats, err := s.service.GetStatistics(r.Context(), entityType)
+		stats, err := s.service.Media.GetStatistics(r.Context(), entityType)
 		if err != nil {
 			respondError(w, http.StatusInternalServerError, err.Error())
 			return
@@ -116,7 +112,7 @@ func (s *Server) handleEntityByID(entityType types.EntityType) http.HandlerFunc 
 		}
 
 		if entityType == types.EntityTypeArtist {
-			artist, err := database.GetArtistByID(r.Context(), s.service.DB(), s.config.Database.Schema, entityID)
+			artist, err := s.service.Media.GetArtist(r.Context(), entityID)
 			if err != nil {
 				statusCode := errorCode(err)
 				respondError(w, statusCode, err.Error())
@@ -124,7 +120,7 @@ func (s *Server) handleEntityByID(entityType types.EntityType) http.HandlerFunc 
 			}
 			respondJSON(w, http.StatusOK, artist)
 		} else {
-			track, err := database.GetTrackByID(r.Context(), s.service.DB(), s.config.Database.Schema, entityID)
+			track, err := s.service.Media.GetTrack(r.Context(), entityID)
 			if err != nil {
 				statusCode := errorCode(err)
 				respondError(w, statusCode, err.Error())
@@ -160,7 +156,7 @@ func (s *Server) handleBulkDelete(entityType types.EntityType) http.HandlerFunc 
 			return
 		}
 
-		result, err := s.service.DeleteAllImages(r.Context(), entityType)
+		result, err := s.service.Media.DeleteAllImages(r.Context(), entityType)
 		if err != nil {
 			respondError(w, http.StatusInternalServerError, err.Error())
 			return
@@ -183,9 +179,7 @@ func (s *Server) handleGetImage(entityType types.EntityType) http.HandlerFunc {
 			return
 		}
 
-		table := types.TableForEntityType(entityType)
-		imageData, err := database.GetEntityImage(r.Context(), s.service.DB(), s.config.Database.Schema, table, entityID)
-
+		imageData, err := s.service.Media.GetImage(r.Context(), entityType, entityID)
 		if err != nil {
 			statusCode := errorCode(err)
 			respondError(w, statusCode, err.Error())
@@ -231,7 +225,7 @@ func (s *Server) handleImageUpload(entityType types.EntityType) http.HandlerFunc
 			params.ImageData = imageData
 		}
 
-		result, err := s.service.UploadImage(r.Context(), params)
+		result, err := s.service.Media.UploadImage(r.Context(), params)
 		if err != nil {
 			statusCode := errorCode(err)
 			respondError(w, statusCode, err.Error())
@@ -250,8 +244,7 @@ func (s *Server) handleDeleteImage(entityType types.EntityType) http.HandlerFunc
 			return
 		}
 
-		table := types.TableForEntityType(entityType)
-		err := database.DeleteEntityImage(r.Context(), s.service.DB(), s.config.Database.Schema, table, entityID)
+		err := s.service.Media.DeleteImage(r.Context(), entityType, entityID)
 		if err != nil {
 			slog.Error("Afbeelding verwijderen mislukt", "entityType", entityType, "id", entityID, "error", err)
 			respondError(w, errorCode(err), err.Error())
@@ -271,8 +264,8 @@ func (s *Server) handleDeleteImage(entityType types.EntityType) http.HandlerFunc
 	}
 }
 
-func parsePlaylistOptions(query url.Values) database.PlaylistOptions {
-	opts := database.DefaultPlaylistOptions()
+func parsePlaylistOptions(query url.Values) service.PlaylistOptions {
+	opts := service.DefaultPlaylistOptions()
 	opts.BlockID = query.Get("block_id")
 
 	if limit := query.Get("limit"); limit != "" {
@@ -309,7 +302,7 @@ func (s *Server) handlePlaylist(w http.ResponseWriter, r *http.Request) {
 	// Single block with items
 	if query.Get("block_id") != "" {
 		opts := parsePlaylistOptions(query)
-		playlist, err := database.GetPlaylist(r.Context(), s.service.DB(), s.config.Database.Schema, &opts)
+		playlist, err := s.service.Media.GetPlaylist(r.Context(), &opts)
 		if err != nil {
 			respondError(w, http.StatusInternalServerError, err.Error())
 			return
@@ -319,22 +312,10 @@ func (s *Server) handlePlaylist(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// All blocks with tracks for a date
-	blocks, tracksByBlock, err := database.GetPlaylistBlocksWithTracks(r.Context(), s.service.DB(), s.config.Database.Schema, query.Get("date"))
+	result, err := s.service.Media.GetPlaylistWithTracks(r.Context(), query.Get("date"))
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, err.Error())
 		return
-	}
-
-	result := make([]BlockWithTracks, len(blocks))
-	for i := range blocks {
-		tracks := tracksByBlock[blocks[i].BlockID]
-		if tracks == nil {
-			tracks = []database.PlaylistItem{}
-		}
-		result[i] = BlockWithTracks{
-			PlaylistBlock: blocks[i],
-			Tracks:        tracks,
-		}
 	}
 
 	respondJSON(w, http.StatusOK, result)

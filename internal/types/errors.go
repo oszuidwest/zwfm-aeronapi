@@ -12,29 +12,25 @@ type HTTPError interface {
 	StatusCode() int
 }
 
-// NotFoundError indicates an entity was not found.
+// NotFoundError indicates a resource was not found.
 type NotFoundError struct {
-	Entity string
-	ID     string
+	Resource string
+	ID       string
 }
 
 func (e *NotFoundError) Error() string {
-	return fmt.Sprintf("%s met ID '%s' bestaat niet", e.Entity, e.ID)
+	if e.ID != "" {
+		return fmt.Sprintf("%s met ID '%s' niet gevonden", e.Resource, e.ID)
+	}
+	return fmt.Sprintf("%s niet gevonden", e.Resource)
 }
 
 func (e *NotFoundError) StatusCode() int { return http.StatusNotFound }
 
-// NoImageError indicates an entity has no image.
-type NoImageError struct {
-	Entity string
-	ID     string
+// NewNotFoundError creates a NotFoundError for missing resources.
+func NewNotFoundError(resource, id string) *NotFoundError {
+	return &NotFoundError{Resource: resource, ID: id}
 }
-
-func (e *NoImageError) Error() string {
-	return fmt.Sprintf("%s met ID '%s' heeft geen afbeelding", e.Entity, e.ID)
-}
-
-func (e *NoImageError) StatusCode() int { return http.StatusNotFound }
 
 // ValidationError indicates input validation failed.
 type ValidationError struct {
@@ -48,72 +44,54 @@ func (e *ValidationError) Error() string {
 
 func (e *ValidationError) StatusCode() int { return http.StatusBadRequest }
 
-// ImageProcessingError indicates image processing failed.
-type ImageProcessingError struct {
-	Message string
+// NewValidationError creates a new ValidationError.
+func NewValidationError(field, message string) *ValidationError {
+	return &ValidationError{Field: field, Message: message}
 }
 
-func (e *ImageProcessingError) Error() string {
-	return fmt.Sprintf("afbeelding verwerking mislukt: %s", e.Message)
-}
-
-func (e *ImageProcessingError) StatusCode() int { return http.StatusBadRequest }
-
-// DatabaseError wraps database operation errors.
-type DatabaseError struct {
+// OperationError indicates a runtime operation failed.
+type OperationError struct {
 	Operation string
 	Err       error
 }
 
-func (e *DatabaseError) Error() string {
-	return fmt.Sprintf("database fout bij %s: %v", e.Operation, e.Err)
+func (e *OperationError) Error() string {
+	if e.Err != nil {
+		return fmt.Sprintf("%s mislukt: %v", e.Operation, e.Err)
+	}
+	return fmt.Sprintf("%s mislukt", e.Operation)
 }
 
-func (e *DatabaseError) Unwrap() error {
+func (e *OperationError) Unwrap() error {
 	return e.Err
 }
 
-func (e *DatabaseError) StatusCode() int { return http.StatusInternalServerError }
+func (e *OperationError) StatusCode() int { return http.StatusInternalServerError }
 
-// ConfigurationError indicates invalid configuration.
-type ConfigurationError struct {
+// NewOperationError creates a new OperationError.
+func NewOperationError(operation string, err error) *OperationError {
+	return &OperationError{Operation: operation, Err: err}
+}
+
+// ConfigError indicates invalid configuration.
+type ConfigError struct {
 	Field   string
 	Message string
 }
 
-func (e *ConfigurationError) Error() string {
+func (e *ConfigError) Error() string {
 	return fmt.Sprintf("configuratie fout: %s - %s", e.Field, e.Message)
 }
 
-func (e *ConfigurationError) StatusCode() int { return http.StatusInternalServerError }
+func (e *ConfigError) StatusCode() int { return http.StatusInternalServerError }
 
-// BackupError indicates backup operation failed.
-type BackupError struct {
-	Operation string
-	Err       error
+// NewConfigError creates a new ConfigError.
+func NewConfigError(field, message string) *ConfigError {
+	return &ConfigError{Field: field, Message: message}
 }
 
-func (e *BackupError) Error() string {
-	return fmt.Sprintf("backup %s mislukt: %v", e.Operation, e.Err)
-}
-
-func (e *BackupError) Unwrap() error {
-	return e.Err
-}
-
-func (e *BackupError) StatusCode() int { return http.StatusInternalServerError }
-
-// NewNotFoundError constructs a NotFoundError for missing entities.
-func NewNotFoundError(entity, id string) *NotFoundError {
-	return &NotFoundError{Entity: entity, ID: id}
-}
-
-// NewNoImageError constructs a NoImageError for entities without images.
-func NewNoImageError(entity, id string) *NoImageError {
-	return &NoImageError{Entity: entity, ID: id}
-}
-
-// NewValidationError creates a new ValidationError.
-func NewValidationError(field, message string) *ValidationError {
-	return &ValidationError{Field: field, Message: message}
+// NewNoImageError creates a NotFoundError for entities without images.
+// This is a convenience function for the common "no image" case.
+func NewNoImageError(entity, id string) *NotFoundError {
+	return &NotFoundError{Resource: entity + " afbeelding", ID: id}
 }

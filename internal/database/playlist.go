@@ -72,14 +72,6 @@ type PlaylistOptions struct {
 	ArtistImage *bool
 }
 
-// DefaultPlaylistOptions returns default playlist query options.
-func DefaultPlaylistOptions() PlaylistOptions {
-	return PlaylistOptions{
-		ExportTypes: []int{},
-		SortBy:      "starttime",
-	}
-}
-
 // BuildPlaylistQuery creates a parameterized SQL query for playlist items.
 func BuildPlaylistQuery(schema string, opts *PlaylistOptions) (query string, params []any, err error) {
 	var conditions []string
@@ -162,109 +154,8 @@ func ExecutePlaylistQuery(ctx context.Context, db DB, query string, params []any
 	var items []PlaylistItem
 	err := db.SelectContext(ctx, &items, query, params...)
 	if err != nil {
-		return nil, &types.DatabaseError{Operation: "ophalen van playlist", Err: err}
+		return nil, &types.OperationError{Operation: "ophalen van playlist", Err: err}
 	}
 
 	return items, nil
-}
-
-// GetPlaylist retrieves playlist items based on the provided options.
-func GetPlaylist(ctx context.Context, db DB, schema string, opts *PlaylistOptions) ([]PlaylistItem, error) {
-	query, params, err := BuildPlaylistQuery(schema, opts)
-	if err != nil {
-		return nil, err
-	}
-	return ExecutePlaylistQuery(ctx, db, query, params)
-}
-
-// GetPlaylistBlocks retrieves all playlist blocks for a specific date.
-func GetPlaylistBlocks(ctx context.Context, db DB, schema, date string) ([]PlaylistBlock, error) {
-	var dateFilter string
-	params := []any{}
-
-	if date != "" {
-		dateFilter = "pb.startdatetime >= $1::date AND pb.startdatetime < $1::date + INTERVAL '1 day'"
-		params = append(params, date)
-	} else {
-		dateFilter = "pb.startdatetime >= CURRENT_DATE AND pb.startdatetime < CURRENT_DATE + INTERVAL '1 day'"
-	}
-
-	query := fmt.Sprintf(`
-		SELECT
-			pb.blockid,
-			COALESCE(pb.name, '') as name,
-			DATE(pb.startdatetime)::text as date,
-			TO_CHAR(pb.startdatetime, 'HH24:MI:SS') as start_time,
-			TO_CHAR(pb.enddatetime, 'HH24:MI:SS') as end_time
-		FROM %s.playlistblock pb
-		WHERE %s
-		ORDER BY pb.startdatetime
-	`, schema, dateFilter)
-
-	var blocks []PlaylistBlock
-	err := db.SelectContext(ctx, &blocks, query, params...)
-	if err != nil {
-		return nil, &types.DatabaseError{Operation: "ophalen van playlist blocks", Err: err}
-	}
-
-	return blocks, nil
-}
-
-// GetPlaylistBlocksWithTracks fetches all blocks and their tracks for a date.
-func GetPlaylistBlocksWithTracks(ctx context.Context, db DB, schema, date string) ([]PlaylistBlock, map[string][]PlaylistItem, error) {
-	blocks, err := GetPlaylistBlocks(ctx, db, schema, date)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	if len(blocks) == 0 {
-		return blocks, make(map[string][]PlaylistItem), nil
-	}
-
-	blockIDs := make([]string, len(blocks))
-	for i, block := range blocks {
-		blockIDs[i] = block.BlockID
-	}
-
-	var dateFilter string
-	params := []any{}
-	paramCount := 0
-
-	if date != "" {
-		dateFilter = "pi.startdatetime >= $1::date AND pi.startdatetime < $1::date + INTERVAL '1 day'"
-		params = append(params, date)
-		paramCount = 1
-	} else {
-		dateFilter = "pi.startdatetime >= CURRENT_DATE AND pi.startdatetime < CURRENT_DATE + INTERVAL '1 day'"
-	}
-	placeholders := make([]string, len(blockIDs))
-	for i, id := range blockIDs {
-		paramCount++
-		placeholders[i] = fmt.Sprintf("$%d", paramCount)
-		params = append(params, id)
-	}
-
-	// Create a temporary struct that includes blockid for grouping
-	type playlistItemWithBlockID struct {
-		PlaylistItem
-		TempBlockID string `db:"blockid"`
-	}
-
-	columns := fmt.Sprintf(playlistItemColumns, types.VoicetrackUserID)
-	joins := fmt.Sprintf(playlistItemJoins, schema, schema, schema)
-	query := fmt.Sprintf("SELECT %s, COALESCE(pi.blockid::text, '') as blockid %s WHERE %s AND pi.blockid IN (%s) ORDER BY pi.blockid, pi.startdatetime",
-		columns, joins, dateFilter, strings.Join(placeholders, ","))
-
-	var tempItems []playlistItemWithBlockID
-	err = db.SelectContext(ctx, &tempItems, query, params...)
-	if err != nil {
-		return nil, nil, &types.DatabaseError{Operation: "ophalen van playlist items", Err: err}
-	}
-
-	tracksByBlock := make(map[string][]PlaylistItem)
-	for i := range tempItems {
-		tracksByBlock[tempItems[i].TempBlockID] = append(tracksByBlock[tempItems[i].TempBlockID], tempItems[i].PlaylistItem)
-	}
-
-	return blocks, tracksByBlock, nil
 }

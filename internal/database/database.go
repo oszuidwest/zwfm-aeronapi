@@ -4,7 +4,6 @@ package database
 import (
 	"context"
 	"database/sql"
-	"fmt"
 
 	"github.com/oszuidwest/zwfm-aerontoolbox/internal/types"
 
@@ -70,74 +69,6 @@ type TrackDetails struct {
 	Orchestra     string `db:"orchestra" json:"orchestra"`
 }
 
-// CountItems counts entities by image presence in the specified table.
-func CountItems(ctx context.Context, db DB, schema string, table types.Table, hasImage bool) (int, error) {
-	condition := "IS NULL"
-	if hasImage {
-		condition = "IS NOT NULL"
-	}
-
-	qualifiedTableName, err := types.QualifiedTable(schema, table)
-	if err != nil {
-		return 0, types.NewValidationError("table", fmt.Sprintf("ongeldige tabel configuratie: %v", err))
-	}
-	query := fmt.Sprintf("SELECT COUNT(*) FROM %s WHERE picture %s", qualifiedTableName, condition)
-
-	var count int
-	err = db.GetContext(ctx, &count, query)
-	if err != nil {
-		return 0, &types.DatabaseError{Operation: fmt.Sprintf("tellen van %s", table), Err: err}
-	}
-
-	return count, nil
-}
-
-// UpdateEntityImage updates the image for an artist or track entity.
-func UpdateEntityImage(ctx context.Context, db DB, schema string, table types.Table, id string, imageData []byte) error {
-	qualifiedTableName, err := types.QualifiedTable(schema, table)
-	if err != nil {
-		return types.NewValidationError("table", fmt.Sprintf("ongeldige tabel configuratie: %v", err))
-	}
-	label := types.LabelForTable(table)
-	idCol := types.IDColumnForTable(table)
-
-	query := fmt.Sprintf("UPDATE %s SET picture = $1 WHERE %s = $2", qualifiedTableName, idCol)
-
-	_, err = db.ExecContext(ctx, query, imageData, id)
-	if err != nil {
-		return &types.DatabaseError{Operation: fmt.Sprintf("bijwerken van %s", label), Err: err}
-	}
-	return nil
-}
-
-// DeleteEntityImage removes the image for an artist or track entity.
-func DeleteEntityImage(ctx context.Context, db DB, schema string, table types.Table, id string) error {
-	qualifiedTableName, err := types.QualifiedTable(schema, table)
-	if err != nil {
-		return types.NewValidationError("table", fmt.Sprintf("ongeldige tabel configuratie: %v", err))
-	}
-	label := types.LabelForTable(table)
-	idCol := types.IDColumnForTable(table)
-
-	query := fmt.Sprintf("UPDATE %s SET picture = NULL WHERE %s = $1", qualifiedTableName, idCol)
-
-	result, err := db.ExecContext(ctx, query, id)
-	if err != nil {
-		return &types.DatabaseError{Operation: fmt.Sprintf("verwijderen van %s-afbeelding", label), Err: err}
-	}
-
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return &types.DatabaseError{Operation: fmt.Sprintf("verwijderen van %s-afbeelding", label), Err: err}
-	}
-
-	if rowsAffected == 0 {
-		return types.NewNotFoundError(label+"-afbeelding", id)
-	}
-
-	return nil
-}
-
 const artistDetailsQuery = `
 	SELECT
 		artistid,
@@ -181,46 +112,7 @@ func getEntityByID[T any](ctx context.Context, db DB, query, id, label, operatio
 	if err := db.GetContext(ctx, &entity, query, id); err == sql.ErrNoRows {
 		return nil, types.NewNotFoundError(label, id)
 	} else if err != nil {
-		return nil, &types.DatabaseError{Operation: operation, Err: err}
+		return nil, &types.OperationError{Operation: operation, Err: err}
 	}
 	return &entity, nil
-}
-
-// GetArtistByID retrieves complete artist details by UUID.
-func GetArtistByID(ctx context.Context, db DB, schema, artistID string) (*ArtistDetails, error) {
-	query := fmt.Sprintf(artistDetailsQuery, schema)
-	return getEntityByID[ArtistDetails](ctx, db, query, artistID, "artiest", "ophalen artiest")
-}
-
-// GetTrackByID retrieves complete track details by UUID.
-func GetTrackByID(ctx context.Context, db DB, schema, trackID string) (*TrackDetails, error) {
-	query := fmt.Sprintf(trackDetailsQuery, schema)
-	return getEntityByID[TrackDetails](ctx, db, query, trackID, "track", "ophalen track")
-}
-
-// GetEntityImage retrieves the image for an artist or track entity.
-func GetEntityImage(ctx context.Context, db DB, schema string, table types.Table, id string) ([]byte, error) {
-	qualifiedTableName, err := types.QualifiedTable(schema, table)
-	if err != nil {
-		return nil, types.NewValidationError("table", fmt.Sprintf("ongeldige tabel configuratie: %v", err))
-	}
-	label := types.LabelForTable(table)
-	idCol := types.IDColumnForTable(table)
-
-	query := fmt.Sprintf("SELECT picture FROM %s WHERE %s = $1", qualifiedTableName, idCol)
-
-	var imageData []byte
-	err = db.GetContext(ctx, &imageData, query, id)
-
-	if err == sql.ErrNoRows {
-		return nil, types.NewNotFoundError(label, id)
-	}
-	if err != nil {
-		return nil, &types.DatabaseError{Operation: fmt.Sprintf("ophalen %s afbeelding", label), Err: err}
-	}
-	if imageData == nil {
-		return nil, types.NewNoImageError(label, id)
-	}
-
-	return imageData, nil
 }

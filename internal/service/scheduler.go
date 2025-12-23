@@ -64,7 +64,7 @@ func (s *BackupScheduler) runBackup() {
 	defer cancel()
 
 	cfg := s.service.Config().Backup
-	result, err := s.service.CreateBackup(ctx, BackupRequest{
+	result, err := s.service.Backup.Create(ctx, BackupRequest{
 		Format:      cfg.GetDefaultFormat(),
 		Compression: cfg.GetDefaultCompression(),
 	})
