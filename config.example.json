@@ -32,7 +32,6 @@
     "path": "./backups",
     "retention_days": 30,
     "max_backups": 10,
-    "default_format": "custom",
     "default_compression": 9,
     "timeout_minutes": 30,
     "pg_dump_path": "",

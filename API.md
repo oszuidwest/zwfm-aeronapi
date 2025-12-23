@@ -680,11 +680,7 @@ Backups worden asynchroon uitgevoerd:
 3. **Backup downloaden:** `GET /api/db/backups/{filename}` → download het bestand
 
 **Automatische validatie:**
-Na het aanmaken van een backup wordt deze automatisch gevalideerd:
-- **Custom format (.dump):** Validatie via `pg_restore --list` (controleert TOC en checksums)
-- **Plain format (.sql):** Controle op PostgreSQL dump header/footer markers
-
-Alleen gevalideerde backups worden als succesvol gemarkeerd en naar S3 gesynchroniseerd.
+Na het aanmaken van een backup wordt deze automatisch gevalideerd via `pg_restore --list` (controleert TOC en checksums). Alleen gevalideerde backups worden als succesvol gemarkeerd en naar S3 gesynchroniseerd.
 
 Deze aanpak biedt voordelen:
 - Request retourneert direct (geen timeout issues)
@@ -784,14 +780,12 @@ Start een nieuwe database backup op de achtergrond.
 **Request Body:**
 ```json
 {
-  "format": "custom",
   "compression": 9
 }
 ```
 
 **Parameters:**
-- `format` (optioneel): `"custom"` (binair, standaard) of `"plain"` (SQL-tekst)
-- `compression` (optioneel): Compressieniveau 0-9 (standaard: 9, alleen voor custom format)
+- `compression` (optioneel): Compressieniveau 0-9 (standaard: 9)
 
 **Response:** `202 Accepted`
 ```json
@@ -913,14 +907,12 @@ Verkrijg een overzicht van alle beschikbare backups.
   "backups": [
     {
       "filename": "aeron-backup-2025-12-22-143000.dump",
-      "format": "custom",
       "size_bytes": 52428800,
       "size": "50.0 MB",
       "created_at": "2025-12-22T14:30:00Z"
     },
     {
-      "filename": "aeron-backup-2025-12-21-143000.sql",
-      "format": "plain",
+      "filename": "aeron-backup-2025-12-21-143000.dump",
       "size_bytes": 125829120,
       "size": "120.0 MB",
       "created_at": "2025-12-21T14:30:00Z"
@@ -942,7 +934,7 @@ Download een specifiek backup bestand.
 - `filename` (pad, vereist): Naam van het backup bestand
 
 **Response:** `200 OK`
-- Content-Type: `application/octet-stream` of `application/sql`
+- Content-Type: `application/octet-stream`
 - Content-Disposition: `attachment; filename=...`
 - Binaire backup data
 
@@ -995,7 +987,6 @@ Valideer de integriteit van een bestaand backup bestand. Handig voor het control
 ```json
 {
   "filename": "aeron-backup-2025-12-22-143000.dump",
-  "format": "custom",
   "valid": true
 }
 ```
@@ -1004,7 +995,6 @@ Valideer de integriteit van een bestaand backup bestand. Handig voor het control
 ```json
 {
   "filename": "aeron-backup-2025-12-22-143000.dump",
-  "format": "custom",
   "valid": false,
   "error": "backup validatie: bestand is corrupt of onleesbaar: pg_restore: error: ..."
 }
@@ -1017,11 +1007,7 @@ Valideer de integriteit van een bestaand backup bestand. Handig voor het control
 }
 ```
 
-**Validatiemethode per format:**
-| Format | Methode |
-|--------|---------|
-| `custom` (.dump) | `pg_restore --list` - valideert TOC en interne checksums |
-| `plain` (.sql) | Controle op PostgreSQL dump header/footer markers |
+Validatie gebeurt via `pg_restore --list` die de TOC en interne checksums controleert.
 
 ---
 
@@ -1225,7 +1211,6 @@ Het gedrag van de API kan worden geconfigureerd via `config.json`:
     "path": "./backups",
     "retention_days": 30,
     "max_backups": 10,
-    "default_format": "custom",
     "default_compression": 9,
     "timeout_minutes": 30,
     "pg_dump_path": "",

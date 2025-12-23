@@ -190,7 +190,6 @@ jobs:
               "path": "/tmp/backups",
               "retention_days": 30,
               "max_backups": 5,
-              "default_format": "custom",
               "default_compression": 9
             }
           }
@@ -808,15 +807,15 @@ jobs:
             exit 1
           fi
 
-      - name: "Backup: Create async (custom format)"
+      - name: "Backup: Create async"
         if: matrix.suite == 'backup'
         run: |
-          echo "POST /api/db/backup (format=custom, compression=6)"
+          echo "POST /api/db/backup (compression=6)"
           HTTP_CODE=$(curl -s -o /tmp/backup_response.json -w "%{http_code}" -X POST \
             -H "X-API-Key: ${{ env.API_KEY }}" \
             -H 'Content-Type: application/json' \
             http://localhost:${{ env.API_PORT }}/api/db/backup \
-            -d '{"format": "custom", "compression": 6}')
+            -d '{"compression": 6}')
           RESPONSE=$(cat /tmp/backup_response.json)
           echo "HTTP status: $HTTP_CODE (verwacht: 202)"
           echo "Response: $RESPONSE"
@@ -866,9 +865,8 @@ jobs:
           RESPONSE=$(curl -s -H "X-API-Key: ${{ env.API_KEY }}" \
             "http://localhost:${{ env.API_PORT }}/api/db/backups/${{ env.BACKUP_FILENAME }}/validate")
           VALID=$(echo "$RESPONSE" | jq -r '.data.valid')
-          FORMAT=$(echo "$RESPONSE" | jq -r '.data.format')
           if [ "$VALID" = "true" ]; then
-            echo "On-demand validatie OK (format: $FORMAT)"
+            echo "On-demand validatie OK"
           else
             echo "::error::Validatie zou moeten slagen"
             echo "Response: $RESPONSE"
@@ -895,7 +893,7 @@ jobs:
           curl -s -X POST -H "X-API-Key: ${{ env.API_KEY }}" \
             -H 'Content-Type: application/json' \
             http://localhost:${{ env.API_PORT }}/api/db/backup \
-            -d '{"format": "plain"}' > /dev/null
+            -d '{}' > /dev/null
 
           # Poll status en probeer tweede backup zodra eerste draait
           TESTED=false
@@ -906,7 +904,7 @@ jobs:
               RESPONSE=$(curl -s -X POST -H "X-API-Key: ${{ env.API_KEY }}" \
                 -H 'Content-Type: application/json' \
                 http://localhost:${{ env.API_PORT }}/api/db/backup \
-                -d '{"format": "plain"}')
+                -d '{}')
               SUCCESS=$(echo "$RESPONSE" | jq -r '.success')
               ERROR=$(echo "$RESPONSE" | jq -r '.error')
               if [ "$SUCCESS" = "false" ] && echo "$ERROR" | grep -q "al bezig"; then
@@ -1009,22 +1007,6 @@ jobs:
             echo "Correct: niet-bestaande backup geeft 404"
           else
             echo "::error::Verwachtte HTTP 404, kreeg $HTTP_CODE"
-            exit 1
-          fi
-
-      - name: "Backup: Invalid format rejected"
-        if: matrix.suite == 'backup'
-        run: |
-          echo "POST /api/db/backup (format=invalid)"
-          RESPONSE=$(curl -s -X POST -H "X-API-Key: ${{ env.API_KEY }}" \
-            -H 'Content-Type: application/json' \
-            http://localhost:${{ env.API_PORT }}/api/db/backup \
-            -d '{"format": "invalid"}')
-          SUCCESS=$(echo "$RESPONSE" | jq -r '.success')
-          if [ "$SUCCESS" = "false" ]; then
-            echo "Correct: ongeldig format wordt geweigerd"
-          else
-            echo "::error::Ongeldig format zou geweigerd moeten worden"
             exit 1
           fi
 
@@ -1271,7 +1253,6 @@ jobs:
               "path": "/tmp/backups",
               "retention_days": 30,
               "max_backups": 5,
-              "default_format": "custom",
               "default_compression": 6,
               "s3": {
                 "enabled": true,
@@ -1318,7 +1299,7 @@ jobs:
             -H "X-API-Key: ${{ env.API_KEY }}" \
             -H 'Content-Type: application/json' \
             http://localhost:${{ env.API_PORT }}/api/db/backup \
-            -d '{"format": "custom", "compression": 6}')
+            -d '{"compression": 6}')
 
           if [ "$HTTP_CODE" != "202" ]; then
             echo "::error::Verwachtte HTTP 202, kreeg $HTTP_CODE"

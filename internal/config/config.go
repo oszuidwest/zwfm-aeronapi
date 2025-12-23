@@ -75,7 +75,6 @@ type BackupConfig struct {
 	Path               string          `json:"path"`
 	RetentionDays      int             `json:"retention_days"`
 	MaxBackups         int             `json:"max_backups"`
-	DefaultFormat      string          `json:"default_format"`
 	DefaultCompression int             `json:"default_compression"`
 	TimeoutMinutes     int             `json:"timeout_minutes"`
 	PgDumpPath         string          `json:"pg_dump_path"`    // Custom path to pg_dump, empty = auto-detect
@@ -110,7 +109,6 @@ const (
 	DefaultDeadTupleThreshold        = 10000
 	DefaultBackupRetentionDays       = 30
 	DefaultBackupMaxBackups          = 10
-	DefaultBackupFormat              = "custom"
 	DefaultBackupCompression         = 9
 	DefaultBackupPath                = "./backups"
 	DefaultBackupTimeoutMinutes      = 30
@@ -166,12 +164,7 @@ func (c *BackupConfig) GetMaxBackups() int {
 	return cmp.Or(c.MaxBackups, DefaultBackupMaxBackups)
 }
 
-// GetDefaultFormat returns the pg_dump format ("custom" or "plain").
-func (c *BackupConfig) GetDefaultFormat() string {
-	return cmp.Or(c.DefaultFormat, DefaultBackupFormat)
-}
-
-// GetDefaultCompression returns the compression level (0-9) for custom format backups.
+// GetDefaultCompression returns the compression level (0-9) for backups.
 func (c *BackupConfig) GetDefaultCompression() int {
 	return min(cmp.Or(c.DefaultCompression, DefaultBackupCompression), 9)
 }

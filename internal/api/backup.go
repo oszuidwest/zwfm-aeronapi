@@ -4,7 +4,6 @@ package api
 import (
 	"encoding/json"
 	"net/http"
-	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/oszuidwest/zwfm-aerontoolbox/internal/service"
@@ -65,13 +64,7 @@ func (s *Server) handleDownloadBackupFile(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Determine content type
-	w.Header().Del("Content-Type")
-	if strings.HasSuffix(filename, ".dump") {
-		w.Header().Set("Content-Type", "application/octet-stream")
-	} else {
-		w.Header().Set("Content-Type", "application/sql")
-	}
+	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Disposition", "attachment; filename="+filename)
 
 	http.ServeFile(w, r, filePath)
