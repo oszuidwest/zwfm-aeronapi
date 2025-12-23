@@ -33,6 +33,10 @@ type BackupService struct {
 	wg         sync.WaitGroup
 	running    atomic.Bool
 
+	// Paths to required external tools, resolved at startup
+	pgDumpPath    string
+	pgRestorePath string
+
 	statusMu   sync.RWMutex
 	lastStatus *BackupStatus
 }
@@ -63,6 +67,19 @@ func newBackupService(repo *database.Repository, cfg *config.Config) (*BackupSer
 	}
 
 	if cfg.Backup.Enabled {
+		// Resolve required external tools at startup
+		pgDumpPath, err := resolveToolPath(cfg.Backup.PgDumpPath, "pg_dump")
+		if err != nil {
+			return nil, err
+		}
+		svc.pgDumpPath = pgDumpPath
+
+		pgRestorePath, err := resolveToolPath(cfg.Backup.PgRestorePath, "pg_restore")
+		if err != nil {
+			return nil, err
+		}
+		svc.pgRestorePath = pgRestorePath
+
 		backupPath := cfg.Backup.GetPath()
 		if err := os.MkdirAll(backupPath, 0o750); err != nil {
 			return nil, types.NewConfigError("backup.path", fmt.Sprintf("backup directory niet toegankelijk: %v", err))
@@ -119,19 +136,29 @@ type BackupListResponse struct {
 
 var safeBackupFilenamePattern = regexp.MustCompile(`^[a-zA-Z0-9_\-.]+$`)
 
+// resolveToolPath resolves the path to an external tool.
+// If customPath is provided, it validates and returns that path.
+// Otherwise, it searches for the tool in PATH.
+func resolveToolPath(customPath, toolName string) (string, error) {
+	if customPath != "" {
+		if _, err := os.Stat(customPath); err != nil {
+			return "", types.NewConfigError(toolName, fmt.Sprintf("%s niet gevonden op pad: %s", toolName, customPath))
+		}
+		return customPath, nil
+	}
+
+	path, err := exec.LookPath(toolName)
+	if err != nil {
+		return "", types.NewConfigError(toolName, fmt.Sprintf("%s niet gevonden in PATH", toolName))
+	}
+	return path, nil
+}
+
 func (s *BackupService) checkEnabled() error {
 	if !s.config.Backup.Enabled || s.backupRoot == nil {
 		return types.NewConfigError("backup.enabled", "backup functionaliteit is niet ingeschakeld")
 	}
 	return nil
-}
-
-func findPgDump() (string, error) {
-	path, err := exec.LookPath("pg_dump")
-	if err != nil {
-		return "", types.NewConfigError("pg_dump", "postgresql-client niet geïnstalleerd")
-	}
-	return path, nil
 }
 
 func validateBackupFilename(filename string) error {
@@ -242,9 +269,6 @@ func (s *BackupService) Start(req BackupRequest) error {
 	if err := s.checkEnabled(); err != nil {
 		return err
 	}
-	if _, err := findPgDump(); err != nil {
-		return err
-	}
 	if _, _, err := s.validateRequest(req); err != nil {
 		return err
 	}
@@ -288,12 +312,6 @@ func (s *BackupService) execute(ctx context.Context, req BackupRequest) error {
 		return err
 	}
 
-	pgDumpPath, err := findPgDump()
-	if err != nil {
-		s.setStatusDone(false, "", err.Error())
-		return err
-	}
-
 	format, compression, err := s.validateRequest(req)
 	if err != nil {
 		s.setStatusDone(false, "", err.Error())
@@ -309,7 +327,7 @@ func (s *BackupService) execute(ctx context.Context, req BackupRequest) error {
 	s.setStatusFilename(filename)
 	slog.Info("Backup gestart", "filename", filename, "format", format)
 
-	fileInfo, duration, err := s.executePgDump(ctx, pgDumpPath, filename, fullPath, args)
+	fileInfo, duration, err := s.executePgDump(ctx, s.pgDumpPath, filename, fullPath, args)
 	if err != nil {
 		s.setStatusDone(false, filename, err.Error())
 		return err
@@ -321,7 +339,7 @@ func (s *BackupService) execute(ctx context.Context, req BackupRequest) error {
 	validateCtx, validateCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer validateCancel()
 
-	if err := validateBackup(validateCtx, fullPath, format); err != nil {
+	if err := validateBackup(validateCtx, fullPath, format, s.pgRestorePath); err != nil {
 		slog.Error("Backup validatie mislukt", "filename", filename, "error", err)
 		s.setStatusDone(false, filename, err.Error())
 		return err
@@ -566,7 +584,7 @@ func (s *BackupService) Validate(filename string) (*ValidationResult, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	if err := validateBackup(ctx, fullPath, format); err != nil {
+	if err := validateBackup(ctx, fullPath, format, s.pgRestorePath); err != nil {
 		result.Valid = false
 		result.Error = err.Error()
 	} else {

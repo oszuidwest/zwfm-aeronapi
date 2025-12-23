@@ -35,6 +35,8 @@
     "default_format": "custom",
     "default_compression": 9,
     "timeout_minutes": 30,
+    "pg_dump_path": "",
+    "pg_restore_path": "",
     "scheduler": {
       "enabled": false,
       "schedule": "0 3 * * *",
