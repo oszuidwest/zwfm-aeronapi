@@ -118,6 +118,7 @@ jobs:
           - tracks
           - maintenance
           - backup
+          - system-validation
           - s3
           - edge-cases
 
@@ -136,7 +137,11 @@ jobs:
       - name: Install test dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y jq imagemagick postgresql-client
+          sudo apt-get install -y jq imagemagick
+          # Install postgresql-client for all suites except system-validation
+          if [ "${{ matrix.suite }}" != "system-validation" ]; then
+            sudo apt-get install -y postgresql-client
+          fi
 
       - name: Start test database
         run: |
@@ -1052,6 +1057,149 @@ jobs:
             echo "Correct: path traversal wordt geblokkeerd"
           else
             echo "::error::Path traversal zou geblokkeerd moeten worden!"
+            exit 1
+          fi
+
+      # ==================== SYSTEM VALIDATION TESTS ====================
+      - name: "System-Validation: Startup fails without pg_dump"
+        if: matrix.suite == 'system-validation'
+        run: |
+          echo "Testen of applicatie weigert te starten zonder pg_dump..."
+
+          # Verberg pg_dump tijdelijk door binary te hernoemen
+          PG_DUMP_PATH=$(which pg_dump)
+          echo "pg_dump gevonden op: $PG_DUMP_PATH"
+          sudo mv "$PG_DUMP_PATH" "${PG_DUMP_PATH}.bak"
+
+          cat > test_backup_enabled.json << 'EOF'
+          {
+            "database": { "host": "localhost", "port": "5433", "name": "aeron_db", "user": "aeron", "password": "aeron123", "schema": "aeron", "sslmode": "disable" },
+            "image": { "target_width": 640, "target_height": 640, "quality": 85 },
+            "backup": { "enabled": true, "path": "/tmp/backups" }
+          }
+          EOF
+          mkdir -p /tmp/backups
+
+          # Applicatie zou moeten falen met pg_dump error
+          OUTPUT=$(./zwfm-aerontoolbox -config=test_backup_enabled.json -port=8891 2>&1 || true)
+          echo "Output: $OUTPUT"
+
+          # Herstel pg_dump
+          sudo mv "${PG_DUMP_PATH}.bak" "$PG_DUMP_PATH"
+
+          if echo "$OUTPUT" | grep -q "pg_dump niet gevonden"; then
+            echo "Correct: applicatie weigert te starten zonder pg_dump"
+          else
+            echo "::error::Applicatie zou moeten falen met 'pg_dump niet gevonden' error"
+            exit 1
+          fi
+
+      - name: "System-Validation: Startup succeeds with backup disabled"
+        if: matrix.suite == 'system-validation'
+        run: |
+          echo "Testen of applicatie start met backup uitgeschakeld (geen pg_dump nodig)..."
+
+          # Verberg pg_dump tijdelijk
+          PG_DUMP_PATH=$(which pg_dump)
+          sudo mv "$PG_DUMP_PATH" "${PG_DUMP_PATH}.bak"
+
+          cat > test_backup_disabled.json << 'EOF'
+          {
+            "database": { "host": "localhost", "port": "5433", "name": "aeron_db", "user": "aeron", "password": "aeron123", "schema": "aeron", "sslmode": "disable" },
+            "image": { "target_width": 640, "target_height": 640, "quality": 85 },
+            "backup": { "enabled": false }
+          }
+          EOF
+
+          ./zwfm-aerontoolbox -config=test_backup_disabled.json -port=8892 &
+          PID=$!
+          sleep 3
+
+          # Herstel pg_dump
+          sudo mv "${PG_DUMP_PATH}.bak" "$PG_DUMP_PATH"
+
+          # Check of applicatie draait
+          if curl -sf http://localhost:8892/api/health > /dev/null 2>&1; then
+            echo "Correct: applicatie start zonder pg_dump als backup uitgeschakeld is"
+            kill $PID 2>/dev/null || true
+          else
+            echo "::error::Applicatie zou moeten starten met backup.enabled=false"
+            kill $PID 2>/dev/null || true
+            exit 1
+          fi
+
+      - name: "System-Validation: Custom pg_dump path validated"
+        if: matrix.suite == 'system-validation'
+        run: |
+          echo "Testen of custom pg_dump pad wordt gevalideerd..."
+          cat > test_custom_path.json << 'EOF'
+          {
+            "database": { "host": "localhost", "port": "5433", "name": "aeron_db", "user": "aeron", "password": "aeron123", "schema": "aeron", "sslmode": "disable" },
+            "image": { "target_width": 640, "target_height": 640, "quality": 85 },
+            "backup": { "enabled": true, "path": "/tmp/backups", "pg_dump_path": "/nonexistent/pg_dump" }
+          }
+          EOF
+
+          OUTPUT=$(./zwfm-aerontoolbox -config=test_custom_path.json -port=8893 2>&1 || true)
+          echo "Output: $OUTPUT"
+
+          if echo "$OUTPUT" | grep -q "pg_dump niet gevonden op pad"; then
+            echo "Correct: custom pad wordt gevalideerd"
+          else
+            echo "::error::Custom pad zou gevalideerd moeten worden"
+            exit 1
+          fi
+
+      - name: "System-Validation: Custom pg_restore path validated"
+        if: matrix.suite == 'system-validation'
+        run: |
+          echo "Testen of custom pg_restore pad wordt gevalideerd..."
+
+          cat > test_custom_restore.json << 'EOF'
+          {
+            "database": { "host": "localhost", "port": "5433", "name": "aeron_db", "user": "aeron", "password": "aeron123", "schema": "aeron", "sslmode": "disable" },
+            "image": { "target_width": 640, "target_height": 640, "quality": 85 },
+            "backup": { "enabled": true, "path": "/tmp/backups", "pg_restore_path": "/nonexistent/pg_restore" }
+          }
+          EOF
+
+          OUTPUT=$(./zwfm-aerontoolbox -config=test_custom_restore.json -port=8894 2>&1 || true)
+          echo "Output: $OUTPUT"
+
+          if echo "$OUTPUT" | grep -q "pg_restore niet gevonden op pad"; then
+            echo "Correct: custom pg_restore pad wordt gevalideerd"
+          else
+            echo "::error::Custom pg_restore pad zou gevalideerd moeten worden"
+            exit 1
+          fi
+
+      - name: "System-Validation: Valid custom paths work"
+        if: matrix.suite == 'system-validation'
+        run: |
+          echo "Testen of geldige custom paden werken..."
+          PG_DUMP_PATH=$(which pg_dump)
+          PG_RESTORE_PATH=$(which pg_restore)
+          echo "pg_dump: $PG_DUMP_PATH"
+          echo "pg_restore: $PG_RESTORE_PATH"
+
+          cat > test_valid_paths.json << EOF
+          {
+            "database": { "host": "localhost", "port": "5433", "name": "aeron_db", "user": "aeron", "password": "aeron123", "schema": "aeron", "sslmode": "disable" },
+            "image": { "target_width": 640, "target_height": 640, "quality": 85 },
+            "backup": { "enabled": true, "path": "/tmp/backups", "pg_dump_path": "$PG_DUMP_PATH", "pg_restore_path": "$PG_RESTORE_PATH" }
+          }
+          EOF
+
+          ./zwfm-aerontoolbox -config=test_valid_paths.json -port=8895 &
+          PID=$!
+          sleep 3
+
+          if curl -sf http://localhost:8895/api/health > /dev/null 2>&1; then
+            echo "Correct: applicatie start met geldige custom paden"
+            kill $PID 2>/dev/null || true
+          else
+            echo "::error::Applicatie zou moeten starten met geldige custom paden"
+            kill $PID 2>/dev/null || true
             exit 1
           fi
 

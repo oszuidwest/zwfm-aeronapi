@@ -14,6 +14,30 @@ Een **onofficiële** REST API voor het Aeron-radioautomatiseringssysteem met too
 | **Database-onderhoud** | Health monitoring, VACUUM en ANALYZE operaties |
 | **Backup-management** | Maak, valideer, download en beheer database backups |
 
+## Systeemvereisten
+
+| Vereiste | Beschrijving |
+|----------|--------------|
+| **Go 1.25+** | Alleen nodig bij bouwen vanaf broncode |
+| **PostgreSQL client tools** | `pg_dump` en `pg_restore` - alleen vereist als backup functionaliteit is ingeschakeld |
+
+De PostgreSQL client tools worden bij het opstarten gevalideerd wanneer `backup.enabled: true`. Zonder deze tools weigert de applicatie te starten met een duidelijke foutmelding.
+
+**Installatie PostgreSQL client tools:**
+```bash
+# Debian/Ubuntu
+apt-get install postgresql-client
+
+# Alpine Linux (Docker)
+apk add postgresql16-client
+
+# macOS
+brew install libpq
+
+# Windows
+# Installeer via PostgreSQL installer of: choco install postgresql
+```
+
 ## Installatie
 
 ### Docker (aanbevolen)

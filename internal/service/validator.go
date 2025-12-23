@@ -14,19 +14,14 @@ import (
 )
 
 // validateBackup validates backup file integrity based on format.
-func validateBackup(ctx context.Context, filePath, format string) error {
+func validateBackup(ctx context.Context, filePath, format, pgRestorePath string) error {
 	if format == "custom" {
-		return validateWithPgRestore(ctx, filePath)
+		return validateWithPgRestore(ctx, filePath, pgRestorePath)
 	}
 	return validatePlainSQL(ctx, filePath)
 }
 
-func validateWithPgRestore(ctx context.Context, filePath string) error {
-	pgRestorePath, err := exec.LookPath("pg_restore")
-	if err != nil {
-		return types.NewConfigError("pg_restore", "pg_restore niet gevonden - installeer postgresql-client")
-	}
-
+func validateWithPgRestore(ctx context.Context, filePath, pgRestorePath string) error {
 	cmd := exec.CommandContext(ctx, pgRestorePath, "--list", filePath)
 	output, err := cmd.CombinedOutput()
 	if err != nil {

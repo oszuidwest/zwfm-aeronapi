@@ -78,6 +78,8 @@ type BackupConfig struct {
 	DefaultFormat      string          `json:"default_format"`
 	DefaultCompression int             `json:"default_compression"`
 	TimeoutMinutes     int             `json:"timeout_minutes"`
+	PgDumpPath         string          `json:"pg_dump_path"`    // Custom path to pg_dump, empty = auto-detect
+	PgRestorePath      string          `json:"pg_restore_path"` // Custom path to pg_restore, empty = auto-detect
 	Scheduler          SchedulerConfig `json:"scheduler"`
 	S3                 S3Config        `json:"s3"`
 }
