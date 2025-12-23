@@ -52,6 +52,7 @@ De Aeron Toolbox API biedt RESTful-endpoints voor het Aeron-radioautomatiserings
 | `/api/db/analyze` | POST | ANALYZE uitvoeren op tabellen | Ja |
 | **Backups** |
 | `/api/db/backup` | POST | Nieuwe backup aanmaken | Ja |
+| `/api/db/backup/status` | GET | Backup status opvragen | Ja |
 | `/api/db/backups` | GET | Lijst van alle backups | Ja |
 | `/api/db/backups/{filename}` | GET | Specifieke backup downloaden | Ja |
 | `/api/db/backups/{filename}` | DELETE | Backup verwijderen | Ja |
