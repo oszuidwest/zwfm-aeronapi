@@ -82,8 +82,8 @@ type MaintenanceResult struct {
 	SkippedReason string  `json:"skipped_reason,omitempty"`
 }
 
-// VacuumResponse represents the overall result of vacuum operations.
-type VacuumResponse struct {
+// MaintenanceResponse represents the overall result of maintenance operations (vacuum/analyze).
+type MaintenanceResponse struct {
 	DryRun        bool                `json:"dry_run"`
 	TablesTotal   int                 `json:"tables_total"`
 	TablesSuccess int                 `json:"tables_success"`
@@ -340,8 +340,8 @@ func (mctx *maintenanceContext) selectTablesToProcess(requestedTables []string, 
 
 // Vacuum performs VACUUM on tables in the schema.
 // If no tables are specified, it automatically selects tables with high bloat or many dead tuples.
-func (s *MaintenanceService) Vacuum(ctx context.Context, opts VacuumOptions) (*VacuumResponse, error) {
-	response := &VacuumResponse{
+func (s *MaintenanceService) Vacuum(ctx context.Context, opts VacuumOptions) (*MaintenanceResponse, error) {
+	response := &MaintenanceResponse{
 		DryRun:     opts.DryRun,
 		ExecutedAt: time.Now(),
 		Results:    []MaintenanceResult{},
@@ -430,8 +430,8 @@ func (s *MaintenanceService) executeVacuum(ctx context.Context, tableName string
 // --- Analyze operations ---
 
 // Analyze performs ANALYZE on tables in the schema.
-func (s *MaintenanceService) Analyze(ctx context.Context, tableNames []string) (*VacuumResponse, error) {
-	response := &VacuumResponse{
+func (s *MaintenanceService) Analyze(ctx context.Context, tableNames []string) (*MaintenanceResponse, error) {
+	response := &MaintenanceResponse{
 		DryRun:     false,
 		ExecutedAt: time.Now(),
 		Results:    []MaintenanceResult{},
