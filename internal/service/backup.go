@@ -64,7 +64,7 @@ type BackupListResponse struct {
 	TotalCount int          `json:"total_count"`
 }
 
-var safeBackupFilenamePattern = regexp.MustCompile(`^[a-zA-Z0-9_\-\.]+$`)
+var safeBackupFilenamePattern = regexp.MustCompile(`^[a-zA-Z0-9_\-.]+$`)
 
 func validateBackupFilename(filename string) error {
 	if !safeBackupFilenamePattern.MatchString(filename) {
@@ -94,64 +94,39 @@ func (s *AeronService) buildPgDumpArgs(format string, compression int) []string 
 	return args
 }
 
-// CreateBackup creates a database backup using pg_dump.
-func (s *AeronService) CreateBackup(ctx context.Context, req BackupRequest) (*BackupResult, error) {
-	if !s.config.Backup.Enabled || s.backupRoot == nil {
-		return nil, &types.ConfigurationError{Field: "backup.enabled", Message: "backup functionaliteit is niet ingeschakeld"}
-	}
-
-	pgDumpPath, err := exec.LookPath("pg_dump")
-	if err != nil {
-		return nil, &types.ConfigurationError{Field: "pg_dump", Message: "postgresql-client niet geïnstalleerd"}
-	}
-
-	format := strings.ToLower(req.Format)
+// validateBackupRequest validates and normalizes backup request parameters.
+func (s *AeronService) validateBackupRequest(req BackupRequest) (format string, compression int, err error) {
+	format = strings.ToLower(req.Format)
 	if format == "" {
 		format = s.config.Backup.GetDefaultFormat()
 	}
 	if format != "custom" && format != "plain" {
-		return nil, types.NewValidationError("format", fmt.Sprintf("ongeldig backup formaat: %s (gebruik 'custom' of 'plain')", format))
+		return "", 0, types.NewValidationError("format", fmt.Sprintf("ongeldig backup formaat: %s (gebruik 'custom' of 'plain')", format))
 	}
 
-	compression := req.Compression
+	compression = req.Compression
 	if compression == 0 {
 		compression = s.config.Backup.GetDefaultCompression()
 	}
 	if compression < 0 || compression > 9 {
-		return nil, types.NewValidationError("compression", fmt.Sprintf("ongeldige compressie waarde: %d (gebruik 0-9)", compression))
+		return "", 0, types.NewValidationError("compression", fmt.Sprintf("ongeldige compressie waarde: %d (gebruik 0-9)", compression))
 	}
 
+	return format, compression, nil
+}
+
+// generateBackupFilename creates a timestamped backup filename.
+func generateBackupFilename(format string) string {
 	timestamp := time.Now().Format("2006-01-02-150405")
 	ext := "sql"
 	if format == "custom" {
 		ext = "dump"
 	}
-	filename := fmt.Sprintf("aeron-backup-%s.%s", timestamp, ext)
+	return fmt.Sprintf("aeron-backup-%s.%s", timestamp, ext)
+}
 
-	backupPath := s.config.Backup.GetPath()
-	fullPath := filepath.Join(backupPath, filename)
-
-	args := s.buildPgDumpArgs(format, compression)
-
-	if req.SchemaOnly {
-		args = append(args, "--schema-only")
-	}
-
-	args = append(args, "--file="+fullPath)
-
-	cmdDisplay := fmt.Sprintf("pg_dump %s", strings.Join(args, " "))
-
-	if req.DryRun {
-		return &BackupResult{
-			Filename:  filename,
-			FilePath:  fullPath,
-			Format:    format,
-			DryRun:    true,
-			Command:   cmdDisplay,
-			CreatedAt: time.Now(),
-		}, nil
-	}
-
+// executePgDump runs pg_dump and handles cleanup on failure.
+func (s *AeronService) executePgDump(ctx context.Context, pgDumpPath, filename, fullPath string, args []string) (os.FileInfo, time.Duration, error) {
 	cmd := exec.CommandContext(ctx, pgDumpPath, args...)
 	cmd.Env = append(os.Environ(), "PGPASSWORD="+s.config.Database.Password)
 
@@ -164,16 +139,60 @@ func (s *AeronService) CreateBackup(ctx context.Context, req BackupRequest) (*Ba
 			slog.Warn("Opruimen van mislukte backup gefaald", "filename", filename, "error", removeErr)
 		}
 		slog.Error("Backup mislukt", "error", err, "output", string(output))
-		return nil, &types.BackupError{Operation: "maken", Err: fmt.Errorf("%s", strings.TrimSpace(string(output)))}
+		return nil, 0, &types.BackupError{Operation: "maken", Err: fmt.Errorf("%s", strings.TrimSpace(string(output)))}
 	}
 
 	fileInfo, err := s.backupRoot.Stat(filename)
 	if err != nil {
-		return nil, &types.BackupError{Operation: "maken", Err: fmt.Errorf("backup bestand niet gevonden na creatie: %w", err)}
+		return nil, 0, &types.BackupError{Operation: "maken", Err: fmt.Errorf("backup bestand niet gevonden na creatie: %w", err)}
 	}
 
-	if err := os.Chmod(fullPath, 0600); err != nil {
+	if err := os.Chmod(fullPath, 0o600); err != nil {
 		slog.Warn("Kon bestandspermissies niet instellen", "file", filename, "error", err)
+	}
+
+	return fileInfo, duration, nil
+}
+
+// CreateBackup creates a database backup using pg_dump.
+func (s *AeronService) CreateBackup(ctx context.Context, req BackupRequest) (*BackupResult, error) {
+	if !s.config.Backup.Enabled || s.backupRoot == nil {
+		return nil, &types.ConfigurationError{Field: "backup.enabled", Message: "backup functionaliteit is niet ingeschakeld"}
+	}
+
+	pgDumpPath, err := exec.LookPath("pg_dump")
+	if err != nil {
+		return nil, &types.ConfigurationError{Field: "pg_dump", Message: "postgresql-client niet geïnstalleerd"}
+	}
+
+	format, compression, err := s.validateBackupRequest(req)
+	if err != nil {
+		return nil, err
+	}
+
+	filename := generateBackupFilename(format)
+	fullPath := filepath.Join(s.config.Backup.GetPath(), filename)
+	args := s.buildPgDumpArgs(format, compression)
+
+	if req.SchemaOnly {
+		args = append(args, "--schema-only")
+	}
+	args = append(args, "--file="+fullPath)
+
+	if req.DryRun {
+		return &BackupResult{
+			Filename:  filename,
+			FilePath:  fullPath,
+			Format:    format,
+			DryRun:    true,
+			Command:   fmt.Sprintf("pg_dump %s", strings.Join(args, " ")),
+			CreatedAt: time.Now(),
+		}, nil
+	}
+
+	fileInfo, duration, err := s.executePgDump(ctx, pgDumpPath, filename, fullPath, args)
+	if err != nil {
+		return nil, err
 	}
 
 	slog.Info("Backup succesvol gemaakt",

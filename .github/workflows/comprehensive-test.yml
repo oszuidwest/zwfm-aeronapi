@@ -2,6 +2,8 @@ name: Comprehensive Test
 permissions:
   contents: read
 on:
+  pull_request:
+    branches: [main]
   workflow_call:
     inputs:
       skip_tests:
@@ -15,49 +17,80 @@ on:
         description: 'Skip tests (for edge releases)'
         type: boolean
         default: false
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
-  GO_VERSION: '1.25'  # Also update in test.yml and release.yml
   POSTGRES_USER: aeron
   POSTGRES_PASSWORD: aeron123
   POSTGRES_DB: aeron_db
+  API_PORT: 8888
+  DB_PORT: 5433
+  API_KEY: test-api-key-12345
+  # Known IDs from test fixtures
+  ARTIST_ID: "9e37ff1f-7823-43ce-93d0-12fc1c2edb8b"
+  BLOF_ID: "add55a6e-2068-4114-b82a-e0729881f0be"
+  FAKE_UUID: "00000000-0000-4000-8000-000000000001"
+
 jobs:
-  test:
+  build:
     runs-on: ubuntu-latest
     if: ${{ inputs.skip_tests != true }}
     steps:
-      # ==========================================
-      # SETUP
-      # ==========================================
       - name: Checkout code
         uses: actions/checkout@v6
 
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version-file: 'go.mod'
           cache: true
 
-      - name: Install dependencies
-        run: |
-          go mod download
-          go mod tidy
-          # Installeer benodigde tools voor tests
-          sudo apt-get update
-          sudo apt-get install -y jq imagemagick postgresql-client
+      - name: Download dependencies
+        run: go mod download
 
-      # ==========================================
-      # CODE QUALITY
-      # ==========================================
-      - name: Run formatters and linters
+      - name: Build application
         run: |
-          # Controleer formatting
-          if [ "$(gofmt -s -l . | wc -l)" -gt 0 ]; then
-            echo "De volgende bestanden zijn niet geformatteerd:"
-            gofmt -s -l .
+          go build -ldflags="-X main.Version=test -X main.Commit=${{ github.sha }} -X main.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)" -o zwfm-aerontoolbox .
+          ./zwfm-aerontoolbox -version
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v6
+        with:
+          name: binary
+          path: zwfm-aerontoolbox
+          retention-days: 1
+
+  lint:
+    runs-on: ubuntu-latest
+    if: ${{ inputs.skip_tests != true }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Check formatting (gofmt)
+        run: |
+          UNFORMATTED=$(gofmt -s -l .)
+          if [ -n "$UNFORMATTED" ]; then
+            echo "::error::De volgende bestanden zijn niet correct geformatteerd:"
+            echo "$UNFORMATTED"
             exit 1
           fi
-          # Run go vet
-          go vet ./...
+          echo "Alle bestanden zijn correct geformatteerd"
+
+      - name: Run go vet
+        run: go vet ./...
 
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@v9
@@ -68,57 +101,63 @@ jobs:
       - name: Check for dead code
         run: go run golang.org/x/tools/cmd/deadcode@latest ./...
 
-      # ==========================================
-      # BUILD
-      # ==========================================
-      - name: Build application
-        run: |
-          go build -ldflags="-X main.Version=test -X main.Commit=${{ github.sha }} -X main.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)" -o zwfm-aerontoolbox .
-          ./zwfm-aerontoolbox -version
+      - name: Run govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 
-      # ==========================================
-      # DATABASE SETUP
-      # ==========================================
-      - name: Start test database with Docker Compose
+  integration:
+    needs: build
+    runs-on: ubuntu-latest
+    if: ${{ inputs.skip_tests != true }}
+    strategy:
+      fail-fast: false
+      matrix:
+        suite:
+          - database
+          - api-basic
+          - artists
+          - tracks
+          - maintenance
+          - backup
+          - edge-cases
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Download binary
+        uses: actions/download-artifact@v7
+        with:
+          name: binary
+
+      - name: Make binary executable
+        run: chmod +x ./zwfm-aerontoolbox
+
+      - name: Install test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq imagemagick postgresql-client
+
+      - name: Start test database
         run: |
           cd tests
           docker compose -f docker-compose.test.yml up -d
 
-          # Wacht tot database gereed is
-          for i in {1..10}; do
-            if docker exec aeron-test-db pg_isready -U aeron; then
-              echo "Database is ready!"
+      - name: Wait for database
+        run: |
+          echo "Wachten op database..."
+          for i in {1..30}; do
+            if docker exec aeron-test-db pg_isready -U aeron 2>/dev/null; then
+              sleep 2
               break
             fi
-            echo "Waiting for database..."
             sleep 1
           done
-
-          # Database heeft al mock data geladen vanuit Docker image
-          sleep 5
-
-      - name: Create test images
-        run: |
-          convert -size 100x100 xc:red test_small.png
-          convert -size 2000x2000 xc:blue test_large.png
-          ls -la test_*.png
-
-      - name: Create database reset function
-        run: |
-          # Maak herbruikbare functie voor database reset
-          cat > reset_db.sh << 'EOF'
-          #!/bin/bash
-          echo "Resetting database with fresh mock data..."
-          docker exec aeron-test-db psql -U aeron -d postgres -c "DROP DATABASE IF EXISTS aeron_db;"
-          docker exec aeron-test-db psql -U aeron -d postgres -c "CREATE DATABASE aeron_db;"
-          docker exec aeron-test-db psql -U aeron -d aeron_db -f /docker-entrypoint-initdb.d/01-mock-data.sql
-          echo "Database reset complete"
-          EOF
-          chmod +x reset_db.sh
+          ARTIST_COUNT=$(docker exec aeron-test-db psql -U aeron -d aeron_db -t -c "SELECT COUNT(*) FROM aeron.artist;" 2>/dev/null | tr -d ' ')
+          echo "Database klaar - $ARTIST_COUNT artiesten geladen"
+          [ -n "$ARTIST_COUNT" ] && [ "$ARTIST_COUNT" -gt 0 ]
 
       - name: Create test configuration
         run: |
-          # Test configuratie voor Docker container op poort 5433
           cat > test_config.json << 'EOF'
           {
             "database": {
@@ -139,979 +178,6 @@ jobs:
             "api": {
               "enabled": true,
               "keys": ["test-api-key-12345", "another-test-key-67890"]
-            }
-          }
-          EOF
-
-      # ==========================================
-      # DATABASE INTEGRITEIT TESTS
-      # ==========================================
-      - name: Database Test - Verify initial data setup
-        run: |
-          echo "=== DATABASE INTEGRITEIT TEST ==="
-          echo "Test: Controleer database test data"
-
-          # Controleer database initialisatie
-          echo "Database initialisatie status controleren..."
-          docker exec aeron-test-db psql -U aeron -d aeron_db -c "\dt aeron.*" || true
-
-          # Tel records in database
-          ARTIST_COUNT=$(docker exec aeron-test-db psql -U aeron -d aeron_db -t -c "SELECT COUNT(*) FROM aeron.artist;" | tr -d ' ')
-          TRACK_COUNT=$(docker exec aeron-test-db psql -U aeron -d aeron_db -t -c "SELECT COUNT(*) FROM aeron.track;" | tr -d ' ')
-          ARTISTS_WITH_IMG=$(docker exec aeron-test-db psql -U aeron -d aeron_db -t -c "SELECT COUNT(*) FROM aeron.artist WHERE picture IS NOT NULL;" | tr -d ' ')
-          TRACKS_WITH_IMG=$(docker exec aeron-test-db psql -U aeron -d aeron_db -t -c "SELECT COUNT(*) FROM aeron.track WHERE picture IS NOT NULL;" | tr -d ' ')
-          ARTISTS_WITHOUT_IMG=$(docker exec aeron-test-db psql -U aeron -d aeron_db -t -c "SELECT COUNT(*) FROM aeron.artist WHERE picture IS NULL;" | tr -d ' ')
-
-          echo "Database inhoud:"
-          echo "  Totaal artiesten: $ARTIST_COUNT (verwacht: 1000)"
-          echo "  Artiesten met afbeelding: $ARTISTS_WITH_IMG"
-          echo "  Artiesten zonder afbeelding: $ARTISTS_WITHOUT_IMG"
-          echo "  Totaal tracks: $TRACK_COUNT (verwacht: 1100)"
-          echo "  Tracks met afbeelding: $TRACKS_WITH_IMG"
-
-          # Controleer verwachte aantallen
-          ERRORS=0
-          if [ "$ARTIST_COUNT" -eq 1000 ]; then
-            echo "✓ Verwacht aantal artiesten: 1000"
-          else
-            echo "✗ Onverwacht aantal artiesten - verwacht: 1000, gevonden: $ARTIST_COUNT"
-            ERRORS=$((ERRORS + 1))
-          fi
-
-          if [ "$TRACK_COUNT" -eq 1100 ]; then
-            echo "✓ Verwacht aantal tracks: 1100"
-          else
-            echo "✗ Onverwacht aantal tracks - verwacht: 1100, gevonden: $TRACK_COUNT"
-            ERRORS=$((ERRORS + 1))
-          fi
-
-          # Controleer mix van artiesten met/zonder afbeeldingen
-          if [ "$ARTISTS_WITH_IMG" -gt 0 ] && [ "$ARTISTS_WITHOUT_IMG" -gt 0 ]; then
-            echo "✓ Database bevat mix van artiesten met en zonder afbeeldingen"
-          else
-            echo "✗ Database moet artiesten met én zonder afbeeldingen bevatten"
-            ERRORS=$((ERRORS + 1))
-          fi
-
-          if [ $ERRORS -gt 0 ]; then
-            exit 1
-          fi
-
-      - name: Database Test - Schema exists
-        run: |
-          docker exec aeron-test-db psql -U aeron -d aeron_db \
-            -c "SELECT schema_name FROM information_schema.schemata WHERE schema_name = 'aeron';" | grep -q 'aeron'
-
-      - name: Database Test - Artist table exists
-        run: |
-          docker exec aeron-test-db psql -U aeron -d aeron_db \
-            -c "SELECT table_name FROM information_schema.tables WHERE table_schema = 'aeron' AND table_name = 'artist';" | grep -q 'artist'
-
-      - name: Database Test - Track table exists
-        run: |
-          docker exec aeron-test-db psql -U aeron -d aeron_db \
-            -c "SELECT table_name FROM information_schema.tables WHERE table_schema = 'aeron' AND table_name = 'track';" | grep -q 'track'
-
-      # ==========================================
-      # BASIS API TESTS
-      # ==========================================
-      - name: "=== BASIS API TESTS ==="
-        run: echo "Start basis API tests"
-
-      - name: Reset database before API tests
-        run: ./reset_db.sh
-
-      - name: Start API server
-        run: |
-          ./zwfm-aerontoolbox -config=test_config.json -port=8888 &
-          echo $! > api.pid
-          sleep 3
-
-      - name: API Test - Health check
-        run: |
-          echo "Test: Health endpoint zonder authenticatie"
-          RESPONSE=$(curl -s http://localhost:8888/api/health)
-          if echo "$RESPONSE" | jq -e '.success == true' > /dev/null; then
-            echo "✓ Health endpoint geeft success=true terug"
-          else
-            echo "✗ Verwacht: success=true, gekregen:"
-            echo "   $RESPONSE" | jq .
-            exit 1
-          fi
-
-      - name: API Test - Artists statistics
-        run: |
-          echo "Test: Artists endpoint statistieken"
-          RESPONSE=$(curl -s -H 'X-API-Key: test-api-key-12345' 'http://localhost:8888/api/artists')
-          TOTAL=$(echo "$RESPONSE" | jq '.data.total')
-          WITH_IMAGES=$(echo "$RESPONSE" | jq '.data.with_images')
-          WITHOUT_IMAGES=$(echo "$RESPONSE" | jq '.data.without_images')
-
-          echo "Verwacht: 1000 totaal, mix van met/zonder afbeeldingen"
-          echo "Gekregen: $TOTAL totaal, $WITH_IMAGES met afbeeldingen, $WITHOUT_IMAGES zonder afbeeldingen"
-
-          if [ "$TOTAL" -eq 1000 ] && [ "$WITH_IMAGES" -gt 0 ] && [ "$WITHOUT_IMAGES" -gt 0 ]; then
-            echo "✓ Artists statistieken zijn correct"
-          else
-            echo "✗ Artists statistieken zijn incorrect:"
-            echo "$RESPONSE" | jq .
-            exit 1
-          fi
-
-      - name: API Test - Authentication required
-        run: |
-          echo "Test: Beveiligde endpoints vereisen authenticatie"
-          RESPONSE=$(curl -s 'http://localhost:8888/api/artists')
-          if echo "$RESPONSE" | jq -e '.success == false' > /dev/null; then
-            echo "✓ Request correct geweigerd zonder API key"
-          else
-            echo "✗ API zou request moeten weigeren zonder authenticatie"
-            echo "   Response: $RESPONSE"
-            exit 1
-          fi
-
-      - name: API Test - Method not allowed
-        run: |
-          echo "Test: Niet ondersteunde HTTP methode"
-          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X PUT -H 'X-API-Key: test-api-key-12345' http://localhost:8888/api/artists)
-          if [ "$HTTP_CODE" = "405" ]; then
-            echo "✓ PUT methode geeft correct 405 Method Not Allowed terug"
-          else
-            echo "✗ Verwacht: 405 Method Not Allowed, gekregen: $HTTP_CODE"
-            exit 1
-          fi
-
-      - name: API Test - Playlist endpoint
-        run: |
-          echo "Test: Playlist endpoint"
-          # Update playlist dates naar vandaag
-          docker exec aeron-test-db psql -U aeron -d aeron_db -c "UPDATE aeron.playlistitem SET startdatetime = CURRENT_DATE + (startdatetime::time)" >/dev/null
-
-          RESPONSE=$(curl -s -H 'X-API-Key: test-api-key-12345' http://localhost:8888/api/playlist)
-          SUCCESS=$(echo "$RESPONSE" | jq '.success')
-          BLOCK_COUNT=$(echo "$RESPONSE" | jq '.data | length')
-
-          echo "Response success: $SUCCESS"
-          echo "Playlist blocks: $BLOCK_COUNT"
-          if [ "$SUCCESS" = "true" ] && [ "$BLOCK_COUNT" -gt 0 ]; then
-            echo "✓ Playlist endpoint geeft blocks terug"
-            # Controleer structuur eerste block
-            FIRST_BLOCK=$(echo "$RESPONSE" | jq '.data[0]')
-            if echo "$FIRST_BLOCK" | jq -e 'has("blockid") and has("name") and has("start_time") and
-                                              has("end_time") and has("date") and has("tracks")' > /dev/null; then
-              echo "✓ Playlist blocks hebben correcte structuur"
-              # Check if block has tracks and they have the right structure
-              TRACK_COUNT=$(echo "$FIRST_BLOCK" | jq '.tracks | length')
-              if [ "$TRACK_COUNT" -gt 0 ]; then
-                FIRST_TRACK=$(echo "$FIRST_BLOCK" | jq '.tracks[0]')
-                if echo "$FIRST_TRACK" | jq -e 'has("trackid") and has("tracktitle") and has("artistid") and
-                                                  has("artistname") and has("start_time") and
-                                                  has("has_track_image") and has("has_artist_image")' > /dev/null; then
-                  echo "✓ Playlist tracks hebben correcte structuur"
-                else
-                  echo "✗ Playlist tracks missen verplichte velden"
-                  echo "$FIRST_TRACK" | jq .
-                  exit 1
-                fi
-              fi
-            else
-              echo "✗ Playlist blocks missen verplichte velden"
-              echo "$FIRST_BLOCK" | jq .
-              exit 1
-            fi
-          else
-            echo "✗ Playlist endpoint mislukt of geen blocks"
-            echo "$RESPONSE" | jq .
-            exit 1
-          fi
-
-      - name: Stop API server
-        run: |
-          kill $(cat api.pid) || true
-          rm -f api.pid
-          sleep 1
-
-      # ==========================================
-      # ARTIST ENDPOINT TESTS
-      # ==========================================
-      - name: "=== ARTIST ENDPOINT TESTS ==="
-        run: echo "Start artist endpoint tests"
-
-      - name: Start API server for artist tests
-        run: |
-          ./zwfm-aerontoolbox -config=test_config.json -port=8888 &
-          echo $! > api.pid
-          sleep 3
-
-      - name: API Test - Get single artist
-        run: |
-          echo "Test: Enkele artist ophalen"
-          ARTIST_ID="9e37ff1f-7823-43ce-93d0-12fc1c2edb8b"  # Purple Disco Machine
-          RESPONSE=$(curl -s -H 'X-API-Key: test-api-key-12345' "http://localhost:8888/api/artists/$ARTIST_ID")
-
-          if echo "$RESPONSE" | jq -e '.success == true and .data.artistid != null' > /dev/null; then
-            ARTIST_NAME=$(echo "$RESPONSE" | jq -r '.data.artist')
-            echo "✓ Artist succesvol opgehaald: $ARTIST_NAME"
-          else
-            echo "✗ Artist ophalen mislukt:"
-            echo "$RESPONSE" | jq .
-            exit 1
-          fi
-
-      - name: API Test - Get single artist (non-existent)
-        run: |
-          echo "Test: Niet-bestaande artist moet 404 geven"
-          RESPONSE=$(curl -s -w "\n%{http_code}" -H 'X-API-Key: test-api-key-12345' "http://localhost:8888/api/artists/00000000-0000-4000-8000-000000000001")
-          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
-
-          if [ "$HTTP_CODE" = "404" ]; then
-            echo "✓ Niet-bestaande artist geeft correct 404 terug"
-          else
-            echo "✗ Verwacht: 404, gekregen: $HTTP_CODE"
-            exit 1
-          fi
-
-      - name: API Test - Artist image upload (URL)
-        run: |
-          echo "Test: Artist afbeelding upload via URL"
-          ARTIST_ID="9e37ff1f-7823-43ce-93d0-12fc1c2edb8b"
-          RESPONSE=$(curl -s -X POST -H 'X-API-Key: test-api-key-12345' "http://localhost:8888/api/artists/${ARTIST_ID}/image" \
-            -H 'Content-Type: application/json' \
-            -d '{"url":"https://picsum.photos/1500"}' \
-            -m 10)
-          echo "Response: $RESPONSE"
-          echo "$RESPONSE" | jq -e '.success == true' || (echo "Upload mislukt" && exit 1)
-
-      - name: API Test - Artist image upload (base64)
-        run: |
-          echo "Test: Artist afbeelding upload via base64"
-          ARTIST_ID="add55a6e-2068-4114-b82a-e0729881f0be"  # BLØF
-          BASE64_IMAGE=$(base64 -w 0 < test_large.png)
-          RESPONSE=$(curl -s -X POST -H 'X-API-Key: test-api-key-12345' "http://localhost:8888/api/artists/$ARTIST_ID/image" \
-            -H 'Content-Type: application/json' \
-            -d "{\"image\":\"data:image/png;base64,$BASE64_IMAGE\"}")
-
-          if echo "$RESPONSE" | jq -e '.success == true' > /dev/null; then
-            echo "✓ Artist afbeelding succesvol geüpload via base64"
-          else
-            echo "✗ Artist afbeelding upload mislukt:"
-            echo "$RESPONSE" | jq .
-            exit 1
-          fi
-
-      - name: API Test - Get artist image
-        run: |
-          echo "Test: Artist afbeelding ophalen"
-          ARTIST_ID="add55a6e-2068-4114-b82a-e0729881f0be"  # BLØF met afbeelding van vorige test
-
-          # Test met write-out voor headers
-          RESPONSE=$(curl -s -w "\nHTTP_CODE:%{http_code}\nCONTENT_TYPE:%{content_type}" -H 'X-API-Key: test-api-key-12345' "http://localhost:8888/api/artists/$ARTIST_ID/image" -o /dev/null)
-          HTTP_CODE=$(echo "$RESPONSE" | grep "HTTP_CODE:" | cut -d: -f2)
-          CONTENT_TYPE=$(echo "$RESPONSE" | grep "CONTENT_TYPE:" | cut -d: -f2)
-
-          if [ "$HTTP_CODE" = "200" ] && [[ "$CONTENT_TYPE" =~ image/ ]]; then
-            echo "✓ Artist afbeelding succesvol opgehaald: $CONTENT_TYPE"
-          else
-            echo "✗ Artist afbeelding ophalen mislukt - HTTP: $HTTP_CODE, Type: $CONTENT_TYPE"
-            exit 1
-          fi
-
-      - name: API Test - Delete artist image
-        run: |
-          echo "Test: Artist afbeelding verwijderen"
-          ARTIST_ID="add55a6e-2068-4114-b82a-e0729881f0be"  # BLØF met afbeelding
-
-          RESPONSE=$(curl -s -X DELETE -H 'X-API-Key: test-api-key-12345' "http://localhost:8888/api/artists/$ARTIST_ID/image")
-
-          if echo "$RESPONSE" | jq -e '.success == true' > /dev/null; then
-            echo "✓ Artist afbeelding succesvol verwijderd"
-          else
-            echo "✗ Artist afbeelding verwijderen mislukt:"
-            echo "$RESPONSE" | jq .
-            exit 1
-          fi
-
-      - name: API Test - Get artist image (no image)
-        run: |
-          echo "Test: Artist zonder afbeelding moet 404 geven"
-          # Test met de BLØF artist waarvan we net de afbeelding hebben verwijderd
-          ARTIST_ID="add55a6e-2068-4114-b82a-e0729881f0be"  # BLØF
-          
-          # Verifieer dat de artist bestaat maar geen afbeelding heeft
-          VERIFY=$(docker exec aeron-test-db psql -U aeron -d aeron_db -t -c "SELECT artistid, picture IS NULL as no_image FROM aeron.artist WHERE artistid = '$ARTIST_ID';" 2>&1)
-          echo "Database check: $VERIFY"
-          
-          # Test de API endpoint
-          RESPONSE=$(curl -s -w "\nHTTP_CODE:%{http_code}" -H 'X-API-Key: test-api-key-12345' "http://localhost:8888/api/artists/$ARTIST_ID/image" -o response_body.txt)
-          HTTP_CODE=$(echo "$RESPONSE" | grep "HTTP_CODE:" | cut -d: -f2)
-          
-          echo "HTTP Response Code: $HTTP_CODE"
-          
-          if [ "$HTTP_CODE" = "404" ]; then
-            echo "✓ Artist zonder afbeelding geeft correct 404 terug"
-          else
-            echo "✗ Verwacht: 404, gekregen: $HTTP_CODE"
-            echo "Response body:"
-            cat response_body.txt
-            # Extra debug info
-            echo "Controleer of artist bestaat:"
-            docker exec aeron-test-db psql -U aeron -d aeron_db -c "SELECT artistid, artist, picture IS NULL as no_picture FROM aeron.artist WHERE artistid = '$ARTIST_ID';"
-            rm -f response_body.txt
-            exit 1
-          fi
-          rm -f response_body.txt
-
-      - name: API Test - Bulk delete without confirmation
-        run: |
-          echo "Test: Bulk delete vereist bevestiging header"
-          curl -s -X DELETE -H 'X-API-Key: test-api-key-12345' http://localhost:8888/api/artists/bulk-delete | jq -e '.success == false'
-
-      - name: Stop API server
-        run: |
-          kill $(cat api.pid) || true
-          rm -f api.pid
-          sleep 1
-
-      # ==========================================
-      # TRACK ENDPOINT TESTS
-      # ==========================================
-      - name: "=== TRACK ENDPOINT TESTS ==="
-        run: echo "Start track endpoint tests"
-
-      - name: Start API server for track tests
-        run: |
-          ./zwfm-aerontoolbox -config=test_config.json -port=8888 &
-          echo $! > api.pid
-          sleep 3
-
-      - name: API Test - Get single track
-        run: |
-          echo "Test: Enkele track ophalen"
-          TRACK_ID="9fc69ea8-81f4-4122-9a74-87d35a082ecb"  # Queen track
-          RESPONSE=$(curl -s -H 'X-API-Key: test-api-key-12345' "http://localhost:8888/api/tracks/$TRACK_ID")
-
-          if echo "$RESPONSE" | jq -e '.success == true and .data.titleid != null' > /dev/null; then
-            TRACK_TITLE=$(echo "$RESPONSE" | jq -r '.data.tracktitle')
-            echo "✓ Track succesvol opgehaald: $TRACK_TITLE"
-          else
-            echo "✗ Track ophalen mislukt:"
-            echo "$RESPONSE" | jq .
-            exit 1
-          fi
-
-      - name: API Test - Get single track (non-existent)
-        run: |
-          echo "Test: Niet-bestaande track moet 404 geven"
-          RESPONSE=$(curl -s -w "\n%{http_code}" -H 'X-API-Key: test-api-key-12345' "http://localhost:8888/api/tracks/00000000-0000-4000-8000-000000000001")
-          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
-
-          if [ "$HTTP_CODE" = "404" ]; then
-            echo "✓ Niet-bestaande track geeft correct 404 terug"
-          else
-            echo "✗ Verwacht: 404, gekregen: $HTTP_CODE"
-            exit 1
-          fi
-
-      - name: API Test - Track image upload
-        run: |
-          echo "Test: Track afbeelding uploaden"
-          TRACK_ID="9fc69ea8-81f4-4122-9a74-87d35a082ecb"  # Queen track
-          
-          # Debug: Check if track exists
-          echo "Checking track in database..."
-          docker exec aeron-test-db psql -U aeron -d aeron_db -c "SELECT titleid, tracktitle, artistid FROM aeron.track WHERE titleid = '$TRACK_ID';" || true
-          
-          # Create base64 image
-          BASE64_IMAGE=$(base64 -w 0 < test_large.png)
-          echo "Image base64 length: ${#BASE64_IMAGE}"
-
-          # Upload with full debugging
-          echo "Uploading to /api/tracks/$TRACK_ID/image..."
-          RESPONSE=$(curl -s -w "\nHTTP_STATUS:%{http_code}" \
-            -X POST \
-            -H 'X-API-Key: test-api-key-12345' \
-            -H 'Content-Type: application/json' \
-            "http://localhost:8888/api/tracks/$TRACK_ID/image" \
-            -d "{\"image\":\"data:image/png;base64,$BASE64_IMAGE\"}" \
-            -o response.json)
-          
-          HTTP_STATUS=$(echo "$RESPONSE" | grep "HTTP_STATUS:" | cut -d: -f2)
-          echo "HTTP Status: $HTTP_STATUS"
-          echo "Response content:"
-          cat response.json || echo "(no response body)"
-          
-          # Check success
-          if [ "$HTTP_STATUS" = "200" ] && jq -e '.success == true' response.json > /dev/null 2>&1; then
-            echo "✓ Track afbeelding succesvol geüpload"
-          else
-            echo "✗ Track afbeelding upload mislukt"
-            rm -f response.json
-            exit 1
-          fi
-          rm -f response.json
-
-      - name: API Test - Get track image
-        run: |
-          echo "Test: Track afbeelding ophalen"
-          TRACK_ID="9fc69ea8-81f4-4122-9a74-87d35a082ecb"  # Queen track
-
-          # Test met write-out voor headers
-          RESPONSE=$(curl -s -w "\nHTTP_CODE:%{http_code}\nCONTENT_TYPE:%{content_type}" -H 'X-API-Key: test-api-key-12345' "http://localhost:8888/api/tracks/$TRACK_ID/image" -o /dev/null)
-          HTTP_CODE=$(echo "$RESPONSE" | grep "HTTP_CODE:" | cut -d: -f2)
-          CONTENT_TYPE=$(echo "$RESPONSE" | grep "CONTENT_TYPE:" | cut -d: -f2)
-
-          if [ "$HTTP_CODE" = "200" ] && [[ "$CONTENT_TYPE" =~ image/ ]]; then
-            echo "✓ Track afbeelding succesvol opgehaald: $CONTENT_TYPE"
-          else
-            echo "✗ Track afbeelding ophalen mislukt - HTTP: $HTTP_CODE, Type: $CONTENT_TYPE"
-            exit 1
-          fi
-
-      - name: API Test - Delete track image
-        run: |
-          echo "Test: Track afbeelding verwijderen"
-          TRACK_ID="9fc69ea8-81f4-4122-9a74-87d35a082ecb"  # Queen track
-
-          RESPONSE=$(curl -s -X DELETE -H 'X-API-Key: test-api-key-12345' "http://localhost:8888/api/tracks/$TRACK_ID/image")
-
-          if echo "$RESPONSE" | jq -e '.success == true' > /dev/null; then
-            echo "✓ Track afbeelding succesvol verwijderd"
-          else
-            echo "✗ Track afbeelding verwijderen mislukt:"
-            echo "$RESPONSE" | jq .
-            exit 1
-          fi
-
-      - name: Stop API server
-        run: |
-          kill $(cat api.pid) || true
-          rm -f api.pid
-          sleep 1
-
-      # ==========================================
-      # IMAGE OPTIMALISATIE TESTS
-      # ==========================================
-      - name: "=== IMAGE OPTIMALISATIE TESTS ==="
-        run: echo "Start image optimalisatie tests"
-
-      - name: Reset database before optimization tests
-        run: ./reset_db.sh
-
-      - name: Start API server for optimization tests
-        run: |
-          ./zwfm-aerontoolbox -config=test_config.json -port=8892 &
-          echo $! > api_opt.pid
-          sleep 3
-
-      - name: Image Optimization Test - Verify optimization via API
-        run: |
-          echo "Test: Afbeelding optimalisatie"
-          echo "Grote afbeelding (2000x2000) uploaden voor optimalisatie"
-          BASE64_IMAGE=$(base64 -w 0 < test_large.png)
-          ARTIST_ID="add55a6e-2068-4114-b82a-e0729881f0be"  # BLØF
-          RESPONSE=$(curl -s -X POST -H 'X-API-Key: test-api-key-12345' "http://localhost:8892/api/artists/${ARTIST_ID}/image" \
-            -H 'Content-Type: application/json' \
-            -d '{"image":"data:image/png;base64,'$BASE64_IMAGE'"}')
-
-          if echo "$RESPONSE" | jq -e '.success == true' > /dev/null; then
-            echo "✓ Afbeelding upload en optimalisatie succesvol"
-            echo "$RESPONSE" | jq .
-          else
-            echo "✗ Afbeelding optimalisatie mislukt"
-            echo "$RESPONSE" | jq .
-            exit 1
-          fi
-
-      - name: Stop API optimization server
-        run: |
-          kill $(cat api_opt.pid) || true
-          rm -f api_opt.pid
-
-      # ==========================================
-      # GELIJKTIJDIGE OPERATIES TEST
-      # ==========================================
-      - name: "=== GELIJKTIJDIGE OPERATIES TEST ==="
-        run: echo "Start gelijktijdige operaties test"
-
-      - name: Reset database before concurrent tests
-        run: ./reset_db.sh
-
-      - name: Start API server for concurrent tests
-        run: |
-          ./zwfm-aerontoolbox -config=test_config.json -port=8893 &
-          echo $! > api_concurrent.pid
-          sleep 3
-
-      - name: Concurrent API Operations Test
-        run: |
-          echo "Test: Gelijktijdige API uploads"
-          echo "Start 3 uploads tegelijk..."
-
-          # Upload naar meerdere endpoints tegelijk
-          PURPLE_ID="9e37ff1f-7823-43ce-93d0-12fc1c2edb8b"
-          BLOF_ID="add55a6e-2068-4114-b82a-e0729881f0be"
-
-          curl -s -X POST -H 'X-API-Key: test-api-key-12345' "http://localhost:8893/api/artists/${PURPLE_ID}/image" \
-            -H 'Content-Type: application/json' \
-            -d '{"url":"https://picsum.photos/1500"}' > result1.json &
-          PID1=$!
-
-          curl -s -X POST -H 'X-API-Key: test-api-key-12345' "http://localhost:8893/api/artists/${BLOF_ID}/image" \
-            -H 'Content-Type: application/json' \
-            -d '{"url":"https://picsum.photos/1500"}' > result2.json &
-          PID2=$!
-
-          # Gebruik een bekende track ID voor het nieuwe endpoint
-          TRACK_ID="9fc69ea8-81f4-4122-9a74-87d35a082ecb"  # Queen track
-          curl -s -X POST -H 'X-API-Key: test-api-key-12345' "http://localhost:8893/api/tracks/${TRACK_ID}/image" \
-            -H 'Content-Type: application/json' \
-            -d '{"url":"https://picsum.photos/1500"}' > result3.json &
-          PID3=$!
-
-          if wait $PID1 && wait $PID2 && wait $PID3; then
-            echo "✓ Alle 3 gelijktijdige uploads voltooid"
-            # Controleer resultaten
-            for i in 1 2 3; do
-              if jq -e '.success == true' result$i.json > /dev/null; then
-                echo "✓ Upload $i succesvol"
-              else
-                echo "✗ Upload $i mislukt"
-                cat result$i.json | jq .
-                exit 1
-              fi
-            done
-          else
-            echo "✗ Een of meer uploads zijn mislukt"
-            exit 1
-          fi
-
-      - name: Stop API concurrent server
-        run: |
-          kill $(cat api_concurrent.pid) || true
-          rm -f api_concurrent.pid result*.json
-
-      # ==========================================
-      # EDGE CASES EN FOUTAFHANDELING
-      # ==========================================
-      - name: "=== EDGE CASES EN FOUTAFHANDELING ==="
-        run: echo "Start edge case tests"
-
-      - name: Reset database before edge case tests
-        run: ./reset_db.sh
-
-      - name: Start API server for edge case tests
-        run: |
-          ./zwfm-aerontoolbox -config=test_config.json -port=8894 &
-          echo $! > api_edge.pid
-          sleep 3
-
-      - name: Edge Case Test - Non-existent artist upload
-        run: |
-          echo "Test: Upload naar niet-bestaande artist"
-          FAKE_ID="00000000-0000-4000-8000-000000000001"
-          RESPONSE=$(curl -s -X POST -H 'X-API-Key: test-api-key-12345' "http://localhost:8894/api/artists/${FAKE_ID}/image" \
-            -H 'Content-Type: application/json' \
-            -d '{"url":"https://picsum.photos/500"}')
-
-          if echo "$RESPONSE" | jq -e '.success == false' > /dev/null && echo "$RESPONSE" | jq -r '.error' | grep -q 'bestaat niet'; then
-            echo "✓ Niet-bestaande artist gaf verwachte fout"
-          else
-            echo "✗ Verwachtte 'bestaat niet' fout"
-            echo "$RESPONSE" | jq .
-            exit 1
-          fi
-
-      - name: Edge Case Test - Invalid UUID format
-        run: |
-          echo "Test: Ongeldig UUID formaat"
-          INVALID_ID="not-a-valid-uuid"
-          RESPONSE=$(curl -s -X POST -H 'X-API-Key: test-api-key-12345' "http://localhost:8894/api/artists/${INVALID_ID}/image" \
-            -H 'Content-Type: application/json' \
-            -d '{"url":"https://picsum.photos/500"}')
-          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST -H 'X-API-Key: test-api-key-12345' "http://localhost:8894/api/artists/${INVALID_ID}/image" \
-            -H 'Content-Type: application/json' \
-            -d '{"url":"https://picsum.photos/500"}')
-
-          # UUID validatie gebeurt in de applicatie voordat het de database bereikt
-          if [ "$HTTP_CODE" = "400" ]; then
-            echo "✓ Ongeldig UUID formaat gaf verwachte validatiefout (HTTP 400)"
-          else
-            echo "✗ Verwacht: 400, gekregen: $HTTP_CODE"
-            exit 1
-          fi
-
-      - name: Edge Case Test - No image source
-        run: |
-          echo "Test: Geen afbeelding bron opgegeven"
-          ARTIST_ID="9e37ff1f-7823-43ce-93d0-12fc1c2edb8b"
-          RESPONSE=$(curl -s -X POST -H 'X-API-Key: test-api-key-12345' "http://localhost:8894/api/artists/${ARTIST_ID}/image" \
-            -H 'Content-Type: application/json' \
-            -d '{}')
-
-          if echo "$RESPONSE" | jq -e '.success == false' > /dev/null && echo "$RESPONSE" | jq -r '.error' | grep -q 'afbeelding is verplicht'; then
-            echo "✓ Geen afbeelding gaf verwachte fout"
-          else
-            echo "✗ Verwachtte 'afbeelding is verplicht' fout"
-            echo "$RESPONSE" | jq .
-            exit 1
-          fi
-
-      - name: Edge Case Test - Both URL and image
-        run: |
-          echo "Test: Zowel URL als afbeelding opgegeven"
-          ARTIST_ID="9e37ff1f-7823-43ce-93d0-12fc1c2edb8b"
-          RESPONSE=$(curl -s -X POST -H 'X-API-Key: test-api-key-12345' "http://localhost:8894/api/artists/${ARTIST_ID}/image" \
-            -H 'Content-Type: application/json' \
-            -d '{"url":"https://picsum.photos/500","image":"data:image/jpeg;base64,/9j/4AAQ"}')
-
-          if echo "$RESPONSE" | jq -e '.success == false' > /dev/null && echo "$RESPONSE" | jq -r '.error' | grep -q 'gebruik óf URL óf upload, niet beide'; then
-            echo "✓ Beide URL en afbeelding gaf verwachte fout"
-          else
-            echo "✗ Verwachtte 'gebruik óf URL óf upload, niet beide' fout"
-            echo "$RESPONSE" | jq .
-            exit 1
-          fi
-
-      - name: Edge Case Test - Invalid endpoint
-        run: |
-          echo "Test: Ongeldig endpoint"
-          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST -H 'X-API-Key: test-api-key-12345' http://localhost:8894/api/invalid/upload \
-            -H 'Content-Type: application/json' \
-            -d '{"name":"Test","url":"https://picsum.photos/500"}')
-
-          if [ "$HTTP_CODE" = "404" ]; then
-            echo "✓ Ongeldig endpoint gaf 404 terug"
-          else
-            echo "✗ Verwacht: 404, gekregen: $HTTP_CODE"
-            exit 1
-          fi
-
-      - name: Stop API edge case server
-        run: |
-          kill $(cat api_edge.pid) || true
-          rm -f api_edge.pid
-
-      # ==========================================
-      # API AUTHENTICATIE TESTS
-      # ==========================================
-      - name: "=== API AUTHENTICATIE TESTS ==="
-        run: echo "Start authenticatie tests"
-
-      - name: API Auth Test - Setup auth config
-        run: |
-          cat > test_auth_config.json << 'EOF'
-          {
-            "database": {
-              "host": "localhost",
-              "port": "5433",
-              "name": "aeron_db",
-              "user": "aeron",
-              "password": "aeron123",
-              "schema": "aeron",
-              "sslmode": "disable"
-            },
-            "image": {
-              "target_width": 1280,
-              "target_height": 1280,
-              "quality": 90,
-              "reject_smaller": true
-            },
-            "api": {
-              "enabled": true,
-              "keys": ["test-api-key-12345", "another-test-key-67890"]
-            }
-          }
-          EOF
-
-      - name: API Auth Test - Start server with auth
-        run: |
-          ./zwfm-aerontoolbox -config=test_auth_config.json -port=8890 &
-          echo $! > api_auth.pid
-          sleep 3
-
-      - name: API Auth Test - Health endpoint (no auth required)
-        run: |
-          echo "Test: Health endpoint werkt zonder authenticatie"
-          curl -s http://localhost:8890/api/health | jq -e '.success == true'
-
-      - name: API Auth Test - Protected endpoint without API key
-        run: |
-          echo "Test: Beveiligde endpoint zonder API key"
-          RESPONSE=$(curl -s -w "\n%{http_code}" http://localhost:8890/api/artists)
-          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
-          BODY=$(echo "$RESPONSE" | head -n-1)
-
-          if echo "$BODY" | jq -e '.success == false' > /dev/null; then
-            echo "✓ Request correct geweigerd zonder API key"
-          else
-            echo "✗ API zou request moeten weigeren zonder API key"
-            echo "   Response: $BODY"
-            exit 1
-          fi
-
-      - name: API Auth Test - Protected endpoint with invalid API key
-        run: |
-          echo "Test: Ongeldige API key wordt geweigerd"
-          curl -s -H "X-API-Key: invalid-key" http://localhost:8890/api/artists | jq -e '.success == false'
-
-      - name: API Auth Test - Protected endpoint with valid API key (header)
-        run: |
-          echo "Test: Geldige API key in header werkt"
-          curl -s -H "X-API-Key: test-api-key-12345" http://localhost:8890/api/artists | jq -e '.success == true'
-
-
-      - name: Stop API auth server
-        run: |
-          kill $(cat api_auth.pid) || true
-          rm -f api_auth.pid
-          sleep 1
-
-      - name: API Auth Test - Setup no auth config
-        run: |
-          cat > test_no_auth_config.json << 'EOF'
-          {
-            "database": {
-              "host": "localhost",
-              "port": "5433",
-              "name": "aeron_db",
-              "user": "aeron",
-              "password": "aeron123",
-              "schema": "aeron",
-              "sslmode": "disable"
-            },
-            "image": {
-              "target_width": 1280,
-              "target_height": 1280,
-              "quality": 90,
-              "reject_smaller": true
-            },
-            "api": {
-              "enabled": false,
-              "keys": []
-            }
-          }
-          EOF
-
-      - name: API Auth Test - Start server without auth
-        run: |
-          ./zwfm-aerontoolbox -config=test_no_auth_config.json -port=8891 &
-          echo $! > api_no_auth.pid
-          sleep 3
-
-      - name: API Auth Test - Protected endpoint with auth disabled
-        run: |
-          echo "Test: Met authenticatie uitgeschakeld zijn endpoints toegankelijk"
-          curl -s http://localhost:8891/api/artists | jq -e '.success == true'
-
-      - name: Stop API no-auth server
-        run: |
-          kill $(cat api_no_auth.pid) || true
-          rm -f api_no_auth.pid
-
-      # ==========================================
-      # BULK DELETE TESTS
-      # ==========================================
-      - name: "=== BULK DELETE TESTS ==="
-        run: echo "Start bulk delete tests"
-
-      - name: Reset database before bulk delete tests
-        run: ./reset_db.sh
-
-      - name: Start API server for bulk delete tests
-        run: |
-          ./zwfm-aerontoolbox -config=test_config.json -port=8895 &
-          echo $! > api_bulk.pid
-          sleep 3
-
-      - name: Bulk Delete Test - Without confirmation header
-        run: |
-          echo "Test: Bulk delete zonder bevestiging"
-          RESPONSE=$(curl -s -X DELETE -H 'X-API-Key: test-api-key-12345' http://localhost:8895/api/artists/bulk-delete)
-
-          if echo "$RESPONSE" | jq -e '.success == false' > /dev/null && echo "$RESPONSE" | jq -r '.error' | grep -q 'Ontbrekende bevestigingsheader'; then
-            echo "✓ Bulk delete correct geweigerd zonder bevestigingsheader"
-          else
-            echo "✗ Verwachtte 'Ontbrekende bevestigingsheader' fout"
-            echo "$RESPONSE" | jq .
-            exit 1
-          fi
-
-      - name: Stop API bulk delete server
-        run: |
-          kill $(cat api_bulk.pid) || true
-          rm -f api_bulk.pid
-
-      # ==========================================
-      # DATABASE MAINTENANCE TESTS
-      # ==========================================
-      - name: "=== DATABASE MAINTENANCE TESTS ==="
-        run: echo "Start database maintenance tests"
-
-      - name: Reset database before maintenance tests
-        run: ./reset_db.sh
-
-      - name: Start API server for maintenance tests
-        run: |
-          ./zwfm-aerontoolbox -config=test_config.json -port=8896 &
-          echo $! > api_maint.pid
-          sleep 3
-
-      - name: DB Maintenance Test - Health endpoint
-        run: |
-          echo "Test: Database health endpoint"
-          RESPONSE=$(curl -s -H 'X-API-Key: test-api-key-12345' http://localhost:8896/api/db/health)
-
-          if echo "$RESPONSE" | jq -e '.success == true and .data.database_name != null and .data.tables != null' > /dev/null; then
-            TABLE_COUNT=$(echo "$RESPONSE" | jq '.data.tables | length')
-            RECO_COUNT=$(echo "$RESPONSE" | jq '.data.recommendations | length')
-            echo "✓ Database health endpoint succesvol"
-            echo "  Tabellen gevonden: $TABLE_COUNT"
-            echo "  Aanbevelingen: $RECO_COUNT"
-          else
-            echo "✗ Database health endpoint mislukt:"
-            echo "$RESPONSE" | jq .
-            exit 1
-          fi
-
-      - name: DB Maintenance Test - Vacuum dry-run
-        run: |
-          echo "Test: Vacuum dry-run"
-          RESPONSE=$(curl -s -X POST -H 'X-API-Key: test-api-key-12345' \
-            -H 'Content-Type: application/json' \
-            http://localhost:8896/api/db/vacuum \
-            -d '{"dry_run": true}')
-
-          if echo "$RESPONSE" | jq -e '.success == true and .data.dry_run == true' > /dev/null; then
-            TABLES_TOTAL=$(echo "$RESPONSE" | jq '.data.tables_total')
-            echo "✓ Vacuum dry-run succesvol"
-            echo "  Tabellen die gevacuumd zouden worden: $TABLES_TOTAL"
-            echo "$RESPONSE" | jq '.data.results[] | {table, bloat_percent_before, dead_tuples_before, message}'
-          else
-            echo "✗ Vacuum dry-run mislukt:"
-            echo "$RESPONSE" | jq .
-            exit 1
-          fi
-
-      - name: DB Maintenance Test - Vacuum specific table (dry-run)
-        run: |
-          echo "Test: Vacuum specifieke tabel (dry-run)"
-          RESPONSE=$(curl -s -X POST -H 'X-API-Key: test-api-key-12345' \
-            -H 'Content-Type: application/json' \
-            http://localhost:8896/api/db/vacuum \
-            -d '{"tables": ["artist"], "dry_run": true}')
-
-          if echo "$RESPONSE" | jq -e '.success == true and .data.tables_total == 1' > /dev/null; then
-            echo "✓ Vacuum specifieke tabel dry-run succesvol"
-          else
-            echo "✗ Vacuum specifieke tabel dry-run mislukt:"
-            echo "$RESPONSE" | jq .
-            exit 1
-          fi
-
-      - name: DB Maintenance Test - Vacuum with analyze (dry-run)
-        run: |
-          echo "Test: Vacuum met analyze (dry-run)"
-          RESPONSE=$(curl -s -X POST -H 'X-API-Key: test-api-key-12345' \
-            -H 'Content-Type: application/json' \
-            http://localhost:8896/api/db/vacuum \
-            -d '{"tables": ["track"], "analyze": true, "dry_run": true}')
-
-          if echo "$RESPONSE" | jq -e '.success == true and .data.results[0].analyzed == true' > /dev/null; then
-            MESSAGE=$(echo "$RESPONSE" | jq -r '.data.results[0].message')
-            echo "✓ Vacuum met analyze dry-run succesvol"
-            echo "  Message: $MESSAGE"
-          else
-            echo "✗ Vacuum met analyze dry-run mislukt:"
-            echo "$RESPONSE" | jq .
-            exit 1
-          fi
-
-      - name: DB Maintenance Test - Vacuum non-existent table
-        run: |
-          echo "Test: Vacuum niet-bestaande tabel"
-          RESPONSE=$(curl -s -X POST -H 'X-API-Key: test-api-key-12345' \
-            -H 'Content-Type: application/json' \
-            http://localhost:8896/api/db/vacuum \
-            -d '{"tables": ["nonexistent_table"], "dry_run": true}')
-
-          if echo "$RESPONSE" | jq -e '.success == true and .data.tables_skipped == 1' > /dev/null; then
-            SKIP_REASON=$(echo "$RESPONSE" | jq -r '.data.results[0].skipped_reason')
-            echo "✓ Niet-bestaande tabel correct geskipped: $SKIP_REASON"
-          else
-            echo "✗ Niet-bestaande tabel handling mislukt:"
-            echo "$RESPONSE" | jq .
-            exit 1
-          fi
-
-      - name: DB Maintenance Test - Analyze dry-run
-        run: |
-          echo "Test: Analyze endpoint"
-          RESPONSE=$(curl -s -X POST -H 'X-API-Key: test-api-key-12345' \
-            -H 'Content-Type: application/json' \
-            http://localhost:8896/api/db/analyze \
-            -d '{"tables": ["artist"]}')
-
-          if echo "$RESPONSE" | jq -e '.success == true' > /dev/null; then
-            echo "✓ Analyze endpoint succesvol"
-            echo "$RESPONSE" | jq '.data.results[] | {table, success, message}'
-          else
-            echo "✗ Analyze endpoint mislukt:"
-            echo "$RESPONSE" | jq .
-            exit 1
-          fi
-
-      - name: DB Maintenance Test - Execute actual vacuum on small table
-        run: |
-          echo "Test: Daadwerkelijke vacuum op kleine tabel"
-          RESPONSE=$(curl -s -X POST -H 'X-API-Key: test-api-key-12345' \
-            -H 'Content-Type: application/json' \
-            http://localhost:8896/api/db/vacuum \
-            -d '{"tables": ["artist"], "analyze": true}')
-
-          if echo "$RESPONSE" | jq -e '.success == true and .data.tables_success >= 1' > /dev/null; then
-            DURATION=$(echo "$RESPONSE" | jq -r '.data.results[0].duration')
-            echo "✓ Daadwerkelijke vacuum succesvol uitgevoerd"
-            echo "  Duur: $DURATION"
-          else
-            echo "✗ Vacuum uitvoering mislukt:"
-            echo "$RESPONSE" | jq .
-            exit 1
-          fi
-
-      - name: Stop API maintenance server
-        run: |
-          kill $(cat api_maint.pid) || true
-          rm -f api_maint.pid
-
-      # ==========================================
-      # DATABASE BACKUP TESTS
-      # ==========================================
-      - name: "=== DATABASE BACKUP TESTS ==="
-        run: echo "Start database backup tests"
-
-      - name: Create backup test configuration
-        run: |
-          mkdir -p /tmp/backups
-          cat > test_backup_config.json << 'EOF'
-          {
-            "database": {
-              "host": "localhost",
-              "port": "5433",
-              "name": "aeron_db",
-              "user": "aeron",
-              "password": "aeron123",
-              "schema": "aeron",
-              "sslmode": "disable"
-            },
-            "image": {
-              "target_width": 1280,
-              "target_height": 1280,
-              "quality": 90,
-              "reject_smaller": true
-            },
-            "api": {
-              "enabled": true,
-              "keys": ["test-api-key-12345"]
             },
             "backup": {
               "enabled": true,
@@ -1123,256 +189,922 @@ jobs:
             }
           }
           EOF
+          mkdir -p /tmp/backups
 
-      - name: Start API server for backup tests
+      - name: Create test images
+        if: matrix.suite == 'artists' || matrix.suite == 'tracks' || matrix.suite == 'edge-cases'
         run: |
-          ./zwfm-aerontoolbox -config=test_backup_config.json -port=8897 &
-          echo $! > api_backup.pid
-          sleep 3
+          convert -size 100x100 xc:red test_small.png
+          convert -size 2000x2000 xc:blue test_large.png
+          echo "Test images aangemaakt (100x100 en 2000x2000)"
 
-      - name: Backup Test - List backups (empty)
+      - name: Start API server
         run: |
-          echo "Test: Lijst backups (leeg)"
-          RESPONSE=$(curl -s -H 'X-API-Key: test-api-key-12345' http://localhost:8897/api/db/backups)
+          ./zwfm-aerontoolbox -config=test_config.json -port=${{ env.API_PORT }} &
+          echo $! > api.pid
+          for i in {1..30}; do
+            curl -sf http://localhost:${{ env.API_PORT }}/api/health > /dev/null 2>&1 && break
+            sleep 1
+          done
+          echo "API server gestart op poort ${{ env.API_PORT }}"
 
-          if echo "$RESPONSE" | jq -e '.success == true and .data.total_count == 0' > /dev/null; then
-            echo "✓ Lege backup lijst correct teruggegeven"
+      # ==================== DATABASE TESTS ====================
+      - name: "Database: Schema exists"
+        if: matrix.suite == 'database'
+        run: |
+          echo "Controleren of 'aeron' schema bestaat..."
+          RESULT=$(docker exec aeron-test-db psql -U aeron -d aeron_db -t \
+            -c "SELECT schema_name FROM information_schema.schemata WHERE schema_name = 'aeron';")
+          if echo "$RESULT" | grep -q 'aeron'; then
+            echo "Schema 'aeron' gevonden"
           else
-            echo "✗ Backup lijst test mislukt:"
-            echo "$RESPONSE" | jq .
+            echo "::error::Schema 'aeron' niet gevonden"
             exit 1
           fi
 
-      - name: Backup Test - Create backup (dry-run)
+      - name: "Database: Required tables exist"
+        if: matrix.suite == 'database'
         run: |
-          echo "Test: Backup maken (dry-run)"
-          RESPONSE=$(curl -s -X POST -H 'X-API-Key: test-api-key-12345' \
-            -H 'Content-Type: application/json' \
-            http://localhost:8897/api/db/backup \
-            -d '{"format": "custom", "dry_run": true}')
+          echo "Controleren of vereiste tabellen bestaan..."
+          for TABLE in artist track; do
+            RESULT=$(docker exec aeron-test-db psql -U aeron -d aeron_db -t \
+              -c "SELECT table_name FROM information_schema.tables WHERE table_schema = 'aeron' AND table_name = '$TABLE';")
+            if echo "$RESULT" | grep -q "$TABLE"; then
+              echo "Tabel '$TABLE' gevonden"
+            else
+              echo "::error::Tabel '$TABLE' niet gevonden"
+              exit 1
+            fi
+          done
 
-          if echo "$RESPONSE" | jq -e '.success == true and .data.dry_run == true and .data.command != null' > /dev/null; then
-            COMMAND=$(echo "$RESPONSE" | jq -r '.data.command')
-            echo "✓ Backup dry-run succesvol"
-            echo "  Command: $COMMAND"
+      - name: "Database: Verify data counts"
+        if: matrix.suite == 'database'
+        run: |
+          ARTIST_COUNT=$(docker exec aeron-test-db psql -U aeron -d aeron_db -t -c "SELECT COUNT(*) FROM aeron.artist;" | tr -d ' ')
+          TRACK_COUNT=$(docker exec aeron-test-db psql -U aeron -d aeron_db -t -c "SELECT COUNT(*) FROM aeron.track;" | tr -d ' ')
+          ARTISTS_WITH_IMG=$(docker exec aeron-test-db psql -U aeron -d aeron_db -t -c "SELECT COUNT(*) FROM aeron.artist WHERE picture IS NOT NULL;" | tr -d ' ')
+
+          echo "Artiesten: $ARTIST_COUNT (verwacht: 1000)"
+          echo "Tracks: $TRACK_COUNT (verwacht: 1100)"
+          echo "Artiesten met afbeelding: $ARTISTS_WITH_IMG (verwacht: >0)"
+
+          FAILED=0
+          [ "$ARTIST_COUNT" -ne 1000 ] && echo "::error::Aantal artiesten klopt niet" && FAILED=1
+          [ "$TRACK_COUNT" -ne 1100 ] && echo "::error::Aantal tracks klopt niet" && FAILED=1
+          [ "$ARTISTS_WITH_IMG" -le 0 ] && echo "::error::Geen artiesten met afbeelding" && FAILED=1
+          exit $FAILED
+
+      # ==================== API BASIC TESTS ====================
+      - name: "API: Health endpoint"
+        if: matrix.suite == 'api-basic'
+        run: |
+          echo "GET /api/health"
+          RESPONSE=$(curl -s http://localhost:${{ env.API_PORT }}/api/health)
+          echo "Response: $RESPONSE"
+          SUCCESS=$(echo "$RESPONSE" | jq -r '.success')
+          if [ "$SUCCESS" = "true" ]; then
+            echo "Health check OK"
           else
-            echo "✗ Backup dry-run mislukt:"
-            echo "$RESPONSE" | jq .
+            echo "::error::Health check gefaald - success=$SUCCESS"
             exit 1
           fi
 
-      - name: Backup Test - Create actual backup (custom format)
+      - name: "API: Authentication required"
+        if: matrix.suite == 'api-basic'
         run: |
-          echo "Test: Echte backup maken (custom format)"
-          RESPONSE=$(curl -s -X POST -H 'X-API-Key: test-api-key-12345' \
-            -H 'Content-Type: application/json' \
-            http://localhost:8897/api/db/backup \
-            -d '{"format": "custom", "compression": 6}')
-
-          if echo "$RESPONSE" | jq -e '.success == true and .data.dry_run == false and .data.filename != null' > /dev/null; then
-            FILENAME=$(echo "$RESPONSE" | jq -r '.data.filename')
-            SIZE=$(echo "$RESPONSE" | jq -r '.data.size')
-            DURATION=$(echo "$RESPONSE" | jq -r '.data.duration')
-            echo "✓ Backup succesvol gemaakt"
-            echo "  Bestand: $FILENAME"
-            echo "  Grootte: $SIZE"
-            echo "  Duur: $DURATION"
-            # Save filename for later tests
-            echo "$FILENAME" > /tmp/backup_filename.txt
+          echo "GET /api/artists (zonder API key)"
+          RESPONSE=$(curl -s http://localhost:${{ env.API_PORT }}/api/artists)
+          echo "Response: $RESPONSE"
+          SUCCESS=$(echo "$RESPONSE" | jq -r '.success')
+          if [ "$SUCCESS" = "false" ]; then
+            echo "Correct: request zonder API key wordt geweigerd"
           else
-            echo "✗ Backup maken mislukt:"
-            echo "$RESPONSE" | jq .
+            echo "::error::Request zonder API key zou geweigerd moeten worden"
             exit 1
           fi
 
-      - name: Backup Test - Create backup (plain SQL format)
+      - name: "API: Valid API key accepted"
+        if: matrix.suite == 'api-basic'
         run: |
-          echo "Test: Backup maken (plain SQL format)"
-          RESPONSE=$(curl -s -X POST -H 'X-API-Key: test-api-key-12345' \
-            -H 'Content-Type: application/json' \
-            http://localhost:8897/api/db/backup \
-            -d '{"format": "plain"}')
-
-          if echo "$RESPONSE" | jq -e '.success == true and .data.format == "plain"' > /dev/null; then
-            FILENAME=$(echo "$RESPONSE" | jq -r '.data.filename')
-            echo "✓ Plain SQL backup succesvol: $FILENAME"
+          echo "GET /api/artists (met geldige API key)"
+          RESPONSE=$(curl -s -H "X-API-Key: ${{ env.API_KEY }}" http://localhost:${{ env.API_PORT }}/api/artists)
+          SUCCESS=$(echo "$RESPONSE" | jq -r '.success')
+          TOTAL=$(echo "$RESPONSE" | jq -r '.data.total')
+          if [ "$SUCCESS" = "true" ]; then
+            echo "Correct: API key geaccepteerd - $TOTAL artiesten gevonden"
           else
-            echo "✗ Plain backup mislukt:"
-            echo "$RESPONSE" | jq .
+            echo "::error::Geldige API key werd niet geaccepteerd"
+            echo "Response: $RESPONSE"
             exit 1
           fi
 
-      - name: Backup Test - List backups (with files)
+      - name: "API: Invalid API key rejected"
+        if: matrix.suite == 'api-basic'
         run: |
-          echo "Test: Lijst backups (met bestanden)"
-          RESPONSE=$(curl -s -H 'X-API-Key: test-api-key-12345' http://localhost:8897/api/db/backups)
-
-          if echo "$RESPONSE" | jq -e '.success == true and .data.total_count == 2' > /dev/null; then
-            echo "✓ Backup lijst toont 2 bestanden"
-            echo "$RESPONSE" | jq '.data.backups[] | {filename, format, size}'
+          echo "GET /api/artists (met ongeldige API key)"
+          RESPONSE=$(curl -s -H 'X-API-Key: invalid-key' http://localhost:${{ env.API_PORT }}/api/artists)
+          echo "Response: $RESPONSE"
+          SUCCESS=$(echo "$RESPONSE" | jq -r '.success')
+          if [ "$SUCCESS" = "false" ]; then
+            echo "Correct: ongeldige API key wordt geweigerd"
           else
-            echo "✗ Backup lijst test mislukt:"
-            echo "$RESPONSE" | jq .
+            echo "::error::Ongeldige API key zou geweigerd moeten worden"
             exit 1
           fi
 
-      - name: Backup Test - Download backup file
+      - name: "API: Method not allowed returns 405"
+        if: matrix.suite == 'api-basic'
         run: |
-          echo "Test: Backup bestand downloaden"
-          FILENAME=$(cat /tmp/backup_filename.txt)
-
-          HTTP_CODE=$(curl -s -o /tmp/downloaded_backup.dump -w "%{http_code}" \
-            -H 'X-API-Key: test-api-key-12345' \
-            "http://localhost:8897/api/db/backups/$FILENAME")
-
-          if [ "$HTTP_CODE" = "200" ] && [ -s /tmp/downloaded_backup.dump ]; then
-            SIZE=$(stat -c%s /tmp/downloaded_backup.dump 2>/dev/null || stat -f%z /tmp/downloaded_backup.dump)
-            echo "✓ Backup bestand succesvol gedownload: $SIZE bytes"
+          echo "PUT /api/artists (niet toegestane methode)"
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X PUT -H "X-API-Key: ${{ env.API_KEY }}" http://localhost:${{ env.API_PORT }}/api/artists)
+          echo "HTTP status: $HTTP_CODE (verwacht: 405)"
+          if [ "$HTTP_CODE" = "405" ]; then
+            echo "Correct: PUT methode geeft 405 Method Not Allowed"
           else
-            echo "✗ Backup download mislukt - HTTP: $HTTP_CODE"
+            echo "::error::Verwachtte HTTP 405, kreeg $HTTP_CODE"
             exit 1
           fi
 
-      - name: Backup Test - Stream backup download
+      - name: "API: Invalid endpoint returns 404"
+        if: matrix.suite == 'api-basic'
         run: |
-          echo "Test: Backup stream download"
-          HTTP_CODE=$(curl -s -o /tmp/streamed_backup.dump -w "%{http_code}" \
-            -H 'X-API-Key: test-api-key-12345' \
-            "http://localhost:8897/api/db/backup/download?format=custom&compression=3")
-
-          if [ "$HTTP_CODE" = "200" ] && [ -s /tmp/streamed_backup.dump ]; then
-            SIZE=$(stat -c%s /tmp/streamed_backup.dump 2>/dev/null || stat -f%z /tmp/streamed_backup.dump)
-            echo "✓ Backup stream succesvol: $SIZE bytes"
-          else
-            echo "✗ Backup stream mislukt - HTTP: $HTTP_CODE"
-            exit 1
-          fi
-
-      - name: Backup Test - Delete backup without confirmation
-        run: |
-          echo "Test: Backup verwijderen zonder bevestiging"
-          FILENAME=$(cat /tmp/backup_filename.txt)
-
-          RESPONSE=$(curl -s -X DELETE -H 'X-API-Key: test-api-key-12345' \
-            "http://localhost:8897/api/db/backups/$FILENAME")
-
-          if echo "$RESPONSE" | jq -e '.success == false' > /dev/null; then
-            echo "✓ Delete correct geweigerd zonder bevestigingsheader"
-          else
-            echo "✗ Delete had geweigerd moeten worden:"
-            echo "$RESPONSE" | jq .
-            exit 1
-          fi
-
-      - name: Backup Test - Delete backup with confirmation
-        run: |
-          echo "Test: Backup verwijderen met bevestiging"
-          FILENAME=$(cat /tmp/backup_filename.txt)
-
-          RESPONSE=$(curl -s -X DELETE \
-            -H 'X-API-Key: test-api-key-12345' \
-            -H "X-Confirm-Delete: $FILENAME" \
-            "http://localhost:8897/api/db/backups/$FILENAME")
-
-          if echo "$RESPONSE" | jq -e '.success == true' > /dev/null; then
-            echo "✓ Backup succesvol verwijderd"
-          else
-            echo "✗ Backup verwijderen mislukt:"
-            echo "$RESPONSE" | jq .
-            exit 1
-          fi
-
-      - name: Backup Test - Delete non-existent backup
-        run: |
-          echo "Test: Niet-bestaande backup verwijderen"
-          RESPONSE=$(curl -s -w "\n%{http_code}" -X DELETE \
-            -H 'X-API-Key: test-api-key-12345' \
-            -H "X-Confirm-Delete: aeron-backup-nonexistent.dump" \
-            "http://localhost:8897/api/db/backups/aeron-backup-nonexistent.dump")
-
-          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
-
+          echo "GET /api/invalid (niet-bestaand endpoint)"
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -H "X-API-Key: ${{ env.API_KEY }}" http://localhost:${{ env.API_PORT }}/api/invalid)
+          echo "HTTP status: $HTTP_CODE (verwacht: 404)"
           if [ "$HTTP_CODE" = "404" ]; then
-            echo "✓ Niet-bestaande backup geeft correct 404"
+            echo "Correct: ongeldig endpoint geeft 404 Not Found"
           else
-            echo "✗ Verwacht: 404, gekregen: $HTTP_CODE"
+            echo "::error::Verwachtte HTTP 404, kreeg $HTTP_CODE"
             exit 1
           fi
 
-      - name: Backup Test - Invalid format validation
+      - name: "API: Playlist endpoint"
+        if: matrix.suite == 'api-basic'
         run: |
-          echo "Test: Ongeldige format validatie"
-          RESPONSE=$(curl -s -X POST -H 'X-API-Key: test-api-key-12345' \
+          echo "Playlist data bijwerken naar vandaag..."
+          docker exec aeron-test-db psql -U aeron -d aeron_db -c "UPDATE aeron.playlistitem SET startdatetime = CURRENT_DATE + (startdatetime::time)" > /dev/null
+          echo "GET /api/playlist"
+          RESPONSE=$(curl -s -H "X-API-Key: ${{ env.API_KEY }}" http://localhost:${{ env.API_PORT }}/api/playlist)
+          SUCCESS=$(echo "$RESPONSE" | jq -r '.success')
+          BLOCKS=$(echo "$RESPONSE" | jq '.data | length')
+          if [ "$SUCCESS" = "true" ]; then
+            echo "Correct: playlist opgehaald met $BLOCKS blokken"
+          else
+            echo "::error::Playlist endpoint gefaald"
+            echo "Response: $RESPONSE"
+            exit 1
+          fi
+
+      - name: "API: Playlist block structure"
+        if: matrix.suite == 'api-basic'
+        run: |
+          echo "Controleren of playlist blokken de juiste velden hebben..."
+          RESPONSE=$(curl -s -H "X-API-Key: ${{ env.API_KEY }}" http://localhost:${{ env.API_PORT }}/api/playlist)
+          REQUIRED_FIELDS="blockid name start_time end_time date tracks"
+          FIRST_BLOCK=$(echo "$RESPONSE" | jq '.data[0]')
+          echo "Eerste blok: $FIRST_BLOCK"
+          for FIELD in $REQUIRED_FIELDS; do
+            if echo "$FIRST_BLOCK" | jq -e "has(\"$FIELD\")" > /dev/null; then
+              echo "Veld '$FIELD' aanwezig"
+            else
+              echo "::error::Verplicht veld '$FIELD' ontbreekt in playlist blok"
+              exit 1
+            fi
+          done
+
+      - name: "API: Playlist track structure"
+        if: matrix.suite == 'api-basic'
+        run: |
+          echo "Controleren of playlist tracks de juiste velden hebben..."
+          RESPONSE=$(curl -s -H "X-API-Key: ${{ env.API_KEY }}" http://localhost:${{ env.API_PORT }}/api/playlist)
+          REQUIRED_FIELDS="trackid tracktitle artistid artistname start_time"
+          FIRST_TRACK=$(echo "$RESPONSE" | jq '.data[0].tracks[0]')
+          echo "Eerste track: $FIRST_TRACK"
+          for FIELD in $REQUIRED_FIELDS; do
+            if echo "$FIRST_TRACK" | jq -e "has(\"$FIELD\")" > /dev/null; then
+              echo "Veld '$FIELD' aanwezig"
+            else
+              echo "::error::Verplicht veld '$FIELD' ontbreekt in playlist track"
+              exit 1
+            fi
+          done
+
+      - name: "API: Auth disabled mode"
+        if: matrix.suite == 'api-basic'
+        run: |
+          echo "API server herstarten zonder authenticatie..."
+          kill $(cat api.pid) 2>/dev/null || true
+          cat > test_no_auth.json << 'EOF'
+          {
+            "database": { "host": "localhost", "port": "5433", "name": "aeron_db", "user": "aeron", "password": "aeron123", "schema": "aeron", "sslmode": "disable" },
+            "image": { "target_width": 1280, "target_height": 1280, "quality": 90 },
+            "api": { "enabled": false, "keys": [] }
+          }
+          EOF
+          ./zwfm-aerontoolbox -config=test_no_auth.json -port=${{ env.API_PORT }} &
+          echo $! > api.pid
+          for i in {1..30}; do curl -sf http://localhost:${{ env.API_PORT }}/api/health > /dev/null 2>&1 && break; sleep 1; done
+          echo "GET /api/artists (zonder API key, auth uitgeschakeld)"
+          RESPONSE=$(curl -s http://localhost:${{ env.API_PORT }}/api/artists)
+          SUCCESS=$(echo "$RESPONSE" | jq -r '.success')
+          if [ "$SUCCESS" = "true" ]; then
+            echo "Correct: request zonder API key werkt als auth uitgeschakeld is"
+          else
+            echo "::error::Request zou moeten werken zonder auth als api.enabled=false"
+            echo "Response: $RESPONSE"
+            exit 1
+          fi
+
+      # ==================== ARTIST TESTS ====================
+      - name: "Artist: Get statistics"
+        if: matrix.suite == 'artists'
+        run: |
+          echo "GET /api/artists"
+          RESPONSE=$(curl -s -H "X-API-Key: ${{ env.API_KEY }}" http://localhost:${{ env.API_PORT }}/api/artists)
+          TOTAL=$(echo "$RESPONSE" | jq -r '.data.total')
+          WITH_IMG=$(echo "$RESPONSE" | jq -r '.data.with_images')
+          WITHOUT_IMG=$(echo "$RESPONSE" | jq -r '.data.without_images')
+          echo "Totaal: $TOTAL (verwacht: 1000)"
+          echo "Met afbeelding: $WITH_IMG (verwacht: >0)"
+          echo "Zonder afbeelding: $WITHOUT_IMG (verwacht: >0)"
+          FAILED=0
+          [ "$TOTAL" -ne 1000 ] && echo "::error::Totaal aantal artiesten klopt niet" && FAILED=1
+          [ "$WITH_IMG" -le 0 ] && echo "::error::Geen artiesten met afbeelding" && FAILED=1
+          [ "$WITHOUT_IMG" -le 0 ] && echo "::error::Geen artiesten zonder afbeelding" && FAILED=1
+          exit $FAILED
+
+      - name: "Artist: Get single artist"
+        if: matrix.suite == 'artists'
+        run: |
+          echo "GET /api/artists/${{ env.ARTIST_ID }}"
+          RESPONSE=$(curl -s -H "X-API-Key: ${{ env.API_KEY }}" "http://localhost:${{ env.API_PORT }}/api/artists/${{ env.ARTIST_ID }}")
+          SUCCESS=$(echo "$RESPONSE" | jq -r '.success')
+          ARTIST_NAME=$(echo "$RESPONSE" | jq -r '.data.artistname')
+          if [ "$SUCCESS" = "true" ]; then
+            echo "Artiest gevonden: $ARTIST_NAME"
+          else
+            echo "::error::Artiest niet gevonden"
+            echo "Response: $RESPONSE"
+            exit 1
+          fi
+
+      - name: "Artist: Non-existent returns 404"
+        if: matrix.suite == 'artists'
+        run: |
+          echo "GET /api/artists/${{ env.FAKE_UUID }} (niet-bestaande artiest)"
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -H "X-API-Key: ${{ env.API_KEY }}" \
+            "http://localhost:${{ env.API_PORT }}/api/artists/${{ env.FAKE_UUID }}")
+          echo "HTTP status: $HTTP_CODE (verwacht: 404)"
+          if [ "$HTTP_CODE" = "404" ]; then
+            echo "Correct: niet-bestaande artiest geeft 404"
+          else
+            echo "::error::Verwachtte HTTP 404, kreeg $HTTP_CODE"
+            exit 1
+          fi
+
+      - name: "Artist: Upload image via URL"
+        if: matrix.suite == 'artists'
+        run: |
+          echo "POST /api/artists/${{ env.ARTIST_ID }}/image (via URL)"
+          RESPONSE=$(curl -s -X POST -H "X-API-Key: ${{ env.API_KEY }}" \
+            "http://localhost:${{ env.API_PORT }}/api/artists/${{ env.ARTIST_ID }}/image" \
             -H 'Content-Type: application/json' \
-            http://localhost:8897/api/db/backup \
-            -d '{"format": "invalid_format", "dry_run": true}')
-
-          if echo "$RESPONSE" | jq -e '.success == false' > /dev/null; then
-            ERROR=$(echo "$RESPONSE" | jq -r '.error')
-            echo "✓ Ongeldige format correct afgewezen: $ERROR"
+            -d '{"url":"https://picsum.photos/1500"}' -m 15)
+          SUCCESS=$(echo "$RESPONSE" | jq -r '.success')
+          if [ "$SUCCESS" = "true" ]; then
+            echo "Afbeelding succesvol geupload via URL"
           else
-            echo "✗ Ongeldige format had afgewezen moeten worden"
+            echo "::error::Upload via URL gefaald"
+            echo "Response: $RESPONSE"
             exit 1
           fi
 
-      - name: Backup Test - Invalid compression validation
+      - name: "Artist: Upload image via base64"
+        if: matrix.suite == 'artists'
         run: |
-          echo "Test: Ongeldige compressie validatie"
-          RESPONSE=$(curl -s -X POST -H 'X-API-Key: test-api-key-12345' \
+          echo "POST /api/artists/${{ env.BLOF_ID }}/image (via base64)"
+          BASE64_IMAGE=$(base64 -w 0 < test_large.png)
+          RESPONSE=$(curl -s -X POST -H "X-API-Key: ${{ env.API_KEY }}" \
+            "http://localhost:${{ env.API_PORT }}/api/artists/${{ env.BLOF_ID }}/image" \
             -H 'Content-Type: application/json' \
-            http://localhost:8897/api/db/backup \
-            -d '{"compression": 15, "dry_run": true}')
-
-          if echo "$RESPONSE" | jq -e '.success == false' > /dev/null; then
-            ERROR=$(echo "$RESPONSE" | jq -r '.error')
-            echo "✓ Ongeldige compressie correct afgewezen: $ERROR"
+            -d "{\"image\":\"data:image/png;base64,$BASE64_IMAGE\"}")
+          SUCCESS=$(echo "$RESPONSE" | jq -r '.success')
+          if [ "$SUCCESS" = "true" ]; then
+            echo "Afbeelding succesvol geupload via base64"
           else
-            echo "✗ Ongeldige compressie had afgewezen moeten worden"
+            echo "::error::Upload via base64 gefaald"
+            echo "Response: $RESPONSE"
             exit 1
           fi
 
-      - name: Backup Test - Path traversal protection
+      - name: "Artist: Get image"
+        if: matrix.suite == 'artists'
         run: |
-          echo "Test: Path traversal bescherming"
+          echo "GET /api/artists/${{ env.BLOF_ID }}/image"
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -H "X-API-Key: ${{ env.API_KEY }}" \
+            "http://localhost:${{ env.API_PORT }}/api/artists/${{ env.BLOF_ID }}/image")
+          echo "HTTP status: $HTTP_CODE (verwacht: 200)"
+          if [ "$HTTP_CODE" = "200" ]; then
+            echo "Correct: afbeelding kan worden opgehaald"
+          else
+            echo "::error::Verwachtte HTTP 200, kreeg $HTTP_CODE"
+            exit 1
+          fi
+
+      - name: "Artist: Delete image"
+        if: matrix.suite == 'artists'
+        run: |
+          echo "DELETE /api/artists/${{ env.BLOF_ID }}/image"
+          RESPONSE=$(curl -s -X DELETE -H "X-API-Key: ${{ env.API_KEY }}" \
+            "http://localhost:${{ env.API_PORT }}/api/artists/${{ env.BLOF_ID }}/image")
+          SUCCESS=$(echo "$RESPONSE" | jq -r '.success')
+          if [ "$SUCCESS" = "true" ]; then
+            echo "Afbeelding succesvol verwijderd"
+          else
+            echo "::error::Verwijderen van afbeelding gefaald"
+            echo "Response: $RESPONSE"
+            exit 1
+          fi
+
+      - name: "Artist: Deleted image returns 404"
+        if: matrix.suite == 'artists'
+        run: |
+          echo "GET /api/artists/${{ env.BLOF_ID }}/image (na verwijderen)"
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -H "X-API-Key: ${{ env.API_KEY }}" \
+            "http://localhost:${{ env.API_PORT }}/api/artists/${{ env.BLOF_ID }}/image")
+          echo "HTTP status: $HTTP_CODE (verwacht: 404)"
+          if [ "$HTTP_CODE" = "404" ]; then
+            echo "Correct: verwijderde afbeelding geeft 404"
+          else
+            echo "::error::Verwachtte HTTP 404, kreeg $HTTP_CODE"
+            exit 1
+          fi
+
+      - name: "Artist: Bulk delete requires confirmation"
+        if: matrix.suite == 'artists'
+        run: |
+          echo "DELETE /api/artists/bulk-delete (zonder bevestiging)"
+          RESPONSE=$(curl -s -X DELETE -H "X-API-Key: ${{ env.API_KEY }}" \
+            http://localhost:${{ env.API_PORT }}/api/artists/bulk-delete)
+          SUCCESS=$(echo "$RESPONSE" | jq -r '.success')
+          if [ "$SUCCESS" = "false" ]; then
+            echo "Correct: bulk delete zonder bevestiging wordt geweigerd"
+          else
+            echo "::error::Bulk delete zonder bevestiging zou geweigerd moeten worden"
+            exit 1
+          fi
+
+      # ==================== TRACK TESTS ====================
+      - name: "Track: Get statistics"
+        if: matrix.suite == 'tracks'
+        run: |
+          echo "GET /api/tracks"
+          RESPONSE=$(curl -s -H "X-API-Key: ${{ env.API_KEY }}" http://localhost:${{ env.API_PORT }}/api/tracks)
+          TOTAL=$(echo "$RESPONSE" | jq -r '.data.total')
+          echo "Totaal aantal tracks: $TOTAL (verwacht: 1100)"
+          if [ "$TOTAL" -eq 1100 ]; then
+            echo "Correct: $TOTAL tracks gevonden"
+          else
+            echo "::error::Verwachtte 1100 tracks, kreeg $TOTAL"
+            exit 1
+          fi
+          # Save TRACK_ID for subsequent tests
+          TRACK_ID=$(docker exec aeron-test-db psql -U aeron -d aeron_db -t -c "SELECT titleid FROM aeron.track LIMIT 1;" | tr -d ' ')
+          echo "TRACK_ID=$TRACK_ID" >> $GITHUB_ENV
+          echo "Test track ID: $TRACK_ID"
+
+      - name: "Track: Get single track"
+        if: matrix.suite == 'tracks'
+        run: |
+          echo "GET /api/tracks/${{ env.TRACK_ID }}"
+          RESPONSE=$(curl -s -H "X-API-Key: ${{ env.API_KEY }}" "http://localhost:${{ env.API_PORT }}/api/tracks/${{ env.TRACK_ID }}")
+          SUCCESS=$(echo "$RESPONSE" | jq -r '.success')
+          TITLE=$(echo "$RESPONSE" | jq -r '.data.title')
+          if [ "$SUCCESS" = "true" ]; then
+            echo "Track gevonden: $TITLE"
+          else
+            echo "::error::Track niet gevonden"
+            echo "Response: $RESPONSE"
+            exit 1
+          fi
+
+      - name: "Track: Non-existent returns 404"
+        if: matrix.suite == 'tracks'
+        run: |
+          echo "GET /api/tracks/${{ env.FAKE_UUID }} (niet-bestaande track)"
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -H "X-API-Key: ${{ env.API_KEY }}" \
+            "http://localhost:${{ env.API_PORT }}/api/tracks/${{ env.FAKE_UUID }}")
+          echo "HTTP status: $HTTP_CODE (verwacht: 404)"
+          if [ "$HTTP_CODE" = "404" ]; then
+            echo "Correct: niet-bestaande track geeft 404"
+          else
+            echo "::error::Verwachtte HTTP 404, kreeg $HTTP_CODE"
+            exit 1
+          fi
+
+      - name: "Track: Upload image"
+        if: matrix.suite == 'tracks'
+        run: |
+          echo "POST /api/tracks/${{ env.TRACK_ID }}/image"
+          BASE64_IMAGE=$(base64 -w 0 < test_large.png)
+          RESPONSE=$(curl -s -X POST -H "X-API-Key: ${{ env.API_KEY }}" \
+            "http://localhost:${{ env.API_PORT }}/api/tracks/${{ env.TRACK_ID }}/image" \
+            -H 'Content-Type: application/json' \
+            -d "{\"image\":\"data:image/png;base64,$BASE64_IMAGE\"}")
+          SUCCESS=$(echo "$RESPONSE" | jq -r '.success')
+          if [ "$SUCCESS" = "true" ]; then
+            echo "Afbeelding succesvol geupload naar track"
+          else
+            echo "::error::Track image upload gefaald"
+            echo "Response: $RESPONSE"
+            exit 1
+          fi
+
+      - name: "Track: Get image"
+        if: matrix.suite == 'tracks'
+        run: |
+          echo "GET /api/tracks/${{ env.TRACK_ID }}/image"
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -H "X-API-Key: ${{ env.API_KEY }}" \
+            "http://localhost:${{ env.API_PORT }}/api/tracks/${{ env.TRACK_ID }}/image")
+          echo "HTTP status: $HTTP_CODE (verwacht: 200)"
+          if [ "$HTTP_CODE" = "200" ]; then
+            echo "Correct: track afbeelding kan worden opgehaald"
+          else
+            echo "::error::Verwachtte HTTP 200, kreeg $HTTP_CODE"
+            exit 1
+          fi
+
+      - name: "Track: Delete image"
+        if: matrix.suite == 'tracks'
+        run: |
+          echo "DELETE /api/tracks/${{ env.TRACK_ID }}/image"
+          RESPONSE=$(curl -s -X DELETE -H "X-API-Key: ${{ env.API_KEY }}" \
+            "http://localhost:${{ env.API_PORT }}/api/tracks/${{ env.TRACK_ID }}/image")
+          SUCCESS=$(echo "$RESPONSE" | jq -r '.success')
+          if [ "$SUCCESS" = "true" ]; then
+            echo "Track afbeelding succesvol verwijderd"
+          else
+            echo "::error::Verwijderen van track afbeelding gefaald"
+            echo "Response: $RESPONSE"
+            exit 1
+          fi
+
+      # ==================== MAINTENANCE TESTS ====================
+      - name: "Maintenance: Database health endpoint"
+        if: matrix.suite == 'maintenance'
+        run: |
+          echo "GET /api/db/health"
+          RESPONSE=$(curl -s -H "X-API-Key: ${{ env.API_KEY }}" http://localhost:${{ env.API_PORT }}/api/db/health)
+          SUCCESS=$(echo "$RESPONSE" | jq -r '.success')
+          DB_NAME=$(echo "$RESPONSE" | jq -r '.data.database_name')
+          if [ "$SUCCESS" = "true" ]; then
+            echo "Database health OK - database: $DB_NAME"
+          else
+            echo "::error::Database health check gefaald"
+            echo "Response: $RESPONSE"
+            exit 1
+          fi
+
+      - name: "Maintenance: Vacuum dry-run"
+        if: matrix.suite == 'maintenance'
+        run: |
+          echo "POST /api/db/vacuum (dry_run=true)"
+          RESPONSE=$(curl -s -X POST -H "X-API-Key: ${{ env.API_KEY }}" \
+            -H 'Content-Type: application/json' \
+            http://localhost:${{ env.API_PORT }}/api/db/vacuum \
+            -d '{"dry_run": true}')
+          SUCCESS=$(echo "$RESPONSE" | jq -r '.success')
+          DRY_RUN=$(echo "$RESPONSE" | jq -r '.data.dry_run')
+          if [ "$SUCCESS" = "true" ] && [ "$DRY_RUN" = "true" ]; then
+            echo "Vacuum dry-run succesvol"
+          else
+            echo "::error::Vacuum dry-run gefaald"
+            echo "Response: $RESPONSE"
+            exit 1
+          fi
+
+      - name: "Maintenance: Vacuum specific table"
+        if: matrix.suite == 'maintenance'
+        run: |
+          echo "POST /api/db/vacuum (table=artist, dry_run=true)"
+          RESPONSE=$(curl -s -X POST -H "X-API-Key: ${{ env.API_KEY }}" \
+            -H 'Content-Type: application/json' \
+            http://localhost:${{ env.API_PORT }}/api/db/vacuum \
+            -d '{"tables": ["artist"], "dry_run": true}')
+          SUCCESS=$(echo "$RESPONSE" | jq -r '.success')
+          TABLES_TOTAL=$(echo "$RESPONSE" | jq -r '.data.tables_total')
+          if [ "$SUCCESS" = "true" ] && [ "$TABLES_TOTAL" = "1" ]; then
+            echo "Vacuum voor specifieke tabel succesvol - $TABLES_TOTAL tabel(len)"
+          else
+            echo "::error::Vacuum voor specifieke tabel gefaald"
+            echo "Response: $RESPONSE"
+            exit 1
+          fi
+
+      - name: "Maintenance: Vacuum with analyze"
+        if: matrix.suite == 'maintenance'
+        run: |
+          echo "POST /api/db/vacuum (table=track, analyze=true, dry_run=true)"
+          RESPONSE=$(curl -s -X POST -H "X-API-Key: ${{ env.API_KEY }}" \
+            -H 'Content-Type: application/json' \
+            http://localhost:${{ env.API_PORT }}/api/db/vacuum \
+            -d '{"tables": ["track"], "analyze": true, "dry_run": true}')
+          SUCCESS=$(echo "$RESPONSE" | jq -r '.success')
+          if [ "$SUCCESS" = "true" ]; then
+            echo "Vacuum met analyze succesvol"
+          else
+            echo "::error::Vacuum met analyze gefaald"
+            echo "Response: $RESPONSE"
+            exit 1
+          fi
+
+      - name: "Maintenance: Non-existent table skipped"
+        if: matrix.suite == 'maintenance'
+        run: |
+          echo "POST /api/db/vacuum (table=nonexistent_table)"
+          RESPONSE=$(curl -s -X POST -H "X-API-Key: ${{ env.API_KEY }}" \
+            -H 'Content-Type: application/json' \
+            http://localhost:${{ env.API_PORT }}/api/db/vacuum \
+            -d '{"tables": ["nonexistent_table"], "dry_run": true}')
+          SUCCESS=$(echo "$RESPONSE" | jq -r '.success')
+          SKIPPED=$(echo "$RESPONSE" | jq -r '.data.tables_skipped')
+          if [ "$SUCCESS" = "true" ] && [ "$SKIPPED" = "1" ]; then
+            echo "Correct: niet-bestaande tabel wordt overgeslagen ($SKIPPED)"
+          else
+            echo "::error::Niet-bestaande tabel zou overgeslagen moeten worden"
+            echo "Response: $RESPONSE"
+            exit 1
+          fi
+
+      - name: "Maintenance: Analyze endpoint"
+        if: matrix.suite == 'maintenance'
+        run: |
+          echo "POST /api/db/analyze (table=artist)"
+          RESPONSE=$(curl -s -X POST -H "X-API-Key: ${{ env.API_KEY }}" \
+            -H 'Content-Type: application/json' \
+            http://localhost:${{ env.API_PORT }}/api/db/analyze \
+            -d '{"tables": ["artist"]}')
+          SUCCESS=$(echo "$RESPONSE" | jq -r '.success')
+          if [ "$SUCCESS" = "true" ]; then
+            echo "Analyze succesvol uitgevoerd"
+          else
+            echo "::error::Analyze gefaald"
+            echo "Response: $RESPONSE"
+            exit 1
+          fi
+
+      - name: "Maintenance: Execute actual vacuum"
+        if: matrix.suite == 'maintenance'
+        run: |
+          echo "POST /api/db/vacuum (table=artist, analyze=true)"
+          RESPONSE=$(curl -s -X POST -H "X-API-Key: ${{ env.API_KEY }}" \
+            -H 'Content-Type: application/json' \
+            http://localhost:${{ env.API_PORT }}/api/db/vacuum \
+            -d '{"tables": ["artist"], "analyze": true}')
+          SUCCESS=$(echo "$RESPONSE" | jq -r '.success')
+          TABLES_SUCCESS=$(echo "$RESPONSE" | jq -r '.data.tables_success')
+          if [ "$SUCCESS" = "true" ] && [ "$TABLES_SUCCESS" -ge 1 ]; then
+            echo "Vacuum succesvol uitgevoerd op $TABLES_SUCCESS tabel(len)"
+          else
+            echo "::error::Vacuum uitvoering gefaald"
+            echo "Response: $RESPONSE"
+            exit 1
+          fi
+
+      # ==================== BACKUP TESTS ====================
+      - name: "Backup: List backups (empty)"
+        if: matrix.suite == 'backup'
+        run: |
+          echo "GET /api/db/backups"
+          RESPONSE=$(curl -s -H "X-API-Key: ${{ env.API_KEY }}" http://localhost:${{ env.API_PORT }}/api/db/backups)
+          SUCCESS=$(echo "$RESPONSE" | jq -r '.success')
+          COUNT=$(echo "$RESPONSE" | jq -r '.data.total_count')
+          if [ "$SUCCESS" = "true" ] && [ "$COUNT" = "0" ]; then
+            echo "Correct: geen backups aanwezig ($COUNT)"
+          else
+            echo "::error::Verwachtte 0 backups, kreeg $COUNT"
+            echo "Response: $RESPONSE"
+            exit 1
+          fi
+
+      - name: "Backup: Dry-run"
+        if: matrix.suite == 'backup'
+        run: |
+          echo "POST /api/db/backup (dry_run=true)"
+          RESPONSE=$(curl -s -X POST -H "X-API-Key: ${{ env.API_KEY }}" \
+            -H 'Content-Type: application/json' \
+            http://localhost:${{ env.API_PORT }}/api/db/backup \
+            -d '{"format": "custom", "dry_run": true}')
+          SUCCESS=$(echo "$RESPONSE" | jq -r '.success')
+          DRY_RUN=$(echo "$RESPONSE" | jq -r '.data.dry_run')
+          if [ "$SUCCESS" = "true" ] && [ "$DRY_RUN" = "true" ]; then
+            echo "Backup dry-run succesvol"
+          else
+            echo "::error::Backup dry-run gefaald"
+            echo "Response: $RESPONSE"
+            exit 1
+          fi
+
+      - name: "Backup: Create (custom format)"
+        if: matrix.suite == 'backup'
+        run: |
+          echo "POST /api/db/backup (format=custom, compression=6)"
+          RESPONSE=$(curl -s -X POST -H "X-API-Key: ${{ env.API_KEY }}" \
+            -H 'Content-Type: application/json' \
+            http://localhost:${{ env.API_PORT }}/api/db/backup \
+            -d '{"format": "custom", "compression": 6}')
+          SUCCESS=$(echo "$RESPONSE" | jq -r '.success')
+          FILENAME=$(echo "$RESPONSE" | jq -r '.data.filename')
+          if [ "$SUCCESS" = "true" ] && [ -n "$FILENAME" ]; then
+            echo "Backup aangemaakt: $FILENAME"
+            echo "BACKUP_FILENAME=$FILENAME" >> $GITHUB_ENV
+          else
+            echo "::error::Backup creatie gefaald"
+            echo "Response: $RESPONSE"
+            exit 1
+          fi
+
+      - name: "Backup: Create (plain SQL)"
+        if: matrix.suite == 'backup'
+        run: |
+          echo "POST /api/db/backup (format=plain)"
+          RESPONSE=$(curl -s -X POST -H "X-API-Key: ${{ env.API_KEY }}" \
+            -H 'Content-Type: application/json' \
+            http://localhost:${{ env.API_PORT }}/api/db/backup \
+            -d '{"format": "plain"}')
+          SUCCESS=$(echo "$RESPONSE" | jq -r '.success')
+          FORMAT=$(echo "$RESPONSE" | jq -r '.data.format')
+          if [ "$SUCCESS" = "true" ] && [ "$FORMAT" = "plain" ]; then
+            echo "Plain SQL backup aangemaakt"
+          else
+            echo "::error::Plain SQL backup gefaald"
+            echo "Response: $RESPONSE"
+            exit 1
+          fi
+
+      - name: "Backup: List backups (2 files)"
+        if: matrix.suite == 'backup'
+        run: |
+          echo "GET /api/db/backups"
+          RESPONSE=$(curl -s -H "X-API-Key: ${{ env.API_KEY }}" http://localhost:${{ env.API_PORT }}/api/db/backups)
+          SUCCESS=$(echo "$RESPONSE" | jq -r '.success')
+          COUNT=$(echo "$RESPONSE" | jq -r '.data.total_count')
+          if [ "$SUCCESS" = "true" ] && [ "$COUNT" = "2" ]; then
+            echo "Correct: $COUNT backups aanwezig"
+          else
+            echo "::error::Verwachtte 2 backups, kreeg $COUNT"
+            echo "Response: $RESPONSE"
+            exit 1
+          fi
+
+      - name: "Backup: Download file"
+        if: matrix.suite == 'backup'
+        run: |
+          echo "GET /api/db/backups/${{ env.BACKUP_FILENAME }}"
+          HTTP_CODE=$(curl -s -o /tmp/backup.dump -w "%{http_code}" \
+            -H "X-API-Key: ${{ env.API_KEY }}" \
+            "http://localhost:${{ env.API_PORT }}/api/db/backups/${{ env.BACKUP_FILENAME }}")
+          FILE_SIZE=$(stat -c%s /tmp/backup.dump 2>/dev/null || echo "0")
+          echo "HTTP status: $HTTP_CODE, bestandsgrootte: $FILE_SIZE bytes"
+          if [ "$HTTP_CODE" = "200" ] && [ "$FILE_SIZE" -gt 0 ]; then
+            echo "Backup succesvol gedownload"
+          else
+            echo "::error::Backup download gefaald - HTTP $HTTP_CODE, grootte $FILE_SIZE"
+            exit 1
+          fi
+
+      - name: "Backup: Stream download"
+        if: matrix.suite == 'backup'
+        run: |
+          echo "GET /api/db/backup/download?format=custom&compression=3"
+          HTTP_CODE=$(curl -s -o /tmp/backup_stream.dump -w "%{http_code}" \
+            -H "X-API-Key: ${{ env.API_KEY }}" \
+            "http://localhost:${{ env.API_PORT }}/api/db/backup/download?format=custom&compression=3")
+          FILE_SIZE=$(stat -c%s /tmp/backup_stream.dump 2>/dev/null || echo "0")
+          echo "HTTP status: $HTTP_CODE, bestandsgrootte: $FILE_SIZE bytes"
+          if [ "$HTTP_CODE" = "200" ] && [ "$FILE_SIZE" -gt 0 ]; then
+            echo "Stream backup succesvol gedownload"
+          else
+            echo "::error::Stream download gefaald - HTTP $HTTP_CODE, grootte $FILE_SIZE"
+            exit 1
+          fi
+
+      - name: "Backup: Delete without confirmation rejected"
+        if: matrix.suite == 'backup'
+        run: |
+          echo "DELETE /api/db/backups/${{ env.BACKUP_FILENAME }} (zonder bevestiging)"
+          RESPONSE=$(curl -s -X DELETE -H "X-API-Key: ${{ env.API_KEY }}" \
+            "http://localhost:${{ env.API_PORT }}/api/db/backups/${{ env.BACKUP_FILENAME }}")
+          SUCCESS=$(echo "$RESPONSE" | jq -r '.success')
+          if [ "$SUCCESS" = "false" ]; then
+            echo "Correct: delete zonder bevestiging wordt geweigerd"
+          else
+            echo "::error::Delete zonder bevestiging zou geweigerd moeten worden"
+            exit 1
+          fi
+
+      - name: "Backup: Delete with confirmation"
+        if: matrix.suite == 'backup'
+        run: |
+          echo "DELETE /api/db/backups/${{ env.BACKUP_FILENAME }} (met bevestiging)"
           RESPONSE=$(curl -s -X DELETE \
-            -H 'X-API-Key: test-api-key-12345' \
-            -H "X-Confirm-Delete: ../../../etc/passwd" \
-            "http://localhost:8897/api/db/backups/../../../etc/passwd")
-
-          # Should either 400 (validation) or 404 (not found after validation)
-          if echo "$RESPONSE" | jq -e '.success == false' > /dev/null; then
-            echo "✓ Path traversal correct geblokkeerd"
+            -H "X-API-Key: ${{ env.API_KEY }}" \
+            -H "X-Confirm-Delete: ${{ env.BACKUP_FILENAME }}" \
+            "http://localhost:${{ env.API_PORT }}/api/db/backups/${{ env.BACKUP_FILENAME }}")
+          SUCCESS=$(echo "$RESPONSE" | jq -r '.success')
+          if [ "$SUCCESS" = "true" ]; then
+            echo "Backup succesvol verwijderd"
           else
-            echo "✗ Path traversal had geblokkeerd moeten worden"
+            echo "::error::Backup verwijderen gefaald"
+            echo "Response: $RESPONSE"
             exit 1
           fi
 
-      - name: Backup Test - Verify backup file count after tests
+      - name: "Backup: Non-existent returns 404"
+        if: matrix.suite == 'backup'
         run: |
-          echo "Test: Controleer backup bestanden"
-          RESPONSE=$(curl -s -H 'X-API-Key: test-api-key-12345' http://localhost:8897/api/db/backups)
-          COUNT=$(echo "$RESPONSE" | jq '.data.total_count')
+          echo "DELETE /api/db/backups/aeron-backup-nonexistent.dump"
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE \
+            -H "X-API-Key: ${{ env.API_KEY }}" \
+            -H "X-Confirm-Delete: aeron-backup-nonexistent.dump" \
+            "http://localhost:${{ env.API_PORT }}/api/db/backups/aeron-backup-nonexistent.dump")
+          echo "HTTP status: $HTTP_CODE (verwacht: 404)"
+          if [ "$HTTP_CODE" = "404" ]; then
+            echo "Correct: niet-bestaande backup geeft 404"
+          else
+            echo "::error::Verwachtte HTTP 404, kreeg $HTTP_CODE"
+            exit 1
+          fi
 
-          echo "Aantal backups na tests: $COUNT"
-          ls -la /tmp/backups/ || true
-
-      - name: Stop API backup server
+      - name: "Backup: Invalid format rejected"
+        if: matrix.suite == 'backup'
         run: |
-          kill $(cat api_backup.pid) || true
-          rm -f api_backup.pid
-          rm -f /tmp/backup_filename.txt /tmp/downloaded_backup.dump /tmp/streamed_backup.dump
+          echo "POST /api/db/backup (format=invalid)"
+          RESPONSE=$(curl -s -X POST -H "X-API-Key: ${{ env.API_KEY }}" \
+            -H 'Content-Type: application/json' \
+            http://localhost:${{ env.API_PORT }}/api/db/backup \
+            -d '{"format": "invalid"}')
+          SUCCESS=$(echo "$RESPONSE" | jq -r '.success')
+          if [ "$SUCCESS" = "false" ]; then
+            echo "Correct: ongeldig format wordt geweigerd"
+          else
+            echo "::error::Ongeldig format zou geweigerd moeten worden"
+            exit 1
+          fi
 
-      # ==========================================
-      # CLEANUP
-      # ==========================================
-      - name: "=== CLEANUP ==="
-        run: echo "Start cleanup"
-
-      - name: Cleanup test data
+      - name: "Backup: Invalid compression rejected"
+        if: matrix.suite == 'backup'
         run: |
-          docker exec aeron-test-db psql -U aeron -d aeron_db -c "UPDATE aeron.artist SET picture = NULL WHERE artist LIKE 'TEST_%';"
-          docker exec aeron-test-db psql -U aeron -d aeron_db -c "UPDATE aeron.track SET picture = NULL WHERE tracktitle LIKE 'TEST_%';"
-          rm -f test_*.png test_*.json api*.pid
+          echo "POST /api/db/backup (compression=15)"
+          RESPONSE=$(curl -s -X POST -H "X-API-Key: ${{ env.API_KEY }}" \
+            -H 'Content-Type: application/json' \
+            http://localhost:${{ env.API_PORT }}/api/db/backup \
+            -d '{"compression": 15, "dry_run": true}')
+          SUCCESS=$(echo "$RESPONSE" | jq -r '.success')
+          if [ "$SUCCESS" = "false" ]; then
+            echo "Correct: ongeldige compressie (15) wordt geweigerd"
+          else
+            echo "::error::Ongeldige compressie zou geweigerd moeten worden"
+            exit 1
+          fi
 
-          # Stop en verwijder Docker containers
-          cd tests && docker compose -f docker-compose.test.yml down -v
+      - name: "Backup: Path traversal blocked"
+        if: matrix.suite == 'backup'
+        run: |
+          echo "DELETE /api/db/backups/../../../etc/passwd (path traversal poging)"
+          RESPONSE=$(curl -s -X DELETE \
+            -H "X-API-Key: ${{ env.API_KEY }}" \
+            -H "X-Confirm-Delete: ../../../etc/passwd" \
+            "http://localhost:${{ env.API_PORT }}/api/db/backups/../../../etc/passwd")
+          SUCCESS=$(echo "$RESPONSE" | jq -r '.success')
+          if [ "$SUCCESS" = "false" ]; then
+            echo "Correct: path traversal wordt geblokkeerd"
+          else
+            echo "::error::Path traversal zou geblokkeerd moeten worden!"
+            exit 1
+          fi
+
+      # ==================== EDGE CASE TESTS ====================
+      - name: "Edge: Upload to non-existent artist"
+        if: matrix.suite == 'edge-cases'
+        run: |
+          echo "POST /api/artists/${{ env.FAKE_UUID }}/image (niet-bestaande artiest)"
+          RESPONSE=$(curl -s -X POST -H "X-API-Key: ${{ env.API_KEY }}" \
+            "http://localhost:${{ env.API_PORT }}/api/artists/${{ env.FAKE_UUID }}/image" \
+            -H 'Content-Type: application/json' \
+            -d '{"url":"https://picsum.photos/500"}')
+          SUCCESS=$(echo "$RESPONSE" | jq -r '.success')
+          if [ "$SUCCESS" = "false" ]; then
+            echo "Correct: upload naar niet-bestaande artiest wordt geweigerd"
+          else
+            echo "::error::Upload naar niet-bestaande artiest zou moeten falen"
+            exit 1
+          fi
+
+      - name: "Edge: Invalid UUID returns 400"
+        if: matrix.suite == 'edge-cases'
+        run: |
+          echo "POST /api/artists/not-a-uuid/image (ongeldige UUID)"
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST -H "X-API-Key: ${{ env.API_KEY }}" \
+            "http://localhost:${{ env.API_PORT }}/api/artists/not-a-uuid/image" \
+            -H 'Content-Type: application/json' \
+            -d '{"url":"https://picsum.photos/500"}')
+          echo "HTTP status: $HTTP_CODE (verwacht: 400)"
+          if [ "$HTTP_CODE" = "400" ]; then
+            echo "Correct: ongeldige UUID geeft 400 Bad Request"
+          else
+            echo "::error::Verwachtte HTTP 400, kreeg $HTTP_CODE"
+            exit 1
+          fi
+
+      - name: "Edge: No image source rejected"
+        if: matrix.suite == 'edge-cases'
+        run: |
+          echo "POST /api/artists/${{ env.ARTIST_ID }}/image (geen afbeelding meegegeven)"
+          RESPONSE=$(curl -s -X POST -H "X-API-Key: ${{ env.API_KEY }}" \
+            "http://localhost:${{ env.API_PORT }}/api/artists/${{ env.ARTIST_ID }}/image" \
+            -H 'Content-Type: application/json' \
+            -d '{}')
+          SUCCESS=$(echo "$RESPONSE" | jq -r '.success')
+          ERROR=$(echo "$RESPONSE" | jq -r '.error')
+          if [ "$SUCCESS" = "false" ] && echo "$ERROR" | grep -q 'afbeelding is verplicht'; then
+            echo "Correct: request zonder afbeelding wordt geweigerd"
+            echo "Foutmelding: $ERROR"
+          else
+            echo "::error::Request zonder afbeelding zou geweigerd moeten worden met juiste foutmelding"
+            echo "Response: $RESPONSE"
+            exit 1
+          fi
+
+      - name: "Edge: Both URL and image rejected"
+        if: matrix.suite == 'edge-cases'
+        run: |
+          echo "POST /api/artists/${{ env.ARTIST_ID }}/image (zowel URL als image)"
+          RESPONSE=$(curl -s -X POST -H "X-API-Key: ${{ env.API_KEY }}" \
+            "http://localhost:${{ env.API_PORT }}/api/artists/${{ env.ARTIST_ID }}/image" \
+            -H 'Content-Type: application/json' \
+            -d '{"url":"https://example.com/img.jpg","image":"data:image/jpeg;base64,/9j/4AAQ"}')
+          SUCCESS=$(echo "$RESPONSE" | jq -r '.success')
+          ERROR=$(echo "$RESPONSE" | jq -r '.error')
+          if [ "$SUCCESS" = "false" ] && echo "$ERROR" | grep -q 'gebruik óf URL óf upload, niet beide'; then
+            echo "Correct: zowel URL als image wordt geweigerd"
+            echo "Foutmelding: $ERROR"
+          else
+            echo "::error::Request met zowel URL als image zou geweigerd moeten worden"
+            echo "Response: $RESPONSE"
+            exit 1
+          fi
+
+      - name: "Edge: Concurrent uploads"
+        if: matrix.suite == 'edge-cases'
+        run: |
+          echo "Testen van 3 gelijktijdige uploads..."
+          ARTIST_ID2=$(docker exec aeron-test-db psql -U aeron -d aeron_db -t -c "SELECT artistid FROM aeron.artist OFFSET 1 LIMIT 1;" | tr -d ' ')
+          TRACK_ID=$(docker exec aeron-test-db psql -U aeron -d aeron_db -t -c "SELECT titleid FROM aeron.track LIMIT 1;" | tr -d ' ')
+          echo "Artist 1: ${{ env.ARTIST_ID }}"
+          echo "Artist 2: $ARTIST_ID2"
+          echo "Track: $TRACK_ID"
+
+          curl -s -X POST -H "X-API-Key: ${{ env.API_KEY }}" \
+            "http://localhost:${{ env.API_PORT }}/api/artists/${{ env.ARTIST_ID }}/image" \
+            -H 'Content-Type: application/json' \
+            -d '{"url":"https://picsum.photos/1500"}' > /tmp/r1.json &
+
+          curl -s -X POST -H "X-API-Key: ${{ env.API_KEY }}" \
+            "http://localhost:${{ env.API_PORT }}/api/artists/${ARTIST_ID2}/image" \
+            -H 'Content-Type: application/json' \
+            -d '{"url":"https://picsum.photos/1500"}' > /tmp/r2.json &
+
+          curl -s -X POST -H "X-API-Key: ${{ env.API_KEY }}" \
+            "http://localhost:${{ env.API_PORT }}/api/tracks/${TRACK_ID}/image" \
+            -H 'Content-Type: application/json' \
+            -d '{"url":"https://picsum.photos/1500"}' > /tmp/r3.json &
+
+          wait
+          echo "Upload 1: $(cat /tmp/r1.json | jq -r '.success')"
+          echo "Upload 2: $(cat /tmp/r2.json | jq -r '.success')"
+          echo "Upload 3: $(cat /tmp/r3.json | jq -r '.success')"
+
+          FAILED=0
+          jq -e '.success == true' /tmp/r1.json > /dev/null || FAILED=1
+          jq -e '.success == true' /tmp/r2.json > /dev/null || FAILED=1
+          jq -e '.success == true' /tmp/r3.json > /dev/null || FAILED=1
+
+          if [ "$FAILED" = "0" ]; then
+            echo "Alle 3 gelijktijdige uploads succesvol"
+          else
+            echo "::error::Een of meer gelijktijdige uploads gefaald"
+            exit 1
+          fi
+
+      # ==================== CLEANUP ====================
+      - name: Stop API server
+        if: always()
+        run: |
+          [ -f api.pid ] && kill $(cat api.pid) 2>/dev/null || true
+
+      - name: Cleanup
+        if: always()
+        run: |
+          cd tests && docker compose -f docker-compose.test.yml down -v 2>/dev/null || true
+          rm -f test_*.png test_*.json /tmp/r*.json /tmp/backup*.dump 2>/dev/null || true

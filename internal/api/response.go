@@ -43,54 +43,28 @@ func errorCode(err error) int {
 		return http.StatusOK
 	}
 
-	var notFound *types.NotFoundError
-	if errors.As(err, &notFound) {
+	// Check for HTTPError interface (all typed errors implement this)
+	var httpErr types.HTTPError
+	if errors.As(err, &httpErr) {
+		return httpErr.StatusCode()
+	}
+
+	// Fallback for legacy string matching
+	return errorCodeFromMessage(err.Error())
+}
+
+func errorCodeFromMessage(msg string) int {
+	if strings.Contains(msg, "bestaat niet") ||
+		strings.Contains(msg, "heeft geen afbeelding") {
 		return http.StatusNotFound
 	}
 
-	var noImage *types.NoImageError
-	if errors.As(err, &noImage) {
-		return http.StatusNotFound
-	}
-
-	var validation *types.ValidationError
-	if errors.As(err, &validation) {
-		return http.StatusBadRequest
-	}
-
-	var imageProc *types.ImageProcessingError
-	if errors.As(err, &imageProc) {
-		return http.StatusBadRequest
-	}
-
-	var config *types.ConfigurationError
-	if errors.As(err, &config) {
-		return http.StatusInternalServerError
-	}
-
-	var dbErr *types.DatabaseError
-	if errors.As(err, &dbErr) {
-		return http.StatusInternalServerError
-	}
-
-	var backupErr *types.BackupError
-	if errors.As(err, &backupErr) {
-		return http.StatusInternalServerError
-	}
-
-	errorMsg := err.Error()
-
-	if strings.Contains(errorMsg, "bestaat niet") ||
-		strings.Contains(errorMsg, "heeft geen afbeelding") {
-		return http.StatusNotFound
-	}
-
-	if errorMsg == "afbeelding is verplicht" ||
-		errorMsg == "gebruik óf URL óf upload, niet beide" ||
-		strings.Contains(errorMsg, "ongeldig type") ||
-		strings.Contains(errorMsg, "te klein") ||
-		strings.Contains(errorMsg, "niet ondersteund") ||
-		strings.Contains(errorMsg, "ongeldige") {
+	if msg == "afbeelding is verplicht" ||
+		msg == "gebruik óf URL óf upload, niet beide" ||
+		strings.Contains(msg, "ongeldig type") ||
+		strings.Contains(msg, "te klein") ||
+		strings.Contains(msg, "niet ondersteund") ||
+		strings.Contains(msg, "ongeldige") {
 		return http.StatusBadRequest
 	}
 

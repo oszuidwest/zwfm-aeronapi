@@ -97,9 +97,9 @@ func (s *AeronService) GetDatabaseHealth(ctx context.Context) (*DatabaseHealth, 
 }
 
 // getDatabaseSize returns the total database size.
-func getDatabaseSize(ctx context.Context, db DB) (string, int64, error) {
-	var sizeRaw int64
-	if err := db.GetContext(ctx, &sizeRaw, "SELECT pg_database_size(current_database())"); err != nil {
+func getDatabaseSize(ctx context.Context, db DB) (size string, sizeRaw int64, err error) {
+	err = db.GetContext(ctx, &sizeRaw, "SELECT pg_database_size(current_database())")
+	if err != nil {
 		return "", 0, err
 	}
 	return util.FormatBytes(sizeRaw), sizeRaw, nil
@@ -171,62 +171,56 @@ func getTableHealth(ctx context.Context, db DB, schema string) ([]TableHealth, e
 
 // generateRecommendations creates actionable recommendations based on table health.
 func (s *AeronService) generateRecommendations(tables []TableHealth) []string {
-	var recommendations []string
+	var recs []string
 	bloatThreshold := s.config.Maintenance.GetBloatThreshold()
 	deadTupleThreshold := s.config.Maintenance.GetDeadTupleThreshold()
 
-	for _, t := range tables {
-		// High bloat warning
-		if t.BloatPercent > bloatThreshold {
-			recommendations = append(recommendations,
-				fmt.Sprintf("Tabel '%s' heeft %.1f%% bloat - VACUUM aanbevolen", t.Name, t.BloatPercent))
-		}
-
-		// Many dead tuples
-		if t.DeadTuples > deadTupleThreshold {
-			recommendations = append(recommendations,
-				fmt.Sprintf("Tabel '%s' heeft %d dead tuples - VACUUM aanbevolen", t.Name, t.DeadTuples))
-		}
-
-		// Never vacuumed
-		if t.LastVacuum == nil && t.LastAutovacuum == nil && t.RowCount > 1000 {
-			recommendations = append(recommendations,
-				fmt.Sprintf("Tabel '%s' is nog nooit gevacuumd", t.Name))
-		}
-
-		// Old vacuum (more than 7 days)
-		lastVacuumTime := t.LastAutovacuum
-		if t.LastVacuum != nil && (lastVacuumTime == nil || t.LastVacuum.After(*lastVacuumTime)) {
-			lastVacuumTime = t.LastVacuum
-		}
-		if lastVacuumTime != nil && time.Since(*lastVacuumTime) > 7*24*time.Hour && t.RowCount > 1000 {
-			recommendations = append(recommendations,
-				fmt.Sprintf("Tabel '%s' is meer dan 7 dagen niet gevacuumd", t.Name))
-		}
-
-		// Never analyzed
-		if t.LastAnalyze == nil && t.LastAutoanalyze == nil && t.RowCount > 1000 {
-			recommendations = append(recommendations,
-				fmt.Sprintf("Tabel '%s' is nog nooit geanalyseerd - ANALYZE aanbevolen", t.Name))
-		}
-
-		// High sequential scans vs index scans (potential missing index)
-		if t.SeqScans > 1000 && t.IdxScans > 0 && float64(t.SeqScans)/float64(t.IdxScans) > 10 {
-			recommendations = append(recommendations,
-				fmt.Sprintf("Tabel '%s' heeft veel sequential scans (%d) vs index scans (%d) - mogelijk ontbrekende index",
-					t.Name, t.SeqScans, t.IdxScans))
-		}
-
-		// Large TOAST size (images stored in track/artist tables)
-		if t.ToastSizeRaw > 500*1024*1024 { // > 500MB
-			recommendations = append(recommendations,
-				fmt.Sprintf("Tabel '%s' heeft %s aan TOAST data (afbeeldingen)", t.Name, t.ToastSize))
-		}
+	for i := range tables {
+		t := &tables[i]
+		recs = s.checkTableHealth(t, recs, bloatThreshold, deadTupleThreshold)
 	}
 
-	if len(recommendations) == 0 {
-		recommendations = append(recommendations, "Geen problemen gedetecteerd")
+	if len(recs) == 0 {
+		return []string{"Geen problemen gedetecteerd"}
+	}
+	return recs
+}
+
+func (s *AeronService) checkTableHealth(t *TableHealth, recs []string, bloatThreshold float64, deadTupleThreshold int64) []string {
+	if t.BloatPercent > bloatThreshold {
+		recs = append(recs, fmt.Sprintf("Tabel '%s' heeft %.1f%% bloat - VACUUM aanbevolen", t.Name, t.BloatPercent))
 	}
 
-	return recommendations
+	if t.DeadTuples > deadTupleThreshold {
+		recs = append(recs, fmt.Sprintf("Tabel '%s' heeft %d dead tuples - VACUUM aanbevolen", t.Name, t.DeadTuples))
+	}
+
+	if t.LastVacuum == nil && t.LastAutovacuum == nil && t.RowCount > 1000 {
+		recs = append(recs, fmt.Sprintf("Tabel '%s' is nog nooit gevacuumd", t.Name))
+	}
+
+	if lastVac := lastVacuumTime(t); lastVac != nil && time.Since(*lastVac) > 7*24*time.Hour && t.RowCount > 1000 {
+		recs = append(recs, fmt.Sprintf("Tabel '%s' is meer dan 7 dagen niet gevacuumd", t.Name))
+	}
+
+	if t.LastAnalyze == nil && t.LastAutoanalyze == nil && t.RowCount > 1000 {
+		recs = append(recs, fmt.Sprintf("Tabel '%s' is nog nooit geanalyseerd - ANALYZE aanbevolen", t.Name))
+	}
+
+	if t.SeqScans > 1000 && t.IdxScans > 0 && float64(t.SeqScans)/float64(t.IdxScans) > 10 {
+		recs = append(recs, fmt.Sprintf("Tabel '%s' heeft veel sequential scans (%d) vs index scans (%d) - mogelijk ontbrekende index", t.Name, t.SeqScans, t.IdxScans))
+	}
+
+	if t.ToastSizeRaw > 500*1024*1024 {
+		recs = append(recs, fmt.Sprintf("Tabel '%s' heeft %s aan TOAST data (afbeeldingen)", t.Name, t.ToastSize))
+	}
+
+	return recs
+}
+
+func lastVacuumTime(t *TableHealth) *time.Time {
+	if t.LastVacuum != nil && (t.LastAutovacuum == nil || t.LastVacuum.After(*t.LastAutovacuum)) {
+		return t.LastVacuum
+	}
+	return t.LastAutovacuum
 }

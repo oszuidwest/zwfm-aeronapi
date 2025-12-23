@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
@@ -276,66 +277,68 @@ func (s *Server) handleDeleteImage(entityType types.EntityType) http.HandlerFunc
 	}
 }
 
+func parsePlaylistOptions(query url.Values) database.PlaylistOptions {
+	opts := database.DefaultPlaylistOptions()
+	opts.BlockID = query.Get("block_id")
+
+	if limit := query.Get("limit"); limit != "" {
+		if l, err := strconv.Atoi(limit); err == nil && l > 0 {
+			opts.Limit = l
+		}
+	}
+	if offset := query.Get("offset"); offset != "" {
+		if o, err := strconv.Atoi(offset); err == nil && o >= 0 {
+			opts.Offset = o
+		}
+	}
+
+	if trackImage := query.Get("track_image"); trackImage != "" {
+		opts.TrackImage = parseQueryBoolParam(trackImage)
+	}
+	if artistImage := query.Get("artist_image"); artistImage != "" {
+		opts.ArtistImage = parseQueryBoolParam(artistImage)
+	}
+
+	if sort := query.Get("sort"); sort != "" {
+		opts.SortBy = sort
+	}
+	if query.Get("desc") == "true" {
+		opts.SortDesc = true
+	}
+
+	return opts
+}
+
 func (s *Server) handlePlaylist(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
-	blockID := query.Get("block_id")
 
-	if blockID != "" {
-		opts := database.DefaultPlaylistOptions()
-		opts.BlockID = blockID
-
-		if limit := query.Get("limit"); limit != "" {
-			if l, err := strconv.Atoi(limit); err == nil && l > 0 {
-				opts.Limit = l
-			}
-		}
-		if offset := query.Get("offset"); offset != "" {
-			if o, err := strconv.Atoi(offset); err == nil && o >= 0 {
-				opts.Offset = o
-			}
-		}
-
-		if trackImage := query.Get("track_image"); trackImage != "" {
-			opts.TrackImage = parseQueryBoolParam(trackImage)
-		}
-
-		if artistImage := query.Get("artist_image"); artistImage != "" {
-			opts.ArtistImage = parseQueryBoolParam(artistImage)
-		}
-
-		if sort := query.Get("sort"); sort != "" {
-			opts.SortBy = sort
-		}
-		if query.Get("desc") == "true" {
-			opts.SortDesc = true
-		}
-
-		playlist, err := database.GetPlaylist(r.Context(), s.service.DB(), s.config.Database.Schema, opts)
+	// Single block with items
+	if query.Get("block_id") != "" {
+		opts := parsePlaylistOptions(query)
+		playlist, err := database.GetPlaylist(r.Context(), s.service.DB(), s.config.Database.Schema, &opts)
 		if err != nil {
 			respondError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-
 		respondJSON(w, http.StatusOK, playlist)
 		return
 	}
 
-	date := query.Get("date")
-
-	blocks, tracksByBlock, err := database.GetPlaylistBlocksWithTracks(r.Context(), s.service.DB(), s.config.Database.Schema, date)
+	// All blocks with tracks for a date
+	blocks, tracksByBlock, err := database.GetPlaylistBlocksWithTracks(r.Context(), s.service.DB(), s.config.Database.Schema, query.Get("date"))
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
 	result := make([]BlockWithTracks, len(blocks))
-	for i, block := range blocks {
-		tracks := tracksByBlock[block.BlockID]
+	for i := range blocks {
+		tracks := tracksByBlock[blocks[i].BlockID]
 		if tracks == nil {
 			tracks = []database.PlaylistItem{}
 		}
 		result[i] = BlockWithTracks{
-			PlaylistBlock: block,
+			PlaylistBlock: blocks[i],
 			Tracks:        tracks,
 		}
 	}

@@ -57,9 +57,8 @@ func DefaultPlaylistOptions() PlaylistOptions {
 }
 
 // BuildPlaylistQuery creates a parameterized SQL query for playlist items.
-func BuildPlaylistQuery(schema string, opts PlaylistOptions) (string, []any, error) {
+func BuildPlaylistQuery(schema string, opts *PlaylistOptions) (query string, params []any, err error) {
 	var conditions []string
-	var params []any
 	paramCount := 0
 
 	nextParam := func() string {
@@ -118,7 +117,7 @@ func BuildPlaylistQuery(schema string, opts PlaylistOptions) (string, []any, err
 		return "", nil, types.NewValidationError("schema", fmt.Sprintf("ongeldige schema naam: %s", schema))
 	}
 
-	query := fmt.Sprintf(`
+	query = fmt.Sprintf(`
 		SELECT
 			pi.titleid as trackid,
 			COALESCE(t.tracktitle, '') as tracktitle,
@@ -164,7 +163,7 @@ func ExecutePlaylistQuery(ctx context.Context, db DB, query string, params []any
 }
 
 // GetPlaylist retrieves playlist items based on the provided options.
-func GetPlaylist(ctx context.Context, db DB, schema string, opts PlaylistOptions) ([]PlaylistItem, error) {
+func GetPlaylist(ctx context.Context, db DB, schema string, opts *PlaylistOptions) ([]PlaylistItem, error) {
 	query, params, err := BuildPlaylistQuery(schema, opts)
 	if err != nil {
 		return nil, err
@@ -173,7 +172,7 @@ func GetPlaylist(ctx context.Context, db DB, schema string, opts PlaylistOptions
 }
 
 // GetPlaylistBlocks retrieves all playlist blocks for a specific date.
-func GetPlaylistBlocks(ctx context.Context, db DB, schema string, date string) ([]PlaylistBlock, error) {
+func GetPlaylistBlocks(ctx context.Context, db DB, schema, date string) ([]PlaylistBlock, error) {
 	var dateFilter string
 	params := []any{}
 
@@ -206,7 +205,7 @@ func GetPlaylistBlocks(ctx context.Context, db DB, schema string, date string) (
 }
 
 // GetPlaylistBlocksWithTracks fetches all blocks and their tracks for a date.
-func GetPlaylistBlocksWithTracks(ctx context.Context, db DB, schema string, date string) ([]PlaylistBlock, map[string][]PlaylistItem, error) {
+func GetPlaylistBlocksWithTracks(ctx context.Context, db DB, schema, date string) ([]PlaylistBlock, map[string][]PlaylistItem, error) {
 	blocks, err := GetPlaylistBlocks(ctx, db, schema, date)
 	if err != nil {
 		return nil, nil, err
@@ -275,8 +274,8 @@ func GetPlaylistBlocksWithTracks(ctx context.Context, db DB, schema string, date
 	}
 
 	tracksByBlock := make(map[string][]PlaylistItem)
-	for _, temp := range tempItems {
-		tracksByBlock[temp.TempBlockID] = append(tracksByBlock[temp.TempBlockID], temp.PlaylistItem)
+	for i := range tempItems {
+		tracksByBlock[tempItems[i].TempBlockID] = append(tracksByBlock[tempItems[i].TempBlockID], tempItems[i].PlaylistItem)
 	}
 
 	return blocks, tracksByBlock, nil
