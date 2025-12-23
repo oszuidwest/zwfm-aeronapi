@@ -279,6 +279,9 @@ func (s *BackupService) Start(req BackupRequest) error {
 		return types.NewOperationError("backup starten", errors.New("backup is al bezig"))
 	}
 
+	// Initialize status before spawning goroutine to prevent race condition
+	s.setStatusStarted()
+
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
@@ -300,14 +303,15 @@ func (s *BackupService) Run(ctx context.Context, req BackupRequest) error {
 	}
 	defer s.running.Store(false)
 
+	// Initialize status before executing
+	s.setStatusStarted()
+
 	return s.execute(ctx, req)
 }
 
 // execute performs the backup workflow: validation, pg_dump, file validation, and S3 sync.
+// Note: Caller must call setStatusStarted() before invoking this method.
 func (s *BackupService) execute(ctx context.Context, req BackupRequest) error {
-	// Record start immediately so status is always consistent
-	s.setStatusStarted()
-
 	if err := s.checkEnabled(); err != nil {
 		s.setStatusDone(false, "", err.Error())
 		return err
