@@ -33,7 +33,6 @@ type BackupService struct {
 	wg         sync.WaitGroup
 	running    atomic.Bool
 
-	// Paths to required external tools, resolved at startup
 	pgDumpPath    string
 	pgRestorePath string
 
@@ -112,14 +111,12 @@ func (s *BackupService) Close() {
 
 // BackupRequest represents the request body for backup operations.
 type BackupRequest struct {
-	Format      string `json:"format"`
-	Compression int    `json:"compression"`
+	Compression int `json:"compression"`
 }
 
 // BackupInfo represents metadata about an existing backup file.
 type BackupInfo struct {
 	Filename      string    `json:"filename"`
-	Format        string    `json:"format"`
 	Size          int64     `json:"size_bytes"`
 	SizeFormatted string    `json:"size"`
 	CreatedAt     time.Time `json:"created_at"`
@@ -160,21 +157,22 @@ func (s *BackupService) checkEnabled() error {
 	return nil
 }
 
-// validateBackupFilename ensures the filename has valid characters and expected prefix.
+// validateBackupFilename ensures the filename has valid characters, expected prefix and .dump extension.
 func validateBackupFilename(filename string) error {
 	if !safeBackupFilenamePattern.MatchString(filename) {
 		return types.NewValidationError("filename", "ongeldige bestandsnaam")
 	}
-	if !strings.HasPrefix(filename, "aeron-backup-") {
+	if !strings.HasPrefix(filename, "aeron-backup-") || !strings.HasSuffix(filename, ".dump") {
 		return types.NewValidationError("filename", "geen geldig backup bestand")
 	}
 	return nil
 }
 
 // buildPgDumpArgs constructs pg_dump command-line arguments for the given settings.
-func (s *BackupService) buildPgDumpArgs(format string, compression int) []string {
-	args := []string{
-		"--format=" + format,
+func (s *BackupService) buildPgDumpArgs(compression int) []string {
+	return []string{
+		"--format=custom",
+		"--compress=" + strconv.Itoa(compression),
 		"--host=" + s.config.Database.Host,
 		"--port=" + s.config.Database.Port,
 		"--username=" + s.config.Database.User,
@@ -182,43 +180,38 @@ func (s *BackupService) buildPgDumpArgs(format string, compression int) []string
 		"--schema=" + s.config.Database.Schema,
 		"--no-password",
 	}
-
-	if format == "custom" {
-		args = append(args, "--compress="+strconv.Itoa(compression))
-	}
-
-	return args
 }
 
-// validateRequest validates backup format and compression, applying defaults where needed.
-func (s *BackupService) validateRequest(req BackupRequest) (format string, compression int, err error) {
-	format = strings.ToLower(req.Format)
-	if format == "" {
-		format = s.config.Backup.GetDefaultFormat()
+// compressionLevel returns a valid compression level (0-9), applying defaults and validation.
+func (s *BackupService) compressionLevel(requested int) (int, error) {
+	level := requested
+	if level == 0 {
+		level = s.config.Backup.GetDefaultCompression()
 	}
-	if format != "custom" && format != "plain" {
-		return "", 0, types.NewValidationError("format", fmt.Sprintf("ongeldig backup formaat: %s (gebruik 'custom' of 'plain')", format))
+	if level < 0 || level > 9 {
+		return 0, types.NewValidationError("compression", fmt.Sprintf("ongeldige compressie waarde: %d (gebruik 0-9)", level))
 	}
-
-	compression = req.Compression
-	if compression == 0 {
-		compression = s.config.Backup.GetDefaultCompression()
-	}
-	if compression < 0 || compression > 9 {
-		return "", 0, types.NewValidationError("compression", fmt.Sprintf("ongeldige compressie waarde: %d (gebruik 0-9)", compression))
-	}
-
-	return format, compression, nil
+	return level, nil
 }
 
-// generateBackupFilename creates a timestamped filename with the appropriate extension.
-func generateBackupFilename(format string) string {
+// validateBackupFile checks backup file integrity using pg_restore --list.
+func (s *BackupService) validateBackupFile(ctx context.Context, filePath string) error {
+	cmd := exec.CommandContext(ctx, s.pgRestorePath, "--list", filePath)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		errMsg := strings.TrimSpace(string(output))
+		if errMsg == "" {
+			errMsg = err.Error()
+		}
+		return types.NewOperationError("backup validatie", fmt.Errorf("bestand is corrupt of onleesbaar: %s", errMsg))
+	}
+	return nil
+}
+
+// generateBackupFilename creates a timestamped filename with .dump extension.
+func generateBackupFilename() string {
 	timestamp := time.Now().Format("2006-01-02-150405")
-	ext := "sql"
-	if format == "custom" {
-		ext = "dump"
-	}
-	return fmt.Sprintf("aeron-backup-%s.%s", timestamp, ext)
+	return fmt.Sprintf("aeron-backup-%s.dump", timestamp)
 }
 
 // executePgDump runs pg_dump and returns file info on success, cleaning up on failure.
@@ -271,7 +264,7 @@ func (s *BackupService) Start(req BackupRequest) error {
 	if err := s.checkEnabled(); err != nil {
 		return err
 	}
-	if _, _, err := s.validateRequest(req); err != nil {
+	if _, err := s.compressionLevel(req.Compression); err != nil {
 		return err
 	}
 
@@ -317,20 +310,20 @@ func (s *BackupService) execute(ctx context.Context, req BackupRequest) error {
 		return err
 	}
 
-	format, compression, err := s.validateRequest(req)
+	compression, err := s.compressionLevel(req.Compression)
 	if err != nil {
 		s.setStatusDone(false, "", err.Error())
 		return err
 	}
 
-	filename := generateBackupFilename(format)
+	filename := generateBackupFilename()
 	fullPath := filepath.Join(s.config.Backup.GetPath(), filename)
-	args := s.buildPgDumpArgs(format, compression)
+	args := s.buildPgDumpArgs(compression)
 
 	args = append(args, "--file="+fullPath)
 
 	s.setStatusFilename(filename)
-	slog.Info("Backup gestart", "filename", filename, "format", format)
+	slog.Info("Backup gestart", "filename", filename)
 
 	fileInfo, duration, err := s.executePgDump(ctx, s.pgDumpPath, filename, fullPath, args)
 	if err != nil {
@@ -339,12 +332,12 @@ func (s *BackupService) execute(ctx context.Context, req BackupRequest) error {
 	}
 
 	// Validate backup file integrity
-	slog.Info("Backup valideren", "filename", filename, "format", format)
+	slog.Info("Backup valideren", "filename", filename)
 
 	validateCtx, validateCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer validateCancel()
 
-	if err := validateBackup(validateCtx, fullPath, format, s.pgRestorePath); err != nil {
+	if err := s.validateBackupFile(validateCtx, fullPath); err != nil {
 		slog.Error("Backup validatie mislukt", "filename", filename, "error", err)
 		s.setStatusDone(false, filename, err.Error())
 		return err
@@ -394,32 +387,24 @@ func (s *BackupService) Status() *BackupStatus {
 	return &status
 }
 
-// setStatusStarted records the start time of a new backup operation.
 func (s *BackupService) setStatusStarted() {
 	s.statusMu.Lock()
 	defer s.statusMu.Unlock()
-
 	now := time.Now()
-	s.lastStatus = &BackupStatus{
-		StartedAt: &now,
-	}
+	s.lastStatus = &BackupStatus{StartedAt: &now}
 }
 
-// setStatusFilename updates the status with the generated backup filename.
 func (s *BackupService) setStatusFilename(filename string) {
 	s.statusMu.Lock()
 	defer s.statusMu.Unlock()
-
 	if s.lastStatus != nil {
 		s.lastStatus.Filename = filename
 	}
 }
 
-// setStatusDone records the completion time and result of a backup operation.
 func (s *BackupService) setStatusDone(success bool, filename, errMsg string) {
 	s.statusMu.Lock()
 	defer s.statusMu.Unlock()
-
 	now := time.Now()
 	if s.lastStatus == nil {
 		s.lastStatus = &BackupStatus{StartedAt: &now}
@@ -432,16 +417,11 @@ func (s *BackupService) setStatusDone(success bool, filename, errMsg string) {
 	}
 }
 
-// setS3SyncStatus updates the backup status with the S3 upload result.
 func (s *BackupService) setS3SyncStatus(synced bool, errMsg string) {
 	s.statusMu.Lock()
 	defer s.statusMu.Unlock()
-
 	if s.lastStatus != nil {
-		s.lastStatus.S3Sync = &S3SyncStatus{
-			Synced: synced,
-			Error:  errMsg,
-		}
+		s.lastStatus.S3Sync = &S3SyncStatus{Synced: synced, Error: errMsg}
 	}
 }
 
@@ -473,7 +453,7 @@ func (s *BackupService) List() (*BackupListResponse, error) {
 		}
 
 		name := entry.Name()
-		if !strings.HasPrefix(name, "aeron-backup-") {
+		if !strings.HasPrefix(name, "aeron-backup-") || !strings.HasSuffix(name, ".dump") {
 			continue
 		}
 
@@ -482,14 +462,8 @@ func (s *BackupService) List() (*BackupListResponse, error) {
 			continue
 		}
 
-		format := detectBackupFormat(name)
-		if format == "" {
-			continue
-		}
-
 		backups = append(backups, BackupInfo{
 			Filename:      name,
-			Format:        format,
 			Size:          info.Size(),
 			SizeFormatted: util.FormatBytes(info.Size()),
 			CreatedAt:     info.ModTime(),
@@ -566,28 +540,25 @@ func (s *BackupService) GetFilePath(filename string) (string, error) {
 // ValidationResult represents the result of on-demand backup validation.
 type ValidationResult struct {
 	Filename string `json:"filename"`
-	Format   string `json:"format"`
 	Valid    bool   `json:"valid"`
 	Error    string `json:"error,omitempty"`
 }
 
-// Validate checks backup file integrity using pg_restore or SQL verification.
+// Validate checks backup file integrity using pg_restore --list.
 func (s *BackupService) Validate(filename string) (*ValidationResult, error) {
 	fullPath, err := s.GetFilePath(filename)
 	if err != nil {
 		return nil, err
 	}
 
-	format := detectBackupFormat(filename)
 	result := &ValidationResult{
 		Filename: filename,
-		Format:   format,
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	if err := validateBackup(ctx, fullPath, format, s.pgRestorePath); err != nil {
+	if err := s.validateBackupFile(ctx, fullPath); err != nil {
 		result.Valid = false
 		result.Error = err.Error()
 	} else {
@@ -595,18 +566,6 @@ func (s *BackupService) Validate(filename string) (*ValidationResult, error) {
 	}
 
 	return result, nil
-}
-
-// detectBackupFormat determines the backup format from file extension.
-func detectBackupFormat(filename string) string {
-	switch {
-	case strings.HasSuffix(filename, ".dump"):
-		return "custom"
-	case strings.HasSuffix(filename, ".sql"):
-		return "plain"
-	default:
-		return ""
-	}
 }
 
 // --- Background cleanup ---

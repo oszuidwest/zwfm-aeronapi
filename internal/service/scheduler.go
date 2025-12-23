@@ -63,7 +63,6 @@ func (s *BackupScheduler) runBackup() {
 
 	// Run() handles all logging internally
 	_ = s.service.Backup.Run(ctx, BackupRequest{
-		Format:      cfg.GetDefaultFormat(),
 		Compression: cfg.GetDefaultCompression(),
 	})
 }
