@@ -13,7 +13,7 @@ import (
 	"github.com/oszuidwest/zwfm-aerontoolbox/internal/types"
 )
 
-// validateBackup validates backup file integrity based on format.
+// validateBackup checks file integrity using pg_restore for custom or SQL verification for plain.
 func validateBackup(ctx context.Context, filePath, format, pgRestorePath string) error {
 	if format == "custom" {
 		return validateWithPgRestore(ctx, filePath, pgRestorePath)
@@ -21,6 +21,7 @@ func validateBackup(ctx context.Context, filePath, format, pgRestorePath string)
 	return validatePlainSQL(ctx, filePath)
 }
 
+// validateWithPgRestore verifies a custom format backup by listing contents with pg_restore.
 func validateWithPgRestore(ctx context.Context, filePath, pgRestorePath string) error {
 	cmd := exec.CommandContext(ctx, pgRestorePath, "--list", filePath)
 	output, err := cmd.CombinedOutput()
@@ -34,6 +35,7 @@ func validateWithPgRestore(ctx context.Context, filePath, pgRestorePath string) 
 	return nil
 }
 
+// validatePlainSQL verifies a plain SQL backup by checking for PostgreSQL dump markers.
 func validatePlainSQL(ctx context.Context, filePath string) (returnErr error) {
 	file, err := os.Open(filePath)
 	if err != nil {

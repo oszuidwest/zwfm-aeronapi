@@ -93,7 +93,7 @@ type MaintenanceResponse struct {
 	ExecutedAt    time.Time           `json:"executed_at"`
 }
 
-// tableHealthRow represents a combined row from pg_stat_user_tables and pg_class.
+// tableHealthRow contains health statistics and size information for a database table.
 type tableHealthRow struct {
 	TableName       string     `db:"table_name"`
 	LiveTuples      int64      `db:"live_tuples"`
@@ -110,7 +110,7 @@ type tableHealthRow struct {
 	ToastSize       int64      `db:"toast_size"`
 }
 
-// maintenanceContext holds shared context for vacuum/analyze operations.
+// maintenanceContext provides table health data for vacuum and analyze operations.
 type maintenanceContext struct {
 	tables       []TableHealth
 	tablesByName map[string]TableHealth
@@ -222,7 +222,7 @@ func (s *MaintenanceService) getTableHealth(ctx context.Context) ([]TableHealth,
 	return tables, nil
 }
 
-// generateRecommendations creates actionable recommendations based on table health.
+// generateRecommendations returns maintenance recommendations for tables requiring attention.
 func (s *MaintenanceService) generateRecommendations(tables []TableHealth) []string {
 	var recs []string
 	bloatThreshold := s.config.Maintenance.GetBloatThreshold()
@@ -280,7 +280,7 @@ func lastVacuumTime(t *TableHealth) *time.Time {
 
 // --- Vacuum operations ---
 
-// newMaintenanceContext creates a new maintenance context with current table health data.
+// newMaintenanceContext loads current table health data for maintenance operations.
 func (s *MaintenanceService) newMaintenanceContext(ctx context.Context) (*maintenanceContext, error) {
 	tables, err := s.getTableHealth(ctx)
 	if err != nil {
@@ -299,7 +299,7 @@ func (s *MaintenanceService) newMaintenanceContext(ctx context.Context) (*mainte
 	}, nil
 }
 
-// selectTablesToProcess resolves which tables to process based on user input or auto-selection.
+// selectTablesToProcess determines tables for maintenance based on request or automatic selection.
 // Returns tables to process and any skipped table results.
 func (mctx *maintenanceContext) selectTablesToProcess(requestedTables []string, autoSelectFn func(TableHealth) bool) ([]TableHealth, []MaintenanceResult) {
 	var tablesToProcess []TableHealth
@@ -330,8 +330,7 @@ func (mctx *maintenanceContext) selectTablesToProcess(requestedTables []string, 
 	return tablesToProcess, skipped
 }
 
-// Vacuum performs VACUUM on tables in the schema.
-// If no tables are specified, it automatically selects tables with high bloat or many dead tuples.
+// Vacuum reclaims storage from tables with high bloat or dead tuples.
 func (s *MaintenanceService) Vacuum(ctx context.Context, opts VacuumOptions) (*MaintenanceResponse, error) {
 	response := &MaintenanceResponse{
 		DryRun:     opts.DryRun,
@@ -399,7 +398,7 @@ func (s *MaintenanceService) Vacuum(ctx context.Context, opts VacuumOptions) (*M
 	return response, nil
 }
 
-// executeVacuum runs VACUUM on a single table.
+// executeVacuum executes VACUUM on a table with optional ANALYZE.
 func (s *MaintenanceService) executeVacuum(ctx context.Context, tableName string, analyze bool) error {
 	if !types.IsValidIdentifier(tableName) {
 		return types.NewValidationError("table", fmt.Sprintf("ongeldige tabelnaam: %s", tableName))
@@ -419,7 +418,7 @@ func (s *MaintenanceService) executeVacuum(ctx context.Context, tableName string
 
 // --- Analyze operations ---
 
-// Analyze performs ANALYZE on tables in the schema.
+// Analyze updates query planner statistics for tables in the schema.
 func (s *MaintenanceService) Analyze(ctx context.Context, tableNames []string) (*MaintenanceResponse, error) {
 	response := &MaintenanceResponse{
 		DryRun:     false,
@@ -470,7 +469,7 @@ func (s *MaintenanceService) Analyze(ctx context.Context, tableNames []string) (
 	return response, nil
 }
 
-// executeAnalyze runs ANALYZE on a single table.
+// executeAnalyze executes ANALYZE on the specified table.
 func (s *MaintenanceService) executeAnalyze(ctx context.Context, tableName string) error {
 	if !types.IsValidIdentifier(tableName) {
 		return types.NewValidationError("table", fmt.Sprintf("ongeldige tabelnaam: %s", tableName))

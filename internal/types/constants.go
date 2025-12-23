@@ -6,21 +6,27 @@ import "fmt"
 type EntityType string
 
 const (
+	// EntityTypeArtist represents an artist entity.
 	EntityTypeArtist EntityType = "artist"
-	EntityTypeTrack  EntityType = "track"
+	// EntityTypeTrack represents a track entity.
+	EntityTypeTrack EntityType = "track"
 )
 
 // Table represents a database table name.
 type Table string
 
 const (
+	// TableArtist is the database table name for artist records.
 	TableArtist Table = "artist"
-	TableTrack  Table = "track"
+	// TableTrack is the database table name for track records.
+	TableTrack Table = "track"
 )
 
 const (
+	// LabelArtist is the Dutch display label for artist entities.
 	LabelArtist = "artiest"
-	LabelTrack  = "track"
+	// LabelTrack is the Dutch display label for track entities.
+	LabelTrack = "track"
 )
 
 // VoicetrackUserID is the UUID used in Aeron to identify voice tracks.
@@ -29,7 +35,7 @@ const VoicetrackUserID = "021F097E-B504-49BB-9B89-16B64D2E8422"
 // SupportedFormats lists the image formats that can be processed.
 var SupportedFormats = []string{"jpeg", "jpg", "png"}
 
-// TableForEntityType maps an entity type to its database table.
+// TableForEntityType returns the database table name for the given entity type.
 func TableForEntityType(entityType EntityType) Table {
 	if entityType == EntityTypeTrack {
 		return TableTrack
@@ -37,7 +43,7 @@ func TableForEntityType(entityType EntityType) Table {
 	return TableArtist
 }
 
-// LabelForEntityType maps an entity type to its Dutch label.
+// LabelForEntityType returns the Dutch display label for the given entity type.
 func LabelForEntityType(entityType EntityType) string {
 	if entityType == EntityTypeTrack {
 		return "track"
@@ -45,7 +51,7 @@ func LabelForEntityType(entityType EntityType) string {
 	return "artiest"
 }
 
-// LabelForTable maps a table to its Dutch label.
+// LabelForTable returns the Dutch display label for the given table.
 func LabelForTable(table Table) string {
 	if table == TableTrack {
 		return "track"
@@ -53,7 +59,7 @@ func LabelForTable(table Table) string {
 	return "artiest"
 }
 
-// IDColumnForTable maps a table to its primary key column.
+// IDColumnForTable returns the primary key column name for the given table.
 func IDColumnForTable(table Table) string {
 	if table == TableTrack {
 		return "titleid"
@@ -61,7 +67,7 @@ func IDColumnForTable(table Table) string {
 	return "artistid"
 }
 
-// IsValidIdentifier validates SQL identifier characters.
+// IsValidIdentifier reports whether name contains only valid SQL identifier characters.
 func IsValidIdentifier(name string) bool {
 	if name == "" {
 		return false
@@ -74,7 +80,7 @@ func IsValidIdentifier(name string) bool {
 	return true
 }
 
-// QualifiedTable returns a validated schema.table name.
+// QualifiedTable returns a fully qualified schema.table name after validating both identifiers.
 func QualifiedTable(schema string, table Table) (string, error) {
 	if !IsValidIdentifier(schema) {
 		return "", fmt.Errorf("ongeldige schema naam: %s", schema)

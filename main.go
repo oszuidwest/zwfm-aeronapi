@@ -33,6 +33,7 @@ func main() {
 	}
 }
 
+// run initializes and starts the API server with graceful shutdown handling.
 func run() error {
 	configFile := flag.String("config", "", "Path to config file (default: config.json)")
 	port := flag.String("port", "8080", "API server port (default: 8080)")
@@ -72,11 +73,13 @@ func run() error {
 	return serveUntilShutdown(server, *port, scheduler)
 }
 
+// printVersion outputs the application version information to stdout.
 func printVersion() {
 	fmt.Printf("Aeron Toolbox %s (%s)\n", Version, Commit)
 	fmt.Printf("Build time: %s\n", BuildTime)
 }
 
+// initLogger configures the global slog logger based on configuration settings.
 func initLogger(cfg *config.Config) {
 	level := cfg.Log.GetLevel()
 	opts := &slog.HandlerOptions{Level: level}
@@ -92,6 +95,7 @@ func initLogger(cfg *config.Config) {
 	slog.Info("Logger geïnitialiseerd", "level", level.String(), "format", cfg.Log.GetFormat())
 }
 
+// setupDatabase establishes a database connection pool and returns a cleanup function.
 func setupDatabase(cfg *config.Config) (*sqlx.DB, func(), error) {
 	db, err := sqlx.Open("postgres", cfg.Database.ConnectionString())
 	if err != nil {
@@ -125,6 +129,7 @@ func setupDatabase(cfg *config.Config) (*sqlx.DB, func(), error) {
 	return db, cleanup, nil
 }
 
+// startSchedulerIfEnabled creates and starts a backup scheduler if enabled in config.
 func startSchedulerIfEnabled(cfg *config.Config, svc *service.AeronService) *service.BackupScheduler {
 	if !cfg.Backup.Enabled || !cfg.Backup.Scheduler.Enabled {
 		return nil
@@ -140,6 +145,7 @@ func startSchedulerIfEnabled(cfg *config.Config, svc *service.AeronService) *ser
 	return scheduler
 }
 
+// serveUntilShutdown starts the API server and blocks until shutdown signal is received.
 func serveUntilShutdown(server *api.Server, port string, scheduler *service.BackupScheduler) error {
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
@@ -163,6 +169,7 @@ func serveUntilShutdown(server *api.Server, port string, scheduler *service.Back
 	return gracefulShutdown(server, scheduler)
 }
 
+// gracefulShutdown stops the scheduler and server with timeout protection.
 func gracefulShutdown(server *api.Server, scheduler *service.BackupScheduler) error {
 	if scheduler != nil {
 		ctx := scheduler.Stop()

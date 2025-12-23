@@ -18,7 +18,7 @@ type MediaService struct {
 	config *config.Config
 }
 
-// newMediaService returns a MediaService for media operations.
+// newMediaService creates a MediaService with the provided repository and configuration.
 func newMediaService(repo *database.Repository, cfg *config.Config) *MediaService {
 	return &MediaService{
 		repo:   repo,
@@ -71,7 +71,7 @@ type ImageUploadResult struct {
 	SizeReductionPercent float64
 }
 
-// UploadImage processes and uploads an image for the specified entity.
+// UploadImage downloads, resizes, optimizes, and stores an image for an artist or track.
 func (s *MediaService) UploadImage(ctx context.Context, params *ImageUploadParams) (*ImageUploadResult, error) {
 	slog.Debug("Image upload gestart", "entityType", params.EntityType, "id", params.ID, "hasURL", params.ImageURL != "", "hasData", len(params.ImageData) > 0)
 
@@ -177,7 +177,7 @@ type DeleteResult struct {
 	DeletedCount int64
 }
 
-// DeleteAllImages removes all images for entities of the specified type.
+// DeleteAllImages removes all images from all entities of the specified type.
 func (s *MediaService) DeleteAllImages(ctx context.Context, entityType types.EntityType) (*DeleteResult, error) {
 	if err := validateEntityType(entityType); err != nil {
 		return nil, err
@@ -217,7 +217,7 @@ type PlaylistOptions struct {
 	ArtistImage *bool
 }
 
-// DefaultPlaylistOptions returns default playlist query options.
+// DefaultPlaylistOptions returns playlist query options with sensible defaults.
 func DefaultPlaylistOptions() PlaylistOptions {
 	return PlaylistOptions{
 		ExportTypes: []int{},
@@ -225,7 +225,7 @@ func DefaultPlaylistOptions() PlaylistOptions {
 	}
 }
 
-// GetPlaylist retrieves playlist items based on options.
+// GetPlaylist retrieves played tracks for a date or block with filtering and pagination.
 func (s *MediaService) GetPlaylist(ctx context.Context, opts *PlaylistOptions) ([]database.PlaylistItem, error) {
 	dbOpts := &database.PlaylistOptions{
 		BlockID:     opts.BlockID,
@@ -247,7 +247,7 @@ type PlaylistBlockWithTracks struct {
 	Tracks []database.PlaylistItem `json:"tracks"`
 }
 
-// GetPlaylistWithTracks fetches all blocks and their tracks for a date.
+// GetPlaylistWithTracks retrieves all playlist blocks for a date with their tracks.
 func (s *MediaService) GetPlaylistWithTracks(ctx context.Context, date string) ([]PlaylistBlockWithTracks, error) {
 	blocks, tracksByBlock, err := s.repo.GetPlaylistWithTracks(ctx, date)
 	if err != nil {
@@ -271,6 +271,7 @@ func (s *MediaService) GetPlaylistWithTracks(ctx context.Context, date string) (
 
 // --- Validation helpers ---
 
+// validateEntityType ensures the entity type is either artist or track.
 func validateEntityType(entityType types.EntityType) error {
 	if entityType != types.EntityTypeArtist && entityType != types.EntityTypeTrack {
 		return types.NewValidationError("entityType", fmt.Sprintf("ongeldig type: gebruik '%s' of '%s'", types.EntityTypeArtist, types.EntityTypeTrack))
@@ -278,6 +279,7 @@ func validateEntityType(entityType types.EntityType) error {
 	return nil
 }
 
+// validateImageUploadParams ensures parameters contain exactly one image source.
 func validateImageUploadParams(params *ImageUploadParams) error {
 	if err := validateEntityType(params.EntityType); err != nil {
 		return err
