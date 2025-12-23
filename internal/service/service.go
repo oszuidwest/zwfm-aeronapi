@@ -54,7 +54,7 @@ func (s *AeronService) Close() {
 	s.Backup.Close()
 }
 
-// DecodeBase64 decodes a base64-encoded string into raw bytes.
+// DecodeBase64 decodes a base64 string, stripping any data URL prefix if present.
 func DecodeBase64(data string) ([]byte, error) {
 	if _, after, found := strings.Cut(data, ","); found {
 		data = after

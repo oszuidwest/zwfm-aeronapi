@@ -13,7 +13,6 @@ import (
 )
 
 // Repository provides data access methods for the Aeron database.
-// It encapsulates the database connection and schema, making the API cleaner.
 type Repository struct {
 	db     *sqlx.DB
 	schema string
@@ -24,12 +23,12 @@ func NewRepository(db *sqlx.DB, schema string) *Repository {
 	return &Repository{db: db, schema: schema}
 }
 
-// DB returns the underlying database connection for advanced operations.
+// DB returns the underlying database connection.
 func (r *Repository) DB() *sqlx.DB {
 	return r.db
 }
 
-// Schema returns the PostgreSQL schema used for all queries.
+// Schema returns the PostgreSQL schema name.
 func (r *Repository) Schema() string {
 	return r.schema
 }
@@ -86,7 +85,7 @@ func (r *Repository) GetImage(ctx context.Context, table types.Table, id string)
 	return imageData, nil
 }
 
-// UpdateImage updates the image for an entity.
+// UpdateImage stores new image data for the specified entity.
 func (r *Repository) UpdateImage(ctx context.Context, table types.Table, id string, imageData []byte) error {
 	qualifiedTableName, err := types.QualifiedTable(r.schema, table)
 	if err != nil {
@@ -227,7 +226,7 @@ func (r *Repository) GetPlaylistBlocks(ctx context.Context, date string) ([]Play
 	return blocks, nil
 }
 
-// GetPlaylistWithTracks fetches all blocks and their tracks for a date.
+// GetPlaylistWithTracks retrieves all blocks with their associated tracks for a date.
 func (r *Repository) GetPlaylistWithTracks(ctx context.Context, date string) ([]PlaylistBlock, map[string][]PlaylistItem, error) {
 	blocks, err := r.GetPlaylistBlocks(ctx, date)
 	if err != nil {

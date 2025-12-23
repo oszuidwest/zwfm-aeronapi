@@ -181,7 +181,7 @@ func (c *BackupConfig) GetTimeout() time.Duration {
 	return time.Duration(cmp.Or(c.TimeoutMinutes, DefaultBackupTimeoutMinutes)) * time.Minute
 }
 
-// GetPathPrefix returns the S3 path prefix, ensuring it ends with a slash if non-empty.
+// GetPathPrefix returns the S3 path prefix with a trailing slash for key construction.
 func (c *S3Config) GetPathPrefix() string {
 	prefix := c.PathPrefix
 	if prefix != "" && !strings.HasSuffix(prefix, "/") {
@@ -190,7 +190,7 @@ func (c *S3Config) GetPathPrefix() string {
 	return prefix
 }
 
-// GetLevel returns the configured log level.
+// GetLevel returns the configured log level, defaulting to Info for unrecognized values.
 func (c *LogConfig) GetLevel() slog.Level {
 	switch strings.ToLower(c.Level) {
 	case "debug":
@@ -245,6 +245,7 @@ func Load(configPath string) (*Config, error) {
 	return config, nil
 }
 
+// validate checks the configuration for required fields and valid values.
 func validate(config *Config) error {
 	var errs []error
 

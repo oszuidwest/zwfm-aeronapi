@@ -9,8 +9,7 @@ import (
 	"github.com/oszuidwest/zwfm-aerontoolbox/internal/types"
 )
 
-// playlistItemColumns defines the SELECT columns for playlist items.
-// Use with fmt.Sprintf to inject VoicetrackUserID.
+// playlistItemColumns contains the SQL SELECT clause for playlist item data.
 const playlistItemColumns = `
 	pi.titleid as trackid,
 	COALESCE(t.tracktitle, '') as tracktitle,
@@ -26,14 +25,13 @@ const playlistItemColumns = `
 	CASE WHEN t.userid = '%s' THEN true ELSE false END as is_voicetrack,
 	CASE WHEN COALESCE(pi.commblock, 0) > 0 THEN true ELSE false END as is_commblock`
 
-// playlistItemJoins defines the FROM/JOIN clause for playlist items.
-// Use with fmt.Sprintf to inject schema name (3x).
+// playlistItemJoins contains the SQL FROM and JOIN clauses for playlist items.
 const playlistItemJoins = `
 	FROM %s.playlistitem pi
 	LEFT JOIN %s.track t ON pi.titleid = t.titleid
 	LEFT JOIN %s.artist a ON t.artistid = a.artistid`
 
-// PlaylistBlock represents a programming block in the Aeron playlist system.
+// PlaylistBlock represents a programming block with scheduling information.
 type PlaylistBlock struct {
 	BlockID        string `db:"blockid" json:"blockid"`
 	Name           string `db:"name" json:"name"`
@@ -42,7 +40,7 @@ type PlaylistBlock struct {
 	Date           string `db:"date" json:"date"`
 }
 
-// PlaylistItem represents a single item in the Aeron playlist.
+// PlaylistItem represents a single scheduled track or media item.
 type PlaylistItem struct {
 	TrackID        string `db:"trackid" json:"trackid"`
 	TrackTitle     string `db:"tracktitle" json:"tracktitle"`
@@ -59,7 +57,7 @@ type PlaylistItem struct {
 	IsCommblock    bool   `db:"is_commblock" json:"is_commblock"`
 }
 
-// PlaylistOptions configures playlist queries with filtering and pagination.
+// PlaylistOptions contains filter, sort, and pagination parameters for playlist queries.
 type PlaylistOptions struct {
 	BlockID     string
 	Date        string
@@ -72,7 +70,7 @@ type PlaylistOptions struct {
 	ArtistImage *bool
 }
 
-// BuildPlaylistQuery creates a parameterized SQL query for playlist items.
+// BuildPlaylistQuery constructs a filtered playlist query based on the provided options.
 func BuildPlaylistQuery(schema string, opts *PlaylistOptions) (query string, params []any, err error) {
 	var conditions []string
 	paramCount := 0
@@ -149,7 +147,7 @@ func BuildPlaylistQuery(schema string, opts *PlaylistOptions) (query string, par
 	return query, params, nil
 }
 
-// ExecutePlaylistQuery executes a playlist query and returns items.
+// ExecutePlaylistQuery runs the query and returns playlist items.
 func ExecutePlaylistQuery(ctx context.Context, db DB, query string, params []any) ([]PlaylistItem, error) {
 	var items []PlaylistItem
 	err := db.SelectContext(ctx, &items, query, params...)

@@ -1,14 +1,10 @@
-// Package main provides version information for the Aeron Toolbox API.
 package main
 
-// Version is the build version string, set at build time via ldflags.
-// It defaults to "dev" for development builds.
+// Version is the semantic version string of the application (e.g., "1.2.3").
 var Version = "dev"
 
-// Commit is the git commit hash, set at build time via ldflags.
-// It defaults to "unknown" when not built from version control.
+// Commit is the git commit hash identifying the source code revision.
 var Commit = "unknown"
 
-// BuildTime is the build timestamp, set at build time via ldflags.
-// It defaults to "unknown" when build time is not captured.
+// BuildTime is the ISO 8601 timestamp when the binary was compiled.
 var BuildTime = "unknown"

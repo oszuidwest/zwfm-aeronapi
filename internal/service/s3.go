@@ -16,8 +16,7 @@ import (
 	"github.com/oszuidwest/zwfm-aerontoolbox/internal/types"
 )
 
-// s3Service handles S3 synchronization for backup files.
-// This is an internal storage backend for BackupService.
+// s3Service manages uploads and deletions of backup files to S3-compatible storage.
 type s3Service struct {
 	uploader *manager.Uploader
 	client   *s3.Client
@@ -25,8 +24,7 @@ type s3Service struct {
 	prefix   string
 }
 
-// newS3Service creates a new s3Service if S3 is enabled in config.
-// Returns nil if S3 is disabled.
+// newS3Service creates an S3 client for backup synchronization, or returns nil if disabled.
 func newS3Service(cfg *config.S3Config) (*s3Service, error) {
 	if !cfg.Enabled {
 		return nil, nil
@@ -57,6 +55,7 @@ func newS3Service(cfg *config.S3Config) (*s3Service, error) {
 	}, nil
 }
 
+// ptrOrNil returns nil for empty strings, otherwise a pointer to the string.
 func ptrOrNil(s string) *string {
 	if s == "" {
 		return nil
@@ -64,7 +63,7 @@ func ptrOrNil(s string) *string {
 	return aws.String(s)
 }
 
-// upload uploads a local file to S3.
+// upload transfers a backup file to S3 storage.
 func (s *s3Service) upload(ctx context.Context, filename, localPath string) (err error) {
 	file, err := os.Open(localPath)
 	if err != nil {
@@ -95,7 +94,7 @@ func (s *s3Service) upload(ctx context.Context, filename, localPath string) (err
 	return nil
 }
 
-// delete removes a file from S3.
+// delete removes a backup file from S3 storage.
 func (s *s3Service) delete(ctx context.Context, filename string) error {
 	key := s.prefix + filename
 

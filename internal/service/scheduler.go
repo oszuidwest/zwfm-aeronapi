@@ -9,13 +9,13 @@ import (
 	cron "github.com/netresearch/go-cron"
 )
 
-// BackupScheduler manages scheduled automatic backups.
+// BackupScheduler executes database backups on a configured cron schedule.
 type BackupScheduler struct {
 	cron    *cron.Cron
 	service *AeronService
 }
 
-// NewBackupScheduler creates a new backup scheduler.
+// NewBackupScheduler creates a scheduler with the configured cron schedule and timezone.
 func NewBackupScheduler(svc *AeronService) (*BackupScheduler, error) {
 	cfg := svc.Config().Backup.Scheduler
 
@@ -41,7 +41,7 @@ func NewBackupScheduler(svc *AeronService) (*BackupScheduler, error) {
 	return s, nil
 }
 
-// Start begins the scheduler.
+// Start activates the backup scheduler to run on its configured schedule.
 func (s *BackupScheduler) Start() {
 	s.cron.Start()
 	slog.Info("Backup scheduler gestart",
@@ -49,13 +49,13 @@ func (s *BackupScheduler) Start() {
 		"next_run", s.cron.Entries()[0].Next.Format(time.RFC3339))
 }
 
-// Stop gracefully stops the scheduler and waits for running jobs to complete.
+// Stop halts the scheduler and waits for any running backup to finish.
 func (s *BackupScheduler) Stop() context.Context {
 	slog.Info("Backup scheduler wordt gestopt...")
 	return s.cron.Stop()
 }
 
-// runBackup executes the scheduled backup job.
+// runBackup performs a backup with default settings from configuration.
 func (s *BackupScheduler) runBackup() {
 	cfg := s.service.Config().Backup
 	ctx, cancel := context.WithTimeout(context.Background(), cfg.GetTimeout())
