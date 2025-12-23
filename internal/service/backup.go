@@ -246,7 +246,7 @@ func (s *BackupService) Start(req BackupRequest) error {
 		ctx, cancel := context.WithTimeout(context.Background(), s.config.Backup.GetTimeout())
 		defer cancel()
 
-		s.execute(ctx, req)
+		_ = s.execute(ctx, req) // Error tracked in status
 	}()
 
 	return nil
