@@ -84,22 +84,3 @@ func QualifiedTable(schema string, table Table) (string, error) {
 	}
 	return fmt.Sprintf("%s.%s", schema, table), nil
 }
-
-// ErrorMessages provides Dutch error messages for user communication.
-var ErrorMessages = map[string]string{
-	"auth_failed":      "Niet geautoriseerd: ongeldige of ontbrekende API-sleutel",
-	"missing_confirm":  "Ontbrekende bevestigingsheader: %s",
-	"invalid_request":  "Ongeldige aanvraaginhoud",
-	"invalid_base64":   "Ongeldige base64-afbeelding",
-	"invalid_uuid":     "Ongeldige %s-ID: moet een UUID zijn",
-	"image_required":   "afbeelding is verplicht",
-	"either_or":        "gebruik óf URL óf upload, niet beide",
-	"entity_not_found": "%s-ID '%s' bestaat niet",
-	"no_image":         "%s heeft geen afbeelding",
-	"db_error":         "databasefout: %w",
-	"update_failed":    "bijwerken van %s mislukt: %w",
-	"delete_failed":    "verwijderen van %s mislukt: %w",
-	"count_failed":     "tellen van %s mislukt: %w",
-	"image_deleted":    "%s-afbeelding succesvol verwijderd",
-	"bulk_deleted":     "%d %s-afbeeldingen verwijderd",
-}

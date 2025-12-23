@@ -25,7 +25,7 @@ func (s *Server) handleCreateBackup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := s.service.CreateBackup(r.Context(), req)
+	result, err := s.service.Backup.Create(r.Context(), req)
 	if err != nil {
 		statusCode := errorCode(err)
 		respondError(w, statusCode, err.Error())
@@ -36,13 +36,14 @@ func (s *Server) handleCreateBackup(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleBackupDownload(w http.ResponseWriter, r *http.Request) {
+	cfg := s.service.Config()
 	query := r.URL.Query()
 	format := query.Get("format")
 	if format == "" {
-		format = s.config.Backup.GetDefaultFormat()
+		format = cfg.Backup.GetDefaultFormat()
 	}
 
-	compression := s.config.Backup.GetDefaultCompression()
+	compression := cfg.Backup.GetDefaultCompression()
 	if c := query.Get("compression"); c != "" {
 		if val, err := strconv.Atoi(c); err == nil {
 			compression = val
@@ -68,14 +69,14 @@ func (s *Server) handleBackupDownload(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Disposition", "attachment; filename="+filename)
 
-	if err := s.service.StreamBackup(r.Context(), w, format, compression); err != nil {
+	if err := s.service.Backup.Stream(r.Context(), w, format, compression); err != nil {
 		// Headers already sent, can't send error JSON
 		slog.Error("Backup stream mislukt", "error", err)
 	}
 }
 
 func (s *Server) handleListBackups(w http.ResponseWriter, r *http.Request) {
-	result, err := s.service.ListBackups()
+	result, err := s.service.Backup.List()
 	if err != nil {
 		statusCode := errorCode(err)
 		respondError(w, statusCode, err.Error())
@@ -88,7 +89,7 @@ func (s *Server) handleListBackups(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleDownloadBackupFile(w http.ResponseWriter, r *http.Request) {
 	filename := chi.URLParam(r, "filename")
 
-	filePath, err := s.service.GetBackupFilePath(filename)
+	filePath, err := s.service.Backup.GetFilePath(filename)
 	if err != nil {
 		statusCode := errorCode(err)
 		respondError(w, statusCode, err.Error())
@@ -117,7 +118,7 @@ func (s *Server) handleDeleteBackup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.service.DeleteBackup(filename); err != nil {
+	if err := s.service.Backup.Delete(filename); err != nil {
 		statusCode := errorCode(err)
 		respondError(w, statusCode, err.Error())
 		return

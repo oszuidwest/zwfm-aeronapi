@@ -1,6 +1,6 @@
 module github.com/oszuidwest/zwfm-aerontoolbox
 
-go 1.25.0
+go 1.25.5
 
 require (
 	github.com/doyensec/safeurl v0.2.2
@@ -10,4 +10,4 @@ require (
 	golang.org/x/image v0.34.0
 )
 
-require github.com/netresearch/go-cron v0.7.1 // indirect
+require github.com/netresearch/go-cron v0.7.1

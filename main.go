@@ -63,11 +63,11 @@ func run() error {
 		slog.Error("Service initialisatie mislukt", "error", err)
 		return err
 	}
+	defer svc.Close()
 
 	scheduler := startSchedulerIfEnabled(cfg, svc)
 
-	api.Version = Version
-	server := api.New(svc, cfg)
+	server := api.New(svc, Version)
 
 	return serveUntilShutdown(server, *port, scheduler)
 }

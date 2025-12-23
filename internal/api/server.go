@@ -9,26 +9,22 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
-	"github.com/oszuidwest/zwfm-aerontoolbox/internal/config"
 	"github.com/oszuidwest/zwfm-aerontoolbox/internal/service"
 	"github.com/oszuidwest/zwfm-aerontoolbox/internal/types"
 )
 
-// Version is the application version, set at build time.
-var Version = "dev"
-
 // Server represents the HTTP API server for the Aeron radio automation system.
 type Server struct {
 	service *service.AeronService
-	config  *config.Config
+	version string
 	server  *http.Server
 }
 
 // New creates a new Server instance.
-func New(svc *service.AeronService, cfg *config.Config) *Server {
+func New(svc *service.AeronService, version string) *Server {
 	return &Server{
 		service: svc,
-		config:  cfg,
+		version: version,
 	}
 }
 
@@ -45,7 +41,7 @@ func (s *Server) Start(port string) error {
 	router.Use(middleware.Recoverer)
 	router.Use(middleware.RealIP)
 	router.Use(middleware.Compress(5))
-	router.Use(middleware.Timeout(s.config.API.GetRequestTimeout()))
+	router.Use(middleware.Timeout(s.service.Config().API.GetRequestTimeout()))
 
 	router.NotFound(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -117,7 +113,8 @@ func (s *Server) setupEntityRoutes(r chi.Router, path string, entityType types.E
 
 func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !s.config.API.Enabled {
+		cfg := s.service.Config()
+		if !cfg.API.Enabled {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -140,7 +137,7 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 }
 
 func (s *Server) isValidAPIKey(key string) bool {
-	return key != "" && slices.Contains(s.config.API.Keys, key)
+	return key != "" && slices.Contains(s.service.Config().API.Keys, key)
 }
 
 func detectImageContentType(data []byte) string {

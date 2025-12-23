@@ -9,6 +9,30 @@ import (
 	"github.com/oszuidwest/zwfm-aerontoolbox/internal/types"
 )
 
+// playlistItemColumns defines the SELECT columns for playlist items.
+// Use with fmt.Sprintf to inject VoicetrackUserID.
+const playlistItemColumns = `
+	pi.titleid as trackid,
+	COALESCE(t.tracktitle, '') as tracktitle,
+	COALESCE(t.artistid, '00000000-0000-0000-0000-000000000000') as artistid,
+	COALESCE(t.artist, '') as artistname,
+	TO_CHAR(pi.startdatetime, 'HH24:MI:SS') as start_time,
+	TO_CHAR(pi.startdatetime + INTERVAL '1 millisecond' * COALESCE(t.knownlength, 0), 'HH24:MI:SS') as end_time,
+	COALESCE(t.knownlength, 0) as duration,
+	CASE WHEN t.picture IS NOT NULL THEN true ELSE false END as has_track_image,
+	CASE WHEN a.picture IS NOT NULL THEN true ELSE false END as has_artist_image,
+	COALESCE(t.exporttype, 0) as exporttype,
+	COALESCE(pi.mode, 0) as mode,
+	CASE WHEN t.userid = '%s' THEN true ELSE false END as is_voicetrack,
+	CASE WHEN COALESCE(pi.commblock, 0) > 0 THEN true ELSE false END as is_commblock`
+
+// playlistItemJoins defines the FROM/JOIN clause for playlist items.
+// Use with fmt.Sprintf to inject schema name (3x).
+const playlistItemJoins = `
+	FROM %s.playlistitem pi
+	LEFT JOIN %s.track t ON pi.titleid = t.titleid
+	LEFT JOIN %s.artist a ON t.artistid = a.artistid`
+
 // PlaylistBlock represents a programming block in the Aeron playlist system.
 type PlaylistBlock struct {
 	BlockID        string `db:"blockid" json:"blockid"`
@@ -46,14 +70,6 @@ type PlaylistOptions struct {
 	SortDesc    bool
 	TrackImage  *bool
 	ArtistImage *bool
-}
-
-// DefaultPlaylistOptions returns default playlist query options.
-func DefaultPlaylistOptions() PlaylistOptions {
-	return PlaylistOptions{
-		ExportTypes: []int{},
-		SortBy:      "starttime",
-	}
 }
 
 // BuildPlaylistQuery creates a parameterized SQL query for playlist items.
@@ -117,27 +133,9 @@ func BuildPlaylistQuery(schema string, opts *PlaylistOptions) (query string, par
 		return "", nil, types.NewValidationError("schema", fmt.Sprintf("ongeldige schema naam: %s", schema))
 	}
 
-	query = fmt.Sprintf(`
-		SELECT
-			pi.titleid as trackid,
-			COALESCE(t.tracktitle, '') as tracktitle,
-			COALESCE(t.artistid, '00000000-0000-0000-0000-000000000000') as artistid,
-			COALESCE(t.artist, '') as artistname,
-			TO_CHAR(pi.startdatetime, 'HH24:MI:SS') as start_time,
-			TO_CHAR(pi.startdatetime + INTERVAL '1 millisecond' * COALESCE(t.knownlength, 0), 'HH24:MI:SS') as end_time,
-			COALESCE(t.knownlength, 0) as duration,
-			CASE WHEN t.picture IS NOT NULL THEN true ELSE false END as has_track_image,
-			CASE WHEN a.picture IS NOT NULL THEN true ELSE false END as has_artist_image,
-			COALESCE(t.exporttype, 0) as exporttype,
-			COALESCE(pi.mode, 0) as mode,
-			CASE WHEN t.userid = '%s' THEN true ELSE false END as is_voicetrack,
-			CASE WHEN COALESCE(pi.commblock, 0) > 0 THEN true ELSE false END as is_commblock
-		FROM %s.playlistitem pi
-		LEFT JOIN %s.track t ON pi.titleid = t.titleid
-		LEFT JOIN %s.artist a ON t.artistid = a.artistid
-		WHERE %s
-		ORDER BY %s
-	`, types.VoicetrackUserID, schema, schema, schema, whereClause, orderBy)
+	columns := fmt.Sprintf(playlistItemColumns, types.VoicetrackUserID)
+	joins := fmt.Sprintf(playlistItemJoins, schema, schema, schema)
+	query = fmt.Sprintf("SELECT %s %s WHERE %s ORDER BY %s", columns, joins, whereClause, orderBy)
 
 	if opts.Limit > 0 {
 		query += fmt.Sprintf(" LIMIT %s", nextParam())
@@ -156,127 +154,8 @@ func ExecutePlaylistQuery(ctx context.Context, db DB, query string, params []any
 	var items []PlaylistItem
 	err := db.SelectContext(ctx, &items, query, params...)
 	if err != nil {
-		return nil, &types.DatabaseError{Operation: "ophalen van playlist", Err: err}
+		return nil, &types.OperationError{Operation: "ophalen van playlist", Err: err}
 	}
 
 	return items, nil
-}
-
-// GetPlaylist retrieves playlist items based on the provided options.
-func GetPlaylist(ctx context.Context, db DB, schema string, opts *PlaylistOptions) ([]PlaylistItem, error) {
-	query, params, err := BuildPlaylistQuery(schema, opts)
-	if err != nil {
-		return nil, err
-	}
-	return ExecutePlaylistQuery(ctx, db, query, params)
-}
-
-// GetPlaylistBlocks retrieves all playlist blocks for a specific date.
-func GetPlaylistBlocks(ctx context.Context, db DB, schema, date string) ([]PlaylistBlock, error) {
-	var dateFilter string
-	params := []any{}
-
-	if date != "" {
-		dateFilter = "pb.startdatetime >= $1::date AND pb.startdatetime < $1::date + INTERVAL '1 day'"
-		params = append(params, date)
-	} else {
-		dateFilter = "pb.startdatetime >= CURRENT_DATE AND pb.startdatetime < CURRENT_DATE + INTERVAL '1 day'"
-	}
-
-	query := fmt.Sprintf(`
-		SELECT
-			pb.blockid,
-			COALESCE(pb.name, '') as name,
-			DATE(pb.startdatetime)::text as date,
-			TO_CHAR(pb.startdatetime, 'HH24:MI:SS') as start_time,
-			TO_CHAR(pb.enddatetime, 'HH24:MI:SS') as end_time
-		FROM %s.playlistblock pb
-		WHERE %s
-		ORDER BY pb.startdatetime
-	`, schema, dateFilter)
-
-	var blocks []PlaylistBlock
-	err := db.SelectContext(ctx, &blocks, query, params...)
-	if err != nil {
-		return nil, &types.DatabaseError{Operation: "ophalen van playlist blocks", Err: err}
-	}
-
-	return blocks, nil
-}
-
-// GetPlaylistBlocksWithTracks fetches all blocks and their tracks for a date.
-func GetPlaylistBlocksWithTracks(ctx context.Context, db DB, schema, date string) ([]PlaylistBlock, map[string][]PlaylistItem, error) {
-	blocks, err := GetPlaylistBlocks(ctx, db, schema, date)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	if len(blocks) == 0 {
-		return blocks, make(map[string][]PlaylistItem), nil
-	}
-
-	blockIDs := make([]string, len(blocks))
-	for i, block := range blocks {
-		blockIDs[i] = block.BlockID
-	}
-
-	var dateFilter string
-	params := []any{}
-	paramCount := 0
-
-	if date != "" {
-		dateFilter = "pi.startdatetime >= $1::date AND pi.startdatetime < $1::date + INTERVAL '1 day'"
-		params = append(params, date)
-		paramCount = 1
-	} else {
-		dateFilter = "pi.startdatetime >= CURRENT_DATE AND pi.startdatetime < CURRENT_DATE + INTERVAL '1 day'"
-	}
-	placeholders := make([]string, len(blockIDs))
-	for i, id := range blockIDs {
-		paramCount++
-		placeholders[i] = fmt.Sprintf("$%d", paramCount)
-		params = append(params, id)
-	}
-
-	// Create a temporary struct that includes blockid for grouping
-	type playlistItemWithBlockID struct {
-		PlaylistItem
-		TempBlockID string `db:"blockid"`
-	}
-
-	query := fmt.Sprintf(`
-		SELECT
-			pi.titleid as trackid,
-			COALESCE(t.tracktitle, '') as tracktitle,
-			COALESCE(t.artistid, '00000000-0000-0000-0000-000000000000') as artistid,
-			COALESCE(t.artist, '') as artistname,
-			TO_CHAR(pi.startdatetime, 'HH24:MI:SS') as start_time,
-			TO_CHAR(pi.startdatetime + INTERVAL '1 millisecond' * COALESCE(t.knownlength, 0), 'HH24:MI:SS') as end_time,
-			COALESCE(t.knownlength, 0) as duration,
-			CASE WHEN t.picture IS NOT NULL THEN true ELSE false END as has_track_image,
-			CASE WHEN a.picture IS NOT NULL THEN true ELSE false END as has_artist_image,
-			COALESCE(t.exporttype, 0) as exporttype,
-			COALESCE(pi.mode, 0) as mode,
-			CASE WHEN t.userid = '%s' THEN true ELSE false END as is_voicetrack,
-			CASE WHEN COALESCE(pi.commblock, 0) > 0 THEN true ELSE false END as is_commblock,
-			COALESCE(pi.blockid::text, '') as blockid
-		FROM %s.playlistitem pi
-		LEFT JOIN %s.track t ON pi.titleid = t.titleid
-		LEFT JOIN %s.artist a ON t.artistid = a.artistid
-		WHERE %s AND pi.blockid IN (%s)
-		ORDER BY pi.blockid, pi.startdatetime
-	`, types.VoicetrackUserID, schema, schema, schema, dateFilter, strings.Join(placeholders, ","))
-
-	var tempItems []playlistItemWithBlockID
-	err = db.SelectContext(ctx, &tempItems, query, params...)
-	if err != nil {
-		return nil, nil, &types.DatabaseError{Operation: "ophalen van playlist items", Err: err}
-	}
-
-	tracksByBlock := make(map[string][]PlaylistItem)
-	for i := range tempItems {
-		tracksByBlock[tempItems[i].TempBlockID] = append(tracksByBlock[tempItems[i].TempBlockID], tempItems[i].PlaylistItem)
-	}
-
-	return blocks, tracksByBlock, nil
 }

@@ -62,7 +62,7 @@ func ValidateURL(urlString string) error {
 // ValidateContentType validates that a Content-Type header indicates an image.
 func ValidateContentType(contentType string) error {
 	if contentType != "" && !strings.HasPrefix(contentType, "image/") {
-		return &types.ImageProcessingError{Message: fmt.Sprintf("geen afbeelding content-type: %s", contentType)}
+		return types.NewValidationError("image", fmt.Sprintf("geen afbeelding content-type: %s", contentType))
 	}
 	return nil
 }
@@ -70,12 +70,12 @@ func ValidateContentType(contentType string) error {
 // ValidateImageData validates that byte data represents a valid image.
 func ValidateImageData(data []byte) error {
 	if len(data) == 0 {
-		return &types.ImageProcessingError{Message: "afbeelding is leeg"}
+		return types.NewValidationError("image", "afbeelding is leeg")
 	}
 
 	_, _, err := image.DecodeConfig(bytes.NewReader(data))
 	if err != nil {
-		return &types.ImageProcessingError{Message: fmt.Sprintf("ongeldige afbeelding: %v", err)}
+		return types.NewValidationError("image", fmt.Sprintf("ongeldige afbeelding: %v", err))
 	}
 
 	return nil
@@ -84,7 +84,7 @@ func ValidateImageData(data []byte) error {
 // ValidateImageFormat validates that an image format is supported.
 func ValidateImageFormat(format string) error {
 	if !slices.Contains(types.SupportedFormats, format) {
-		return &types.ImageProcessingError{Message: fmt.Sprintf("bestandsformaat %s wordt niet ondersteund (gebruik: %v)", format, types.SupportedFormats)}
+		return types.NewValidationError("image", fmt.Sprintf("bestandsformaat %s wordt niet ondersteund (gebruik: %v)", format, types.SupportedFormats))
 	}
 	return nil
 }
@@ -99,7 +99,7 @@ func ValidateAndDownloadImage(urlString string, maxSize int64) ([]byte, error) {
 
 	resp, err := client.Get(urlString)
 	if err != nil {
-		return nil, &types.ImageProcessingError{Message: fmt.Sprintf("downloaden mislukt: %v", err)}
+		return nil, types.NewValidationError("image", fmt.Sprintf("downloaden mislukt: %v", err))
 	}
 	defer func() {
 		if err := resp.Body.Close(); err != nil {
@@ -108,7 +108,7 @@ func ValidateAndDownloadImage(urlString string, maxSize int64) ([]byte, error) {
 	}()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, &types.ImageProcessingError{Message: fmt.Sprintf("downloaden mislukt: HTTP %d", resp.StatusCode)}
+		return nil, types.NewValidationError("image", fmt.Sprintf("downloaden mislukt: HTTP %d", resp.StatusCode))
 	}
 
 	contentType := resp.Header.Get("Content-Type")
@@ -119,7 +119,7 @@ func ValidateAndDownloadImage(urlString string, maxSize int64) ([]byte, error) {
 	limitedReader := io.LimitReader(resp.Body, maxSize)
 	data, err := io.ReadAll(limitedReader)
 	if err != nil {
-		return nil, &types.ImageProcessingError{Message: fmt.Sprintf("fout bij lezen: %v", err)}
+		return nil, types.NewValidationError("image", fmt.Sprintf("fout bij lezen: %v", err))
 	}
 
 	if err := ValidateImageData(data); err != nil {
