@@ -98,3 +98,15 @@ func (s *Server) handleDeleteBackup(w http.ResponseWriter, r *http.Request) {
 		Filename: filename,
 	})
 }
+
+func (s *Server) handleValidateBackup(w http.ResponseWriter, r *http.Request) {
+	filename := chi.URLParam(r, "filename")
+
+	result, err := s.service.Backup.Validate(filename)
+	if err != nil {
+		respondError(w, errorCode(err), err.Error())
+		return
+	}
+
+	respondJSON(w, http.StatusOK, result)
+}

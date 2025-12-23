@@ -12,7 +12,7 @@ Een **onofficiële** REST API voor het Aeron-radioautomatiseringssysteem met too
 | **Afbeeldingenbeheer** | Upload, optimaliseer en beheer albumhoezen en artiestfoto's |
 | **Mediabrowser** | Bekijk artiesten, tracks en playlists met uitgebreide metadata |
 | **Database-onderhoud** | Health monitoring, VACUUM en ANALYZE operaties |
-| **Backup-management** | Maak, download en beheer database backups |
+| **Backup-management** | Maak, valideer, download en beheer database backups |
 
 ## Installatie
 
