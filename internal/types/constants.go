@@ -84,4 +84,3 @@ func QualifiedTable(schema string, table Table) (string, error) {
 	}
 	return fmt.Sprintf("%s.%s", schema, table), nil
 }
-
