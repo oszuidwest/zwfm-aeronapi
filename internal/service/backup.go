@@ -69,7 +69,6 @@ func (s *BackupService) Close() {
 type BackupRequest struct {
 	Format      string `json:"format"`
 	Compression int    `json:"compression"`
-	SchemaOnly  bool   `json:"schema_only"`
 }
 
 // BackupInfo represents metadata about an existing backup file.
@@ -271,9 +270,6 @@ func (s *BackupService) execute(ctx context.Context, req BackupRequest) error {
 	fullPath := filepath.Join(s.config.Backup.GetPath(), filename)
 	args := s.buildPgDumpArgs(format, compression)
 
-	if req.SchemaOnly {
-		args = append(args, "--schema-only")
-	}
 	args = append(args, "--file="+fullPath)
 
 	slog.Info("Backup gestart", "filename", filename, "format", format)

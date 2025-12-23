@@ -722,15 +722,13 @@ Start een nieuwe database backup op de achtergrond.
 ```json
 {
   "format": "custom",
-  "compression": 9,
-  "schema_only": false
+  "compression": 9
 }
 ```
 
 **Parameters:**
 - `format` (optioneel): `"custom"` (binair, standaard) of `"plain"` (SQL-tekst)
 - `compression` (optioneel): Compressieniveau 0-9 (standaard: 9, alleen voor custom format)
-- `schema_only` (optioneel): Alleen schema exporteren, geen data (standaard: false)
 
 **Response:** `202 Accepted`
 ```json
