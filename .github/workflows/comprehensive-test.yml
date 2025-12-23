@@ -1032,6 +1032,8 @@ jobs:
         if: matrix.suite == 's3'
         run: |
           echo "MinIO container starten..."
+          # Remove any existing container from previous runs
+          docker rm -f aeron-test-minio 2>/dev/null || true
           docker run -d --name aeron-test-minio \
             -p 9000:9000 -p 9001:9001 \
             -e MINIO_ROOT_USER=minioadmin \
