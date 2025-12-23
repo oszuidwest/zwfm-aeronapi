@@ -856,25 +856,43 @@ jobs:
       - name: "Backup: Concurrent backup rejected"
         if: matrix.suite == 'backup'
         run: |
-          echo "POST /api/db/backup (tweede backup starten)"
+          echo "POST /api/db/backup (tweede backup starten terwijl eerste draait)"
           # Start eerste backup
           curl -s -X POST -H "X-API-Key: ${{ env.API_KEY }}" \
             -H 'Content-Type: application/json' \
             http://localhost:${{ env.API_PORT }}/api/db/backup \
             -d '{"format": "plain"}' > /dev/null
-          # Probeer direct tweede backup
-          sleep 0.5
-          RESPONSE=$(curl -s -X POST -H "X-API-Key: ${{ env.API_KEY }}" \
-            -H 'Content-Type: application/json' \
-            http://localhost:${{ env.API_PORT }}/api/db/backup \
-            -d '{"format": "plain"}')
-          SUCCESS=$(echo "$RESPONSE" | jq -r '.success')
-          ERROR=$(echo "$RESPONSE" | jq -r '.error')
-          if [ "$SUCCESS" = "false" ] && echo "$ERROR" | grep -q "al bezig"; then
-            echo "Correct: tweede backup wordt geweigerd"
-          else
-            echo "::warning::Concurrent backup test inconclusive (backup mogelijk al klaar)"
+
+          # Poll status en probeer tweede backup zodra eerste draait
+          TESTED=false
+          for i in {1..60}; do
+            RUNNING=$(curl -s -H "X-API-Key: ${{ env.API_KEY }}" http://localhost:${{ env.API_PORT }}/api/db/backup/status | jq -r '.data.running')
+            if [ "$RUNNING" = "true" ]; then
+              echo "Eerste backup draait, probeer tweede te starten..."
+              RESPONSE=$(curl -s -X POST -H "X-API-Key: ${{ env.API_KEY }}" \
+                -H 'Content-Type: application/json' \
+                http://localhost:${{ env.API_PORT }}/api/db/backup \
+                -d '{"format": "plain"}')
+              SUCCESS=$(echo "$RESPONSE" | jq -r '.success')
+              ERROR=$(echo "$RESPONSE" | jq -r '.error')
+              if [ "$SUCCESS" = "false" ] && echo "$ERROR" | grep -q "al bezig"; then
+                echo "Correct: tweede backup wordt geweigerd"
+                TESTED=true
+                break
+              else
+                echo "::error::Tweede backup zou geweigerd moeten worden"
+                echo "Response: $RESPONSE"
+                exit 1
+              fi
+            fi
+            sleep 0.1
+          done
+
+          if [ "$TESTED" = "false" ]; then
+            echo "::error::Kon concurrent backup test niet uitvoeren (backup te snel klaar)"
+            exit 1
           fi
+
           # Wacht tot backup klaar is
           for i in {1..60}; do
             RUNNING=$(curl -s -H "X-API-Key: ${{ env.API_KEY }}" http://localhost:${{ env.API_PORT }}/api/db/backup/status | jq -r '.data.running')
