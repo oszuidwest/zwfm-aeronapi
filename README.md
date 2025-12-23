@@ -1,58 +1,32 @@
 # Aeron Toolbox
 
-Een **onofficiële** REST API voor het Aeron-radioautomatiseringssysteem met tools voor afbeeldingenbeheer, mediabrowser, database-onderhoud en backups.
+Het radioautomatiseringssysteem Aeron mist een REST API. Aeron Toolbox vult een deel van dat gat: een headless API waarmee je via HTTP afbeeldingen beheert, media browst, de database onderhoudt en backups maakt.
 
 > [!WARNING]
-> Aeron is een product van Broadcast Partners. Deze API is volledig onofficieel en wordt niet ontwikkeld door of in samenwerking met Broadcast Partners. Gebruik is op eigen risico. Maak altijd eerst een back-up van je database voordat je deze tool gebruikt.
+> Dit is een **onofficiële** tool, niet ontwikkeld door of in samenwerking met Cellnex Broadcast Partners. Gebruik op eigen risico. Maak altijd een backup voordat je begint.
 
-## Functionaliteiten
+## Wat kan het?
 
-| Module | Beschrijving |
-|--------|--------------|
-| **Afbeeldingenbeheer** | Upload, optimaliseer en beheer albumhoezen en artiestfoto's |
-| **Mediabrowser** | Bekijk artiesten, tracks en playlists met uitgebreide metadata |
-| **Database-onderhoud** | Health monitoring, VACUUM en ANALYZE operaties |
-| **Backup-management** | Maak, valideer, download en beheer database backups |
+- **Afbeeldingen:** upload en optimaliseer albumhoezen en artiestfoto's
+- **Media:** browse artiesten, tracks en playlists met metadata
+- **Onderhoud:** monitor database-gezondheid, voer VACUUM en ANALYZE uit
+- **Backups:** maak, valideer en download database-backups (optioneel naar S3)
 
-## Systeemvereisten
-
-| Vereiste | Beschrijving |
-|----------|--------------|
-| **Go 1.25+** | Alleen nodig bij bouwen vanaf broncode |
-| **PostgreSQL client tools** | `pg_dump` en `pg_restore` - alleen vereist als backup functionaliteit is ingeschakeld |
-
-De PostgreSQL client tools worden bij het opstarten gevalideerd wanneer `backup.enabled: true`. Zonder deze tools weigert de applicatie te starten met een duidelijke foutmelding.
-
-**Installatie PostgreSQL client tools:**
-```bash
-# Debian/Ubuntu
-apt-get install postgresql-client
-
-# Alpine Linux (Docker)
-apk add postgresql16-client
-
-# macOS
-brew install libpq
-
-# Windows
-# Installeer via PostgreSQL installer of: choco install postgresql
-```
-
-## Installatie
+## Snel starten
 
 ### Docker (aanbevolen)
 
-**Met Docker Compose:**
 ```bash
-# Download configuratiebestanden
+# Download configuratie
 wget https://raw.githubusercontent.com/oszuidwest/zwfm-aerontoolbox/main/config.example.json -O config.json
 wget https://raw.githubusercontent.com/oszuidwest/zwfm-aerontoolbox/main/docker-compose.example.yml -O docker-compose.yml
 
-# Pas config.json aan en start
+# Pas config.json aan naar jouw situatie, dan:
 docker compose up -d
 ```
 
-**Of met Docker run:**
+Of direct met `docker run`:
+
 ```bash
 docker run -d -p 8080:8080 \
   -v $(pwd)/config.json:/app/config.json:ro \
@@ -62,9 +36,9 @@ docker run -d -p 8080:8080 \
   ghcr.io/oszuidwest/zwfm-aerontoolbox:latest
 ```
 
-### Binaries
+### Binary
 
-Download voor je platform via de [releases-pagina](https://github.com/oszuidwest/zwfm-aerontoolbox/releases).
+Download een kant-en-klare binary voor jouw platform via de [releases-pagina](https://github.com/oszuidwest/zwfm-aerontoolbox/releases).
 
 ### Vanaf broncode
 
@@ -76,48 +50,56 @@ go build -o zwfm-aerontoolbox .
 ./zwfm-aerontoolbox -config=config.json -port=8080
 ```
 
+Vereist: Go 1.25+
+
 ## Configuratie
 
-Kopieer `config.example.json` naar `config.json` en configureer:
+Kopieer [`config.example.json`](config.example.json) naar `config.json`. De belangrijkste secties:
 
-| Sectie | Beschrijving |
-|--------|--------------|
-| `database` | PostgreSQL verbinding (host, port, user, password, schema) |
-| `image` | Afbeeldingsoptimalisatie (afmetingen, kwaliteit) |
-| `api` | Authenticatie (API-sleutels) |
-| `backup` | Backup-instellingen (pad, retentie, scheduler, S3 sync) |
-| `log` | Logging-instellingen (level, format) |
+| Sectie | Wat configureer je? |
+|--------|---------------------|
+| `database` | PostgreSQL-verbinding (host, poort, credentials, schema) |
+| `image` | Doelafmetingen en JPEG-kwaliteit voor geüploade afbeeldingen |
+| `api` | API-sleutels voor authenticatie |
+| `backup` | Backup-pad, retentie, scheduler en optionele S3-sync |
+| `log` | Logniveau (`debug`, `info`, `warn`, `error`) en format (`text`, `json`) |
 
-Zie [`config.example.json`](config.example.json) voor alle opties en standaardwaarden.
+### Backup-functionaliteit
 
-## Gebruik
+Voor backups heb je `pg_dump` en `pg_restore` nodig op het systeem:
+
+```bash
+# Debian/Ubuntu
+apt-get install postgresql-client
+
+# Alpine (Docker)
+apk add postgresql16-client
+
+# macOS
+brew install libpq
+```
+
+De applicatie valideert bij het opstarten of deze tools beschikbaar zijn wanneer `backup.enabled: true`.
+
+## Voorbeelden
 
 ```bash
 # Health check
 curl http://localhost:8080/api/health
 
-# Artiestafbeelding uploaden
+# Artiestafbeelding uploaden (via URL)
 curl -X POST http://localhost:8080/api/artists/{id}/image \
   -H "X-API-Key: jouw-api-sleutel" \
   -H "Content-Type: application/json" \
   -d '{"url":"https://example.com/artist.jpg"}'
 
-# Database backup maken
+# Database backup starten
 curl -X POST http://localhost:8080/api/db/backup \
   -H "X-API-Key: jouw-api-sleutel"
 ```
 
-Volledige API-documentatie: [API.md](API.md)
-
-## Ontwikkeling
-
-**Vereisten:** Go 1.25+, PostgreSQL
-
-```bash
-go build -o zwfm-aerontoolbox .
-go test ./...
-```
+Zie [API.md](API.md) voor de volledige API-documentatie.
 
 ## Licentie
 
-MIT-licentie - zie [LICENSE](LICENSE)
+MIT. Zie [LICENSE](LICENSE).
