@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/oszuidwest/zwfm-aerontoolbox/internal/database"
 	"github.com/oszuidwest/zwfm-aerontoolbox/internal/types"
 	"github.com/oszuidwest/zwfm-aerontoolbox/internal/util"
 )
@@ -97,7 +98,7 @@ func (s *AeronService) GetDatabaseHealth(ctx context.Context) (*DatabaseHealth, 
 }
 
 // getDatabaseSize returns the total database size.
-func getDatabaseSize(ctx context.Context, db DB) (size string, sizeRaw int64, err error) {
+func getDatabaseSize(ctx context.Context, db database.DB) (size string, sizeRaw int64, err error) {
 	err = db.GetContext(ctx, &sizeRaw, "SELECT pg_database_size(current_database())")
 	if err != nil {
 		return "", 0, err
@@ -106,7 +107,7 @@ func getDatabaseSize(ctx context.Context, db DB) (size string, sizeRaw int64, er
 }
 
 // getTableHealth retrieves health statistics for all tables in the schema using a single combined query.
-func getTableHealth(ctx context.Context, db DB, schema string) ([]TableHealth, error) {
+func getTableHealth(ctx context.Context, db database.DB, schema string) ([]TableHealth, error) {
 	// Combined query that joins pg_stat_user_tables with pg_class for size info
 	query := `
 		SELECT

@@ -3,7 +3,6 @@ package service
 
 import (
 	"context"
-	"database/sql"
 	"encoding/base64"
 	"fmt"
 	"io"
@@ -17,24 +16,16 @@ import (
 	"github.com/oszuidwest/zwfm-aerontoolbox/internal/types"
 )
 
-// DB defines the database interface required by the service layer.
-type DB interface {
-	GetContext(ctx context.Context, dest any, query string, args ...any) error
-	SelectContext(ctx context.Context, dest any, query string, args ...any) error
-	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
-	PingContext(ctx context.Context) error
-}
-
 // AeronService provides business logic for the Aeron radio automation system.
 type AeronService struct {
-	db         DB
+	db         database.DB
 	config     *config.Config
 	schema     string
 	backupRoot *os.Root
 }
 
 // New creates a new AeronService instance.
-func New(db DB, cfg *config.Config) (*AeronService, error) {
+func New(db database.DB, cfg *config.Config) (*AeronService, error) {
 	svc := &AeronService{
 		db:     db,
 		config: cfg,
@@ -63,7 +54,7 @@ func (s *AeronService) Config() *config.Config {
 }
 
 // DB returns the database interface.
-func (s *AeronService) DB() DB {
+func (s *AeronService) DB() database.DB {
 	return s.db
 }
 

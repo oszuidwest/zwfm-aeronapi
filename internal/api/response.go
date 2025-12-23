@@ -6,7 +6,6 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
-	"strings"
 
 	"github.com/oszuidwest/zwfm-aerontoolbox/internal/types"
 )
@@ -43,29 +42,9 @@ func errorCode(err error) int {
 		return http.StatusOK
 	}
 
-	// Check for HTTPError interface (all typed errors implement this)
 	var httpErr types.HTTPError
 	if errors.As(err, &httpErr) {
 		return httpErr.StatusCode()
-	}
-
-	// Fallback for legacy string matching
-	return errorCodeFromMessage(err.Error())
-}
-
-func errorCodeFromMessage(msg string) int {
-	if strings.Contains(msg, "bestaat niet") ||
-		strings.Contains(msg, "heeft geen afbeelding") {
-		return http.StatusNotFound
-	}
-
-	if msg == "afbeelding is verplicht" ||
-		msg == "gebruik óf URL óf upload, niet beide" ||
-		strings.Contains(msg, "ongeldig type") ||
-		strings.Contains(msg, "te klein") ||
-		strings.Contains(msg, "niet ondersteund") ||
-		strings.Contains(msg, "ongeldige") {
-		return http.StatusBadRequest
 	}
 
 	return http.StatusInternalServerError

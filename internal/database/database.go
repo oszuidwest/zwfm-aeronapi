@@ -16,6 +16,7 @@ type DB interface {
 	GetContext(ctx context.Context, dest any, query string, args ...any) error
 	SelectContext(ctx context.Context, dest any, query string, args ...any) error
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+	PingContext(ctx context.Context) error
 }
 
 // Artist represents a basic artist entity from the database.
