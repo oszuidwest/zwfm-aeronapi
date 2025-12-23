@@ -118,6 +118,7 @@ jobs:
           - tracks
           - maintenance
           - backup
+          - s3
           - edge-cases
 
     steps:
@@ -1025,6 +1026,216 @@ jobs:
             echo "::error::Path traversal zou geblokkeerd moeten worden!"
             exit 1
           fi
+
+      # ==================== S3 SYNC TESTS ====================
+      - name: "S3: Start MinIO container"
+        if: matrix.suite == 's3'
+        run: |
+          echo "MinIO container starten..."
+          docker run -d --name aeron-test-minio \
+            -p 9000:9000 -p 9001:9001 \
+            -e MINIO_ROOT_USER=minioadmin \
+            -e MINIO_ROOT_PASSWORD=minioadmin123 \
+            minio/minio:latest server /data --console-address ":9001"
+
+      - name: "S3: Wait for MinIO and create bucket"
+        if: matrix.suite == 's3'
+        run: |
+          echo "Wachten op MinIO..."
+          for i in {1..30}; do
+            if curl -sf http://localhost:9000/minio/health/live > /dev/null 2>&1; then
+              echo "MinIO is klaar"
+              break
+            fi
+            sleep 1
+          done
+
+          # Install MinIO client
+          curl -sL https://dl.min.io/client/mc/release/linux-amd64/mc -o /tmp/mc
+          chmod +x /tmp/mc
+
+          # Configure MinIO client
+          /tmp/mc alias set testminio http://localhost:9000 minioadmin minioadmin123
+
+          # Create test bucket
+          /tmp/mc mb testminio/aeron-backups
+          echo "Bucket 'aeron-backups' aangemaakt"
+
+      - name: "S3: Restart API with S3 config"
+        if: matrix.suite == 's3'
+        run: |
+          echo "API server herstarten met S3 configuratie..."
+          kill $(cat api.pid) 2>/dev/null || true
+
+          cat > test_s3_config.json << 'EOF'
+          {
+            "database": {
+              "host": "localhost",
+              "port": "5433",
+              "name": "aeron_db",
+              "user": "aeron",
+              "password": "aeron123",
+              "schema": "aeron",
+              "sslmode": "disable"
+            },
+            "image": {
+              "target_width": 1280,
+              "target_height": 1280,
+              "quality": 90,
+              "reject_smaller": true
+            },
+            "api": {
+              "enabled": true,
+              "keys": ["test-api-key-12345"]
+            },
+            "backup": {
+              "enabled": true,
+              "path": "/tmp/backups",
+              "retention_days": 30,
+              "max_backups": 5,
+              "default_format": "custom",
+              "default_compression": 6,
+              "s3": {
+                "enabled": true,
+                "bucket": "aeron-backups",
+                "region": "us-east-1",
+                "endpoint": "http://localhost:9000",
+                "access_key_id": "minioadmin",
+                "secret_access_key": "minioadmin123",
+                "path_prefix": "test-backups/",
+                "force_path_style": true
+              }
+            }
+          }
+          EOF
+
+          ./zwfm-aerontoolbox -config=test_s3_config.json -port=${{ env.API_PORT }} &
+          echo $! > api.pid
+          for i in {1..30}; do
+            curl -sf http://localhost:${{ env.API_PORT }}/api/health > /dev/null 2>&1 && break
+            sleep 1
+          done
+          echo "API server gestart met S3 sync ingeschakeld"
+
+      - name: "S3: Verify API started with S3 config"
+        if: matrix.suite == 's3'
+        run: |
+          echo "GET /api/db/backup/status (controleren of status endpoint werkt)"
+          RESPONSE=$(curl -s -H "X-API-Key: ${{ env.API_KEY }}" http://localhost:${{ env.API_PORT }}/api/db/backup/status)
+          echo "Response: $RESPONSE"
+
+          SUCCESS=$(echo "$RESPONSE" | jq -r '.success')
+          if [ "$SUCCESS" = "true" ]; then
+            echo "Correct: backup status endpoint werkt"
+          else
+            echo "::error::Backup status endpoint gefaald"
+            exit 1
+          fi
+
+      - name: "S3: Create backup and verify sync"
+        if: matrix.suite == 's3'
+        run: |
+          echo "POST /api/db/backup (met S3 sync)"
+          HTTP_CODE=$(curl -s -o /tmp/s3_backup_response.json -w "%{http_code}" -X POST \
+            -H "X-API-Key: ${{ env.API_KEY }}" \
+            -H 'Content-Type: application/json' \
+            http://localhost:${{ env.API_PORT }}/api/db/backup \
+            -d '{"format": "custom", "compression": 6}')
+
+          if [ "$HTTP_CODE" != "202" ]; then
+            echo "::error::Verwachtte HTTP 202, kreeg $HTTP_CODE"
+            cat /tmp/s3_backup_response.json
+            exit 1
+          fi
+          echo "Backup gestart (HTTP 202)"
+
+      - name: "S3: Wait for backup and S3 sync completion"
+        if: matrix.suite == 's3'
+        run: |
+          echo "Wachten op backup en S3 sync voltooiing..."
+          for i in {1..90}; do
+            RESPONSE=$(curl -s -H "X-API-Key: ${{ env.API_KEY }}" http://localhost:${{ env.API_PORT }}/api/db/backup/status)
+            RUNNING=$(echo "$RESPONSE" | jq -r '.data.running')
+
+            if [ "$RUNNING" = "false" ]; then
+              echo "Status response: $RESPONSE"
+              SUCCESS=$(echo "$RESPONSE" | jq -r '.data.success')
+              FILENAME=$(echo "$RESPONSE" | jq -r '.data.filename')
+              S3_SYNCED=$(echo "$RESPONSE" | jq -r '.data.s3_sync.synced')
+              S3_ERROR=$(echo "$RESPONSE" | jq -r '.data.s3_sync.error')
+
+              if [ "$SUCCESS" != "true" ]; then
+                echo "::error::Backup gefaald"
+                exit 1
+              fi
+
+              if [ "$S3_SYNCED" = "true" ]; then
+                echo "Backup voltooid: $FILENAME"
+                echo "S3 sync succesvol!"
+                echo "S3_BACKUP_FILENAME=$FILENAME" >> $GITHUB_ENV
+                exit 0
+              else
+                echo "::error::S3 sync gefaald: $S3_ERROR"
+                exit 1
+              fi
+            fi
+            echo "Backup/sync nog bezig... ($i/90)"
+            sleep 1
+          done
+          echo "::error::Backup/S3 sync timeout na 90 seconden"
+          exit 1
+
+      - name: "S3: Verify file exists in MinIO"
+        if: matrix.suite == 's3'
+        run: |
+          echo "Controleren of backup in MinIO staat..."
+          S3_KEY="test-backups/${{ env.S3_BACKUP_FILENAME }}"
+          echo "Zoeken naar: $S3_KEY"
+
+          # List objects in bucket
+          OBJECTS=$(/tmp/mc ls testminio/aeron-backups/test-backups/)
+          echo "Objecten in bucket: $OBJECTS"
+
+          if echo "$OBJECTS" | grep -q "${{ env.S3_BACKUP_FILENAME }}"; then
+            echo "Correct: backup bestand gevonden in MinIO"
+          else
+            echo "::error::Backup bestand niet gevonden in MinIO"
+            exit 1
+          fi
+
+      - name: "S3: Delete backup and verify S3 deletion"
+        if: matrix.suite == 's3'
+        run: |
+          echo "DELETE /api/db/backups/${{ env.S3_BACKUP_FILENAME }}"
+          RESPONSE=$(curl -s -X DELETE \
+            -H "X-API-Key: ${{ env.API_KEY }}" \
+            -H "X-Confirm-Delete: ${{ env.S3_BACKUP_FILENAME }}" \
+            "http://localhost:${{ env.API_PORT }}/api/db/backups/${{ env.S3_BACKUP_FILENAME }}")
+          SUCCESS=$(echo "$RESPONSE" | jq -r '.success')
+          if [ "$SUCCESS" != "true" ]; then
+            echo "::error::Backup verwijderen gefaald"
+            echo "Response: $RESPONSE"
+            exit 1
+          fi
+          echo "Backup lokaal verwijderd"
+
+          # Give S3 deletion time to complete
+          sleep 2
+
+          # Verify deleted from S3
+          OBJECTS=$(/tmp/mc ls testminio/aeron-backups/test-backups/ 2>/dev/null || echo "")
+          if echo "$OBJECTS" | grep -q "${{ env.S3_BACKUP_FILENAME }}"; then
+            echo "::error::Backup bestand nog steeds in MinIO na verwijdering"
+            exit 1
+          else
+            echo "Correct: backup ook verwijderd uit MinIO"
+          fi
+
+      - name: "S3: Cleanup MinIO container"
+        if: matrix.suite == 's3' && always()
+        run: |
+          docker stop aeron-test-minio 2>/dev/null || true
+          docker rm aeron-test-minio 2>/dev/null || true
 
       # ==================== EDGE CASE TESTS ====================
       - name: "Edge: Upload to non-existent artist"
