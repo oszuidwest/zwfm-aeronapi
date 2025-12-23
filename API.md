@@ -669,6 +669,8 @@ Werk tabelstatistieken bij voor de PostgreSQL query optimizer.
 
 > **Let op:** Backup-endpoints zijn alleen beschikbaar indien `backup.enabled: true` in de configuratie.
 
+> **Systeemvereisten:** Bij het opstarten valideert de applicatie of `pg_dump` en `pg_restore` beschikbaar zijn. Zonder deze tools weigert de applicatie te starten. Zie de README voor installatie-instructies.
+
 ### Backup workflow
 
 Backups worden asynchroon uitgevoerd:
@@ -708,6 +710,8 @@ Backups kunnen automatisch worden uitgevoerd via de ingebouwde scheduler. Config
 
 **Parameters:**
 - `timeout_minutes`: Maximale tijd voor pg_dump (standaard: 30 minuten)
+- `pg_dump_path`: Custom pad naar pg_dump executable (leeg = automatische detectie via PATH)
+- `pg_restore_path`: Custom pad naar pg_restore executable (leeg = automatische detectie via PATH)
 - `enabled`: Schakel automatische backups in/uit
 - `schedule`: Cron-expressie voor het backup-schema
 - `timezone`: IANA-tijdzone (optioneel, standaard: systeemtijd)
@@ -1224,6 +1228,8 @@ Het gedrag van de API kan worden geconfigureerd via `config.json`:
     "default_format": "custom",
     "default_compression": 9,
     "timeout_minutes": 30,
+    "pg_dump_path": "",
+    "pg_restore_path": "",
     "scheduler": {
       "enabled": false,
       "schedule": "0 3 * * *",

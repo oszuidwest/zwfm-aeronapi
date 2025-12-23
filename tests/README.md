@@ -70,3 +70,20 @@ The test configuration uses:
 - **Database**: PostgreSQL 16
 - **Port**: 5432 (CI) or 5433 (local)
 - **API Keys**: test-api-key-12345, another-test-key-67890
+
+## System Requirements for Local Testing
+
+When testing backup functionality locally, you need:
+- **PostgreSQL client tools**: `pg_dump` and `pg_restore`
+
+```bash
+# Debian/Ubuntu
+apt-get install postgresql-client
+
+# macOS
+brew install libpq
+
+# The GitHub Actions workflow installs these automatically
+```
+
+The application validates these tools at startup when `backup.enabled: true`. Without them, it will refuse to start.
