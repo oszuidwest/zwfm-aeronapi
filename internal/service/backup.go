@@ -220,10 +220,42 @@ func (s *BackupService) executePgDump(ctx context.Context, pgDumpPath, filename,
 
 // --- Public methods ---
 
-// Create creates a database backup using pg_dump.
-// Uses a background context because the backup writes to a file - even if the client
-// disconnects, we want the backup file to be created successfully.
-func (s *BackupService) Create(_ context.Context, req BackupRequest) (*BackupResult, error) {
+// Start starts a database backup in the background using pg_dump.
+// Returns immediately after validation. The backup runs asynchronously.
+// Check GET /backups to see when the backup is complete.
+func (s *BackupService) Start(req BackupRequest) error {
+	if err := s.checkEnabled(); err != nil {
+		return err
+	}
+
+	if _, err := findPgDump(); err != nil {
+		return err
+	}
+
+	if _, _, err := s.validateRequest(req); err != nil {
+		return err
+	}
+
+	slog.Info("Backup gestart op achtergrond")
+
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+
+		ctx, cancel := context.WithTimeout(context.Background(), s.config.Backup.GetTimeout())
+		defer cancel()
+
+		if _, err := s.Create(ctx, req); err != nil {
+			slog.Error("Async backup mislukt", "error", err)
+		}
+	}()
+
+	return nil
+}
+
+// Create creates a database backup synchronously using pg_dump.
+// Used by the scheduler and internally by Start().
+func (s *BackupService) Create(ctx context.Context, req BackupRequest) (*BackupResult, error) {
 	if err := s.checkEnabled(); err != nil {
 		return nil, err
 	}
@@ -246,44 +278,18 @@ func (s *BackupService) Create(_ context.Context, req BackupRequest) (*BackupRes
 		args = append(args, "--schema-only")
 	}
 	args = append(args, "--file="+fullPath)
-	slog.Debug("pg_dump voorbereid", "format", format, "compression", compression, "schemaOnly", req.SchemaOnly, "filename", filename)
 
-	if req.DryRun {
-		return &BackupResult{
-			Filename:  filename,
-			FilePath:  fullPath,
-			Format:    format,
-			DryRun:    true,
-			Command:   fmt.Sprintf("pg_dump %s", strings.Join(args, " ")),
-			CreatedAt: time.Now(),
-		}, nil
-	}
-
-	// Use background context - backup writes to file, should complete even if client disconnects
-	backupCtx, cancel := context.WithTimeout(context.Background(), s.config.Backup.GetTimeout())
-	defer cancel()
-
-	fileInfo, duration, err := s.executePgDump(backupCtx, pgDumpPath, filename, fullPath, args)
+	fileInfo, duration, err := s.executePgDump(ctx, pgDumpPath, filename, fullPath, args)
 	if err != nil {
 		return nil, err
 	}
 
-	slog.Info("Backup succesvol gemaakt",
+	slog.Info("Backup voltooid",
 		"filename", filename,
 		"size", util.FormatBytes(fileInfo.Size()),
 		"duration", duration.Round(time.Millisecond).String())
 
-	// Run cleanup in background with proper lifecycle management
-	s.wg.Add(1)
-	go func() {
-		defer s.wg.Done()
-		select {
-		case <-s.done:
-			return
-		default:
-			s.cleanupOldBackups()
-		}
-	}()
+	s.cleanupOldBackups()
 
 	return &BackupResult{
 		Filename:      filename,
@@ -293,7 +299,6 @@ func (s *BackupService) Create(_ context.Context, req BackupRequest) (*BackupRes
 		SizeFormatted: util.FormatBytes(fileInfo.Size()),
 		Duration:      duration.Round(time.Millisecond).String(),
 		CreatedAt:     fileInfo.ModTime(),
-		DryRun:        false,
 	}, nil
 }
 

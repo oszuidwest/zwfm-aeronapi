@@ -78,10 +78,11 @@ func (s *Server) Start(port string) error {
 			})
 		})
 
-		// Backup routes with dedicated timeout (pg_dump can take minutes)
+		// Backup routes - no special timeout needed
+		// POST /backup returns immediately (async), downloads are served via http.ServeFile
 		r.Group(func(r chi.Router) {
 			r.Use(s.authMiddleware)
-			r.Use(middleware.Timeout(s.service.Config().Backup.GetTimeout()))
+			r.Use(middleware.Timeout(s.service.Config().API.GetRequestTimeout()))
 
 			r.Post("/db/backup", s.handleCreateBackup)
 			r.Get("/db/backups/{filename}", s.handleDownloadBackupFile)

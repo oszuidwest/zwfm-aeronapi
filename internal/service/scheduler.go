@@ -61,14 +61,14 @@ func (s *BackupScheduler) runBackup() {
 	start := time.Now()
 	slog.Info("Geplande backup gestart")
 
+	cfg := s.service.Config().Backup
 	ctx, cancel := context.WithTimeoutCause(
 		context.Background(),
-		30*time.Minute,
-		errors.New("scheduled backup timeout na 30 minuten"),
+		cfg.GetTimeout(),
+		errors.New("scheduled backup timeout"),
 	)
 	defer cancel()
 
-	cfg := s.service.Config().Backup
 	result, err := s.service.Backup.Create(ctx, BackupRequest{
 		Format:      cfg.GetDefaultFormat(),
 		Compression: cfg.GetDefaultCompression(),

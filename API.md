@@ -669,15 +669,17 @@ Werk tabelstatistieken bij voor de PostgreSQL query optimizer.
 
 ### Backup workflow
 
-De aanbevolen workflow voor backups is:
+Backups worden asynchroon uitgevoerd:
 
-1. **Backup aanmaken:** `POST /api/db/backup` → retourneert metadata met filename
-2. **Backup downloaden:** `GET /api/db/backups/{filename}` → download het bestand
+1. **Backup starten:** `POST /api/db/backup` → retourneert direct `202 Accepted`
+2. **Status controleren:** `GET /api/db/backups` → nieuwe backup verschijnt wanneer klaar
+3. **Backup downloaden:** `GET /api/db/backups/{filename}` → download het bestand
 
 Deze aanpak biedt voordelen:
-- Backup wordt geverifieerd voordat de response wordt verstuurd
+- Request retourneert direct (geen timeout issues)
+- Werkt met alle proxies en load balancers
 - Download ondersteunt resume via HTTP Range headers
-- Bij connectieverlies blijft het backup-bestand beschikbaar voor retry
+- Bij connectieverlies loopt backup door op de server
 
 ### Automatische backups
 
@@ -709,9 +711,9 @@ Backups kunnen automatisch worden uitgevoerd via de ingebouwde scheduler. Config
 | `0 3 * * 0` | Elke zondag om 3:00 |
 | `0 3 1 * *` | 1e van elke maand om 3:00 |
 
-### Backup aanmaken
+### Backup starten
 
-Maak een nieuwe database backup.
+Start een nieuwe database backup op de achtergrond.
 
 **Endpoint:** `POST /api/db/backup`
 **Authenticatie:** Vereist
@@ -728,17 +730,15 @@ Maak een nieuwe database backup.
 - `format` (optioneel): `"custom"` (binair, standaard) of `"plain"` (SQL-tekst)
 - `compression` (optioneel): Compressieniveau 0-9 (standaard: 9, alleen voor custom format)
 
-**Response:** `200 OK`
+**Response:** `202 Accepted`
 ```json
 {
-  "filename": "aeron-backup-2025-12-22-143000.dump",
-  "format": "custom",
-  "size_bytes": 52428800,
-  "size": "50.0 MB",
-  "duration": "12.5s",
-  "created_at": "2025-12-22T14:30:00Z"
+  "message": "Backup gestart op achtergrond",
+  "check": "/api/db/backups"
 }
 ```
+
+De backup wordt asynchroon uitgevoerd. Controleer `GET /api/db/backups` om te zien wanneer de backup klaar is.
 
 **Foutresponse:** `400 Bad Request`
 ```json
