@@ -58,10 +58,21 @@ jobs:
             VERSION="edge"
           fi
 
+          # Check if this is a prerelease BEFORE any transformations
+          IS_PRERELEASE="false"
+          if [[ "$VERSION" =~ ^(edge|alpha|beta|rc|pre|dev) ]] || [[ "$VERSION" =~ -(edge|alpha|beta|rc|pre|dev) ]]; then
+            IS_PRERELEASE="true"
+          fi
+
+          # Auto-prepend 'v' if missing (but not for special version strings like "edge")
+          if [[ "$VERSION" != v* ]] && [[ ! "$VERSION" =~ ^(edge|alpha|beta|rc|pre|dev) ]]; then
+            VERSION="v${VERSION}"
+          fi
+
           # Set outputs
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
           echo "version_without_v=${VERSION#v}" >> $GITHUB_OUTPUT
-          echo "is_prerelease=$([[ "$VERSION" =~ -(edge|alpha|beta|rc|pre|dev) ]] || [[ "$VERSION" == "edge" ]] && echo true || echo false)" >> $GITHUB_OUTPUT
+          echo "is_prerelease=${IS_PRERELEASE}" >> $GITHUB_OUTPUT
 
       - name: Extract metadata
         id: meta
