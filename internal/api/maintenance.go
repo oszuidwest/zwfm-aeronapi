@@ -3,6 +3,7 @@ package api
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 
 	"github.com/oszuidwest/zwfm-aerontoolbox/internal/service"
@@ -23,6 +24,7 @@ type AnalyzeRequest struct {
 func (s *Server) handleDatabaseHealth(w http.ResponseWriter, r *http.Request) {
 	health, err := s.service.Maintenance.GetHealth(r.Context())
 	if err != nil {
+		slog.Error("Database health check mislukt", "error", err)
 		respondError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -43,6 +45,7 @@ func (s *Server) handleVacuum(w http.ResponseWriter, r *http.Request) {
 		DryRun:  req.DryRun,
 	})
 	if err != nil {
+		slog.Error("Vacuum operatie mislukt", "tables", req.Tables, "error", err)
 		respondError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -59,6 +62,7 @@ func (s *Server) handleAnalyze(w http.ResponseWriter, r *http.Request) {
 
 	result, err := s.service.Maintenance.Analyze(r.Context(), req.Tables)
 	if err != nil {
+		slog.Error("Analyze operatie mislukt", "tables", req.Tables, "error", err)
 		respondError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

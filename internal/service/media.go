@@ -18,7 +18,7 @@ type MediaService struct {
 	config *config.Config
 }
 
-// newMediaService creates a new MediaService instance.
+// newMediaService returns a MediaService for media operations.
 func newMediaService(repo *database.Repository, cfg *config.Config) *MediaService {
 	return &MediaService{
 		repo:   repo,
@@ -73,6 +73,8 @@ type ImageUploadResult struct {
 
 // UploadImage processes and uploads an image for the specified entity.
 func (s *MediaService) UploadImage(ctx context.Context, params *ImageUploadParams) (*ImageUploadResult, error) {
+	slog.Debug("Image upload gestart", "entityType", params.EntityType, "id", params.ID, "hasURL", params.ImageURL != "", "hasData", len(params.ImageData) > 0)
+
 	if err := validateImageUploadParams(params); err != nil {
 		return nil, err
 	}
@@ -112,11 +114,13 @@ func (s *MediaService) UploadImage(ctx context.Context, params *ImageUploadParam
 		Quality:       s.config.Image.Quality,
 		RejectSmaller: s.config.Image.RejectSmaller,
 	}
+	slog.Debug("Image processing gestart", "inputSize", len(imageData), "targetWidth", imgConfig.TargetWidth, "targetHeight", imgConfig.TargetHeight)
 	processingResult, err := image.Process(imageData, imgConfig)
 	if err != nil {
 		slog.Error("Afbeelding verwerking mislukt", "error", err)
 		return nil, types.NewValidationError("image", fmt.Sprintf("verwerken mislukt: %v", err))
 	}
+	slog.Debug("Image processing voltooid", "originalSize", processingResult.Original.Size, "optimizedSize", processingResult.Optimized.Size, "savings", processingResult.Savings)
 
 	table := types.TableForEntityType(params.EntityType)
 	if err := s.repo.UpdateImage(ctx, table, params.ID, processingResult.Data); err != nil {
@@ -201,7 +205,6 @@ func (s *MediaService) DeleteAllImages(ctx context.Context, entityType types.Ent
 // --- Playlist operations ---
 
 // PlaylistOptions configures playlist queries with filtering and pagination.
-// This is the service-layer representation; it gets converted to database.PlaylistOptions internally.
 type PlaylistOptions struct {
 	BlockID     string
 	Date        string

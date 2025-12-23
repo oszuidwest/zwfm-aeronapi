@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/oszuidwest/zwfm-aerontoolbox/internal/types"
@@ -66,13 +68,20 @@ type BackupConfig struct {
 	Scheduler          SchedulerConfig `json:"scheduler"`
 }
 
-// Config represents the complete application configuration loaded from JSON.
+// LogConfig contains logging configuration.
+type LogConfig struct {
+	Level  string `json:"level"`  // "debug", "info", "warn", "error"
+	Format string `json:"format"` // "text", "json"
+}
+
+// Config represents the complete application configuration.
 type Config struct {
 	Database    DatabaseConfig    `json:"database"`
 	Image       ImageConfig       `json:"image"`
 	API         APIConfig         `json:"api"`
 	Maintenance MaintenanceConfig `json:"maintenance"`
 	Backup      BackupConfig      `json:"backup"`
+	Log         LogConfig         `json:"log"`
 }
 
 const (
@@ -90,64 +99,86 @@ const (
 	DefaultBackupPath                = "./backups"
 )
 
-// GetMaxDownloadBytes returns the maximum download size.
+// GetMaxDownloadBytes returns the maximum allowed image download size in bytes.
 func (c *ImageConfig) GetMaxDownloadBytes() int64 {
 	return cmp.Or(c.MaxImageDownloadSizeBytes, DefaultMaxImageDownloadSizeBytes)
 }
 
-// GetRequestTimeout returns the request timeout duration.
+// GetRequestTimeout returns the HTTP request timeout as a Duration.
 func (c *APIConfig) GetRequestTimeout() time.Duration {
 	return time.Duration(cmp.Or(c.RequestTimeoutSeconds, DefaultRequestTimeoutSeconds)) * time.Second
 }
 
-// GetMaxOpenConns returns the max open connections.
+// GetMaxOpenConns returns the maximum number of open database connections.
 func (c *DatabaseConfig) GetMaxOpenConns() int {
 	return cmp.Or(c.MaxOpenConns, DefaultMaxOpenConnections)
 }
 
-// GetMaxIdleConns returns the max idle connections.
+// GetMaxIdleConns returns the maximum number of idle database connections.
 func (c *DatabaseConfig) GetMaxIdleConns() int {
 	return cmp.Or(c.MaxIdleConns, DefaultMaxIdleConnections)
 }
 
-// GetConnMaxLifetime returns the connection max lifetime.
+// GetConnMaxLifetime returns the maximum lifetime of database connections as a Duration.
 func (c *DatabaseConfig) GetConnMaxLifetime() time.Duration {
 	return time.Duration(cmp.Or(c.ConnMaxLifetimeMinutes, DefaultConnMaxLifetimeMinutes)) * time.Minute
 }
 
-// GetBloatThreshold returns the bloat percentage threshold.
+// GetBloatThreshold returns the table bloat percentage that triggers maintenance recommendations.
 func (c *MaintenanceConfig) GetBloatThreshold() float64 {
 	return cmp.Or(c.BloatThreshold, DefaultBloatThreshold)
 }
 
-// GetDeadTupleThreshold returns the dead tuple count threshold.
+// GetDeadTupleThreshold returns the dead tuple count that triggers vacuum recommendations.
 func (c *MaintenanceConfig) GetDeadTupleThreshold() int64 {
 	return cmp.Or(c.DeadTupleThreshold, DefaultDeadTupleThreshold)
 }
 
-// GetPath returns the backup path.
+// GetPath returns the directory path where backup files are stored.
 func (c *BackupConfig) GetPath() string {
 	return cmp.Or(c.Path, DefaultBackupPath)
 }
 
-// GetRetentionDays returns the backup retention period.
+// GetRetentionDays returns the number of days to keep backup files before automatic deletion.
 func (c *BackupConfig) GetRetentionDays() int {
 	return cmp.Or(c.RetentionDays, DefaultBackupRetentionDays)
 }
 
-// GetMaxBackups returns the maximum number of backups.
+// GetMaxBackups returns the maximum number of backup files to retain.
 func (c *BackupConfig) GetMaxBackups() int {
 	return cmp.Or(c.MaxBackups, DefaultBackupMaxBackups)
 }
 
-// GetDefaultFormat returns the default backup format.
+// GetDefaultFormat returns the pg_dump format ("custom" or "plain").
 func (c *BackupConfig) GetDefaultFormat() string {
 	return cmp.Or(c.DefaultFormat, DefaultBackupFormat)
 }
 
-// GetDefaultCompression returns the default compression level.
+// GetDefaultCompression returns the compression level (0-9) for custom format backups.
 func (c *BackupConfig) GetDefaultCompression() int {
 	return min(cmp.Or(c.DefaultCompression, DefaultBackupCompression), 9)
+}
+
+// GetLevel returns the configured log level.
+func (c *LogConfig) GetLevel() slog.Level {
+	switch strings.ToLower(c.Level) {
+	case "debug":
+		return slog.LevelDebug
+	case "warn":
+		return slog.LevelWarn
+	case "error":
+		return slog.LevelError
+	default:
+		return slog.LevelInfo
+	}
+}
+
+// GetFormat returns the configured log format ("text" or "json").
+func (c *LogConfig) GetFormat() string {
+	if strings.EqualFold(c.Format, "json") {
+		return "json"
+	}
+	return "text"
 }
 
 // Load loads and validates application configuration from a JSON file.
@@ -169,6 +200,11 @@ func Load(configPath string) (*Config, error) {
 
 	if err := json.Unmarshal(data, config); err != nil {
 		return nil, fmt.Errorf("fout in configuratiebestand: %w", err)
+	}
+
+	// Environment variable overrides
+	if envLevel := os.Getenv("LOG_LEVEL"); envLevel != "" {
+		config.Log.Level = envLevel
 	}
 
 	if err := validate(config); err != nil {

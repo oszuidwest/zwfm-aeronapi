@@ -3,6 +3,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"time"
 
@@ -60,7 +61,11 @@ func (s *BackupScheduler) runBackup() {
 	start := time.Now()
 	slog.Info("Geplande backup gestart")
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	ctx, cancel := context.WithTimeoutCause(
+		context.Background(),
+		30*time.Minute,
+		errors.New("scheduled backup timeout na 30 minuten"),
+	)
 	defer cancel()
 
 	cfg := s.service.Config().Backup
@@ -70,7 +75,11 @@ func (s *BackupScheduler) runBackup() {
 	})
 
 	if err != nil {
-		slog.Error("Geplande backup mislukt", "error", err, "duration", time.Since(start))
+		if cause := context.Cause(ctx); cause != nil {
+			slog.Error("Geplande backup mislukt", "error", err, "cause", cause, "duration", time.Since(start))
+		} else {
+			slog.Error("Geplande backup mislukt", "error", err, "duration", time.Since(start))
+		}
 		return
 	}
 

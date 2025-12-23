@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/jmoiron/sqlx"
@@ -18,7 +19,7 @@ type Repository struct {
 	schema string
 }
 
-// NewRepository creates a new Repository instance.
+// NewRepository returns a Repository for accessing the specified schema.
 func NewRepository(db *sqlx.DB, schema string) *Repository {
 	return &Repository{db: db, schema: schema}
 }
@@ -28,12 +29,12 @@ func (r *Repository) DB() *sqlx.DB {
 	return r.db
 }
 
-// Schema returns the database schema name.
+// Schema returns the PostgreSQL schema used for all queries.
 func (r *Repository) Schema() string {
 	return r.schema
 }
 
-// Ping checks the database connection.
+// Ping verifies the database connection is alive.
 func (r *Repository) Ping(ctx context.Context) error {
 	return r.db.PingContext(ctx)
 }
@@ -42,6 +43,7 @@ func (r *Repository) Ping(ctx context.Context) error {
 
 // GetArtist retrieves complete artist details by UUID.
 func (r *Repository) GetArtist(ctx context.Context, id string) (*ArtistDetails, error) {
+	slog.Debug("Entity lookup", "type", "artist", "id", id)
 	query := fmt.Sprintf(artistDetailsQuery, r.schema)
 	return getEntityByID[ArtistDetails](ctx, r.db, query, id, "artiest", "ophalen artiest")
 }
@@ -50,6 +52,7 @@ func (r *Repository) GetArtist(ctx context.Context, id string) (*ArtistDetails, 
 
 // GetTrack retrieves complete track details by UUID.
 func (r *Repository) GetTrack(ctx context.Context, id string) (*TrackDetails, error) {
+	slog.Debug("Entity lookup", "type", "track", "id", id)
 	query := fmt.Sprintf(trackDetailsQuery, r.schema)
 	return getEntityByID[TrackDetails](ctx, r.db, query, id, "track", "ophalen track")
 }
@@ -74,7 +77,7 @@ func (r *Repository) GetImage(ctx context.Context, table types.Table, id string)
 		return nil, types.NewNotFoundError(label, id)
 	}
 	if err != nil {
-		return nil, &types.OperationError{Operation: fmt.Sprintf("ophalen %s afbeelding", label), Err: err}
+		return nil, types.NewOperationError(fmt.Sprintf("ophalen %s afbeelding", label), err)
 	}
 	if imageData == nil {
 		return nil, types.NewNoImageError(label, id)
@@ -96,7 +99,7 @@ func (r *Repository) UpdateImage(ctx context.Context, table types.Table, id stri
 
 	_, err = r.db.ExecContext(ctx, query, imageData, id)
 	if err != nil {
-		return &types.OperationError{Operation: fmt.Sprintf("bijwerken van %s", label), Err: err}
+		return types.NewOperationError(fmt.Sprintf("bijwerken van %s", label), err)
 	}
 	return nil
 }
@@ -114,12 +117,12 @@ func (r *Repository) DeleteImage(ctx context.Context, table types.Table, id stri
 
 	result, err := r.db.ExecContext(ctx, query, id)
 	if err != nil {
-		return &types.OperationError{Operation: fmt.Sprintf("verwijderen van %s-afbeelding", label), Err: err}
+		return types.NewOperationError(fmt.Sprintf("verwijderen van %s-afbeelding", label), err)
 	}
 
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {
-		return &types.OperationError{Operation: fmt.Sprintf("verwijderen van %s-afbeelding", label), Err: err}
+		return types.NewOperationError(fmt.Sprintf("verwijderen van %s-afbeelding", label), err)
 	}
 
 	if rowsAffected == 0 {
@@ -156,7 +159,7 @@ func (r *Repository) countItems(ctx context.Context, table types.Table, hasImage
 	var count int
 	err = r.db.GetContext(ctx, &count, query)
 	if err != nil {
-		return 0, &types.OperationError{Operation: fmt.Sprintf("tellen van %s", table), Err: err}
+		return 0, types.NewOperationError(fmt.Sprintf("tellen van %s", table), err)
 	}
 
 	return count, nil
@@ -174,7 +177,7 @@ func (r *Repository) DeleteAllImages(ctx context.Context, table types.Table) (in
 	result, err := r.db.ExecContext(ctx, query)
 	if err != nil {
 		label := types.LabelForTable(table)
-		return 0, &types.OperationError{Operation: fmt.Sprintf("verwijderen van %s-afbeeldingen", label), Err: err}
+		return 0, types.NewOperationError(fmt.Sprintf("verwijderen van %s-afbeeldingen", label), err)
 	}
 
 	return result.RowsAffected()
@@ -218,7 +221,7 @@ func (r *Repository) GetPlaylistBlocks(ctx context.Context, date string) ([]Play
 	var blocks []PlaylistBlock
 	err := r.db.SelectContext(ctx, &blocks, query, params...)
 	if err != nil {
-		return nil, &types.OperationError{Operation: "ophalen van playlist blocks", Err: err}
+		return nil, types.NewOperationError("ophalen van playlist blocks", err)
 	}
 
 	return blocks, nil
@@ -272,7 +275,7 @@ func (r *Repository) GetPlaylistWithTracks(ctx context.Context, date string) ([]
 	var tempItems []playlistItemWithBlockID
 	err = r.db.SelectContext(ctx, &tempItems, query, params...)
 	if err != nil {
-		return nil, nil, &types.OperationError{Operation: "ophalen van playlist items", Err: err}
+		return nil, nil, types.NewOperationError("ophalen van playlist items", err)
 	}
 
 	tracksByBlock := make(map[string][]PlaylistItem)

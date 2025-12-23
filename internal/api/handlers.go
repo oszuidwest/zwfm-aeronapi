@@ -41,7 +41,7 @@ type HealthResponse struct {
 // ImageUploadResponse represents the response for image upload operations.
 type ImageUploadResponse struct {
 	Artist               string  `json:"artist"`
-	Track                string  `json:"track,omitempty"`
+	Track                string  `json:"track,omitzero"`
 	OriginalSize         int     `json:"original_size"`
 	OptimizedSize        int     `json:"optimized_size"`
 	SizeReductionPercent float64 `json:"savings_percent"`
@@ -56,8 +56,8 @@ type BulkDeleteResponse struct {
 // ImageDeleteResponse represents the response for image delete operations.
 type ImageDeleteResponse struct {
 	Message  string `json:"message"`
-	ArtistID string `json:"artist_id,omitempty"`
-	TrackID  string `json:"track_id,omitempty"`
+	ArtistID string `json:"artist_id,omitzero"`
+	TrackID  string `json:"track_id,omitzero"`
 }
 
 // validateAndGetEntityID extracts and validates the entity ID from the request.
@@ -90,6 +90,7 @@ func (s *Server) handleStats(entityType types.EntityType) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		stats, err := s.service.Media.GetStatistics(r.Context(), entityType)
 		if err != nil {
+			slog.Error("Statistieken ophalen mislukt", "entityType", entityType, "error", err)
 			respondError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
@@ -304,6 +305,7 @@ func (s *Server) handlePlaylist(w http.ResponseWriter, r *http.Request) {
 		opts := parsePlaylistOptions(query)
 		playlist, err := s.service.Media.GetPlaylist(r.Context(), &opts)
 		if err != nil {
+			slog.Error("Playlist ophalen mislukt", "block_id", opts.BlockID, "error", err)
 			respondError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
@@ -312,8 +314,10 @@ func (s *Server) handlePlaylist(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// All blocks with tracks for a date
-	result, err := s.service.Media.GetPlaylistWithTracks(r.Context(), query.Get("date"))
+	date := query.Get("date")
+	result, err := s.service.Media.GetPlaylistWithTracks(r.Context(), date)
 	if err != nil {
+		slog.Error("Playlist met tracks ophalen mislukt", "date", date, "error", err)
 		respondError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

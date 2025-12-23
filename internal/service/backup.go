@@ -10,7 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -31,7 +31,7 @@ type BackupService struct {
 	wg         sync.WaitGroup
 }
 
-// newBackupService creates a new BackupService instance.
+// newBackupService returns a BackupService for database backup operations.
 func newBackupService(repo *database.Repository, cfg *config.Config) (*BackupService, error) {
 	svc := &BackupService{
 		repo:   repo,
@@ -74,14 +74,14 @@ type BackupRequest struct {
 // BackupResult represents the result of a backup operation.
 type BackupResult struct {
 	Filename      string    `json:"filename"`
-	FilePath      string    `json:"file_path,omitempty"`
+	FilePath      string    `json:"file_path,omitzero"`
 	Format        string    `json:"format"`
-	Size          int64     `json:"size_bytes"`
-	SizeFormatted string    `json:"size"`
-	Duration      string    `json:"duration"`
-	CreatedAt     time.Time `json:"created_at"`
-	DryRun        bool      `json:"dry_run"`
-	Command       string    `json:"command,omitempty"`
+	Size          int64     `json:"size_bytes,omitzero"`
+	SizeFormatted string    `json:"size,omitzero"`
+	Duration      string    `json:"duration,omitzero"`
+	CreatedAt     time.Time `json:"created_at,omitzero"`
+	DryRun        bool      `json:"dry_run,omitzero"`
+	Command       string    `json:"command,omitzero"`
 }
 
 // BackupInfo represents metadata about an existing backup file.
@@ -230,6 +230,7 @@ func (s *BackupService) Create(ctx context.Context, req BackupRequest) (*BackupR
 		args = append(args, "--schema-only")
 	}
 	args = append(args, "--file="+fullPath)
+	slog.Debug("pg_dump voorbereid", "format", format, "compression", compression, "schemaOnly", req.SchemaOnly, "filename", filename)
 
 	if req.DryRun {
 		return &BackupResult{
@@ -276,7 +277,7 @@ func (s *BackupService) Create(ctx context.Context, req BackupRequest) (*BackupR
 	}, nil
 }
 
-// Stream streams a backup directly to a writer (for download).
+// Stream writes a backup directly to the provided writer.
 func (s *BackupService) Stream(ctx context.Context, w io.Writer, format string, compression int) error {
 	if err := s.checkEnabled(); err != nil {
 		return err
@@ -371,8 +372,8 @@ func (s *BackupService) List() (*BackupListResponse, error) {
 		totalSize += info.Size()
 	}
 
-	sort.Slice(backups, func(i, j int) bool {
-		return backups[i].CreatedAt.After(backups[j].CreatedAt)
+	slices.SortFunc(backups, func(a, b BackupInfo) int {
+		return b.CreatedAt.Compare(a.CreatedAt) // Descending order
 	})
 
 	return &BackupListResponse{
@@ -438,17 +439,25 @@ func (s *BackupService) cleanupOldBackups() {
 
 	for _, backup := range backups.Backups {
 		if backup.CreatedAt.Before(cutoff) {
-			if err := s.Delete(backup.Filename); err == nil {
+			if err := s.Delete(backup.Filename); err != nil {
+				slog.Warn("Backup verwijderen mislukt (retention)", "filename", backup.Filename, "error", err)
+			} else {
 				deleted++
 				slog.Info("Oude backup verwijderd (retention)", "filename", backup.Filename)
 			}
 		}
 	}
 
-	backups, _ = s.List()
-	if backups != nil && len(backups.Backups) > maxBackups {
+	backups, err = s.List()
+	if err != nil {
+		slog.Error("Backup lijst ophalen mislukt tijdens cleanup", "error", err)
+		return
+	}
+	if len(backups.Backups) > maxBackups {
 		for i := maxBackups; i < len(backups.Backups); i++ {
-			if err := s.Delete(backups.Backups[i].Filename); err == nil {
+			if err := s.Delete(backups.Backups[i].Filename); err != nil {
+				slog.Warn("Backup verwijderen mislukt (max_backups)", "filename", backups.Backups[i].Filename, "error", err)
+			} else {
 				deleted++
 				slog.Info("Oude backup verwijderd (max_backups)", "filename", backups.Backups[i].Filename)
 			}
