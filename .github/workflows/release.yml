@@ -84,12 +84,20 @@ jobs:
           # Determine version from tag or input
           VERSION="${{ github.event.inputs.version || github.ref_name }}"
 
-          # Auto-prepend 'v' if missing
-          [[ "$VERSION" != v* ]] && VERSION="v${VERSION}"
+          # Check if this is a prerelease BEFORE adding v prefix
+          IS_PRERELEASE="false"
+          if [[ "$VERSION" =~ ^(edge|alpha|beta|rc|pre|dev) ]] || [[ "$VERSION" =~ -(edge|alpha|beta|rc|pre|dev) ]]; then
+            IS_PRERELEASE="true"
+          fi
+
+          # Auto-prepend 'v' if missing (but not for special version strings like "edge")
+          if [[ "$VERSION" != v* ]] && [[ ! "$VERSION" =~ ^(edge|alpha|beta|rc|pre|dev) ]]; then
+            VERSION="v${VERSION}"
+          fi
 
           # Set outputs
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
-          echo "is_prerelease=$([[ "$VERSION" =~ -(edge|alpha|beta|rc|pre|dev) ]] || [[ "$VERSION" == "edge" ]] && echo true || echo false)" >> $GITHUB_OUTPUT
+          echo "is_prerelease=${IS_PRERELEASE}" >> $GITHUB_OUTPUT
 
       - name: Build binary
         env:
@@ -119,7 +127,8 @@ jobs:
     if: ${{ !cancelled() && !failure() }}
     uses: ./.github/workflows/docker-publish.yml
     with:
-      version: ${{ github.event_name == 'push' && github.ref_name || (startsWith(github.event.inputs.version, 'v') && github.event.inputs.version || format('v{0}', github.event.inputs.version)) }}
+      # Pass version as-is for special strings (edge, alpha, etc.), otherwise ensure v prefix
+      version: ${{ github.event_name == 'push' && github.ref_name || github.event.inputs.version }}
     secrets: inherit
     permissions:
       contents: read
@@ -145,12 +154,20 @@ jobs:
           # Determine version from tag or input
           VERSION="${{ github.event.inputs.version || github.ref_name }}"
 
-          # Auto-prepend 'v' if missing
-          [[ "$VERSION" != v* ]] && VERSION="v${VERSION}"
+          # Check if this is a prerelease BEFORE adding v prefix
+          IS_PRERELEASE="false"
+          if [[ "$VERSION" =~ ^(edge|alpha|beta|rc|pre|dev) ]] || [[ "$VERSION" =~ -(edge|alpha|beta|rc|pre|dev) ]]; then
+            IS_PRERELEASE="true"
+          fi
+
+          # Auto-prepend 'v' if missing (but not for special version strings like "edge")
+          if [[ "$VERSION" != v* ]] && [[ ! "$VERSION" =~ ^(edge|alpha|beta|rc|pre|dev) ]]; then
+            VERSION="v${VERSION}"
+          fi
 
           # Set outputs
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
-          echo "is_prerelease=$([[ "$VERSION" =~ -(edge|alpha|beta|rc|pre|dev) ]] || [[ "$VERSION" == "edge" ]] && echo true || echo false)" >> $GITHUB_OUTPUT
+          echo "is_prerelease=${IS_PRERELEASE}" >> $GITHUB_OUTPUT
 
       - name: Download binary artifacts
         uses: actions/download-artifact@v7
