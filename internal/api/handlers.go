@@ -64,6 +64,17 @@ type ImageDeleteResponse struct {
 	TrackID  string `json:"track_id,omitempty"`
 }
 
+// validateAndGetEntityID extracts and validates the entity ID from the request.
+// Returns the ID or writes an error response and returns empty string.
+func (s *Server) validateAndGetEntityID(w http.ResponseWriter, r *http.Request, entityType types.EntityType) string {
+	entityID := chi.URLParam(r, "id")
+	if err := util.ValidateEntityID(entityID, types.LabelForEntityType(entityType)); err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return ""
+	}
+	return entityID
+}
+
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	dbStatus := "connected"
 	if err := s.service.DB().PingContext(r.Context()); err != nil {
@@ -99,11 +110,8 @@ func (s *Server) handleStats(entityType types.EntityType) http.HandlerFunc {
 
 func (s *Server) handleEntityByID(entityType types.EntityType) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		entityID := chi.URLParam(r, "id")
-		label := types.LabelForEntityType(entityType)
-
-		if err := util.ValidateEntityID(entityID, label); err != nil {
-			respondError(w, http.StatusBadRequest, err.Error())
+		entityID := s.validateAndGetEntityID(w, r, entityType)
+		if entityID == "" {
 			return
 		}
 
@@ -170,11 +178,8 @@ func (s *Server) handleBulkDelete(entityType types.EntityType) http.HandlerFunc 
 
 func (s *Server) handleGetImage(entityType types.EntityType) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		entityID := chi.URLParam(r, "id")
-		label := types.LabelForEntityType(entityType)
-
-		if err := util.ValidateEntityID(entityID, label); err != nil {
-			respondError(w, http.StatusBadRequest, err.Error())
+		entityID := s.validateAndGetEntityID(w, r, entityType)
+		if entityID == "" {
 			return
 		}
 
@@ -200,11 +205,8 @@ func (s *Server) handleGetImage(entityType types.EntityType) http.HandlerFunc {
 
 func (s *Server) handleImageUpload(entityType types.EntityType) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		entityID := chi.URLParam(r, "id")
-		label := types.LabelForEntityType(entityType)
-
-		if err := util.ValidateEntityID(entityID, label); err != nil {
-			respondError(w, http.StatusBadRequest, err.Error())
+		entityID := s.validateAndGetEntityID(w, r, entityType)
+		if entityID == "" {
 			return
 		}
 
@@ -243,29 +245,21 @@ func (s *Server) handleImageUpload(entityType types.EntityType) http.HandlerFunc
 
 func (s *Server) handleDeleteImage(entityType types.EntityType) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		entityID := chi.URLParam(r, "id")
-		label := types.LabelForEntityType(entityType)
-
-		if err := util.ValidateEntityID(entityID, label); err != nil {
-			respondError(w, http.StatusBadRequest, err.Error())
+		entityID := s.validateAndGetEntityID(w, r, entityType)
+		if entityID == "" {
 			return
 		}
 
 		table := types.TableForEntityType(entityType)
-
 		err := database.DeleteEntityImage(r.Context(), s.service.DB(), s.config.Database.Schema, table, entityID)
 		if err != nil {
 			slog.Error("Afbeelding verwijderen mislukt", "entityType", entityType, "id", entityID, "error", err)
-		}
-
-		if err != nil {
-			statusCode := errorCode(err)
-			respondError(w, statusCode, err.Error())
+			respondError(w, errorCode(err), err.Error())
 			return
 		}
 
 		response := ImageDeleteResponse{
-			Message: label + "-afbeelding succesvol verwijderd",
+			Message: types.LabelForEntityType(entityType) + "-afbeelding succesvol verwijderd",
 		}
 		if entityType == types.EntityTypeArtist {
 			response.ArtistID = entityID

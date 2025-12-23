@@ -66,6 +66,23 @@ type BackupListResponse struct {
 
 var safeBackupFilenamePattern = regexp.MustCompile(`^[a-zA-Z0-9_\-.]+$`)
 
+// checkBackupEnabled returns an error if backup functionality is not enabled.
+func (s *AeronService) checkBackupEnabled() error {
+	if !s.config.Backup.Enabled || s.backupRoot == nil {
+		return &types.ConfigurationError{Field: "backup.enabled", Message: "backup functionaliteit is niet ingeschakeld"}
+	}
+	return nil
+}
+
+// findPgDump locates the pg_dump executable.
+func findPgDump() (string, error) {
+	path, err := exec.LookPath("pg_dump")
+	if err != nil {
+		return "", &types.ConfigurationError{Field: "pg_dump", Message: "postgresql-client niet geïnstalleerd"}
+	}
+	return path, nil
+}
+
 func validateBackupFilename(filename string) error {
 	if !safeBackupFilenamePattern.MatchString(filename) {
 		return types.NewValidationError("filename", "ongeldige bestandsnaam")
@@ -156,13 +173,13 @@ func (s *AeronService) executePgDump(ctx context.Context, pgDumpPath, filename, 
 
 // CreateBackup creates a database backup using pg_dump.
 func (s *AeronService) CreateBackup(ctx context.Context, req BackupRequest) (*BackupResult, error) {
-	if !s.config.Backup.Enabled || s.backupRoot == nil {
-		return nil, &types.ConfigurationError{Field: "backup.enabled", Message: "backup functionaliteit is niet ingeschakeld"}
+	if err := s.checkBackupEnabled(); err != nil {
+		return nil, err
 	}
 
-	pgDumpPath, err := exec.LookPath("pg_dump")
+	pgDumpPath, err := findPgDump()
 	if err != nil {
-		return nil, &types.ConfigurationError{Field: "pg_dump", Message: "postgresql-client niet geïnstalleerd"}
+		return nil, err
 	}
 
 	format, compression, err := s.validateBackupRequest(req)
@@ -216,13 +233,13 @@ func (s *AeronService) CreateBackup(ctx context.Context, req BackupRequest) (*Ba
 
 // StreamBackup streams a backup directly to a writer (for download).
 func (s *AeronService) StreamBackup(ctx context.Context, w io.Writer, format string, compression int) error {
-	if !s.config.Backup.Enabled {
-		return &types.ConfigurationError{Field: "backup.enabled", Message: "backup functionaliteit is niet ingeschakeld"}
+	if err := s.checkBackupEnabled(); err != nil {
+		return err
 	}
 
-	pgDumpPath, err := exec.LookPath("pg_dump")
+	pgDumpPath, err := findPgDump()
 	if err != nil {
-		return &types.ConfigurationError{Field: "pg_dump", Message: "postgresql-client niet geïnstalleerd"}
+		return err
 	}
 
 	if format == "" {
@@ -254,8 +271,8 @@ func (s *AeronService) StreamBackup(ctx context.Context, w io.Writer, format str
 
 // ListBackups returns a list of available backup files.
 func (s *AeronService) ListBackups() (*BackupListResponse, error) {
-	if !s.config.Backup.Enabled || s.backupRoot == nil {
-		return nil, &types.ConfigurationError{Field: "backup.enabled", Message: "backup functionaliteit is niet ingeschakeld"}
+	if err := s.checkBackupEnabled(); err != nil {
+		return nil, err
 	}
 
 	backupPath := s.config.Backup.GetPath()
@@ -322,8 +339,8 @@ func (s *AeronService) ListBackups() (*BackupListResponse, error) {
 
 // DeleteBackup deletes a specific backup file.
 func (s *AeronService) DeleteBackup(filename string) error {
-	if !s.config.Backup.Enabled || s.backupRoot == nil {
-		return &types.ConfigurationError{Field: "backup.enabled", Message: "backup functionaliteit is niet ingeschakeld"}
+	if err := s.checkBackupEnabled(); err != nil {
+		return err
 	}
 
 	if err := validateBackupFilename(filename); err != nil {
@@ -381,8 +398,8 @@ func (s *AeronService) cleanupOldBackups() {
 
 // GetBackupFilePath returns the full path to a backup file if it exists.
 func (s *AeronService) GetBackupFilePath(filename string) (string, error) {
-	if !s.config.Backup.Enabled || s.backupRoot == nil {
-		return "", &types.ConfigurationError{Field: "backup.enabled", Message: "backup functionaliteit is niet ingeschakeld"}
+	if err := s.checkBackupEnabled(); err != nil {
+		return "", err
 	}
 
 	if err := validateBackupFilename(filename); err != nil {
