@@ -398,8 +398,17 @@ jobs:
         if: matrix.suite == 'api-basic'
         run: |
           echo "API server herstarten zonder authenticatie..."
-          kill $(cat api.pid) 2>/dev/null || true
-          sleep 2  # Wait for process to fully terminate
+          # Use SIGKILL to ensure process terminates, then wait for port to be free
+          kill -9 $(cat api.pid) 2>/dev/null || true
+          for i in {1..10}; do
+            if ! lsof -i:${{ env.API_PORT }} > /dev/null 2>&1; then
+              echo "Port ${{ env.API_PORT }} is vrij"
+              break
+            fi
+            echo "Wachten op port vrijgave... ($i/10)"
+            sleep 1
+          done
+
           cat > test_no_auth.json << 'EOF'
           {
             "database": { "host": "localhost", "port": "5433", "name": "aeron_db", "user": "aeron", "password": "aeron123", "schema": "aeron", "sslmode": "disable" },
@@ -859,9 +868,16 @@ jobs:
         if: matrix.suite == 'maintenance'
         run: |
           echo "Testing maintenance scheduler startup..."
-          # Stop current API server
-          kill $(cat api.pid) 2>/dev/null || true
-          sleep 1
+          # Stop current API server and wait for port to be free
+          kill -9 $(cat api.pid) 2>/dev/null || true
+          for i in {1..10}; do
+            if ! lsof -i:${{ env.API_PORT }} > /dev/null 2>&1; then
+              echo "Port ${{ env.API_PORT }} is vrij"
+              break
+            fi
+            echo "Wachten op port vrijgave... ($i/10)"
+            sleep 1
+          done
 
           # Create config with maintenance scheduler enabled
           cat > test_scheduler.json << 'EOF'
@@ -1357,7 +1373,16 @@ jobs:
         if: matrix.suite == 's3'
         run: |
           echo "API server herstarten met S3 configuratie..."
-          kill $(cat api.pid) 2>/dev/null || true
+          # Use SIGKILL to ensure process terminates, then wait for port to be free
+          kill -9 $(cat api.pid) 2>/dev/null || true
+          for i in {1..10}; do
+            if ! lsof -i:${{ env.API_PORT }} > /dev/null 2>&1; then
+              echo "Port ${{ env.API_PORT }} is vrij"
+              break
+            fi
+            echo "Wachten op port vrijgave... ($i/10)"
+            sleep 1
+          done
 
           cat > test_s3_config.json << 'EOF'
           {
