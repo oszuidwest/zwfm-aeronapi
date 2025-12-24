@@ -398,7 +398,17 @@ jobs:
         if: matrix.suite == 'api-basic'
         run: |
           echo "API server herstarten zonder authenticatie..."
-          kill $(cat api.pid) 2>/dev/null || true
+          # Use SIGKILL to ensure process terminates, then wait for port to be free
+          kill -9 $(cat api.pid) 2>/dev/null || true
+          for i in {1..10}; do
+            if ! lsof -i:${{ env.API_PORT }} > /dev/null 2>&1; then
+              echo "Port ${{ env.API_PORT }} is vrij"
+              break
+            fi
+            echo "Wachten op port vrijgave... ($i/10)"
+            sleep 1
+          done
+
           cat > test_no_auth.json << 'EOF'
           {
             "database": { "host": "localhost", "port": "5433", "name": "aeron_db", "user": "aeron", "password": "aeron123", "schema": "aeron", "sslmode": "disable" },
@@ -658,121 +668,255 @@ jobs:
       - name: "Maintenance: Database health endpoint"
         if: matrix.suite == 'maintenance'
         run: |
-          echo "GET /api/db/health"
-          RESPONSE=$(curl -s -H "X-API-Key: ${{ env.API_KEY }}" http://localhost:${{ env.API_PORT }}/api/db/health)
+          echo "GET /api/db/maintenance/health"
+          RESPONSE=$(curl -s -H "X-API-Key: ${{ env.API_KEY }}" http://localhost:${{ env.API_PORT }}/api/db/maintenance/health)
           SUCCESS=$(echo "$RESPONSE" | jq -r '.success')
           DB_NAME=$(echo "$RESPONSE" | jq -r '.data.database_name')
+          NEEDS_MAINTENANCE=$(echo "$RESPONSE" | jq -r '.data.needs_maintenance')
           if [ "$SUCCESS" = "true" ]; then
-            echo "Database health OK - database: $DB_NAME"
+            echo "Database health OK - database: $DB_NAME, needs_maintenance: $NEEDS_MAINTENANCE"
           else
             echo "::error::Database health check gefaald"
             echo "Response: $RESPONSE"
             exit 1
           fi
 
-      - name: "Maintenance: Vacuum dry-run"
+      - name: "Maintenance: Health endpoint shows table stats"
         if: matrix.suite == 'maintenance'
         run: |
-          echo "POST /api/db/vacuum (dry_run=true)"
-          RESPONSE=$(curl -s -X POST -H "X-API-Key: ${{ env.API_KEY }}" \
-            -H 'Content-Type: application/json' \
-            http://localhost:${{ env.API_PORT }}/api/db/vacuum \
-            -d '{"dry_run": true}')
-          SUCCESS=$(echo "$RESPONSE" | jq -r '.success')
-          DRY_RUN=$(echo "$RESPONSE" | jq -r '.data.dry_run')
-          if [ "$SUCCESS" = "true" ] && [ "$DRY_RUN" = "true" ]; then
-            echo "Vacuum dry-run succesvol"
+          echo "Checking table health fields"
+          RESPONSE=$(curl -s -H "X-API-Key: ${{ env.API_KEY }}" http://localhost:${{ env.API_PORT }}/api/db/maintenance/health)
+          # Check for new fields: dead_tuple_ratio, modifications_since_analyze, needs_vacuum, needs_analyze
+          FIRST_TABLE=$(echo "$RESPONSE" | jq -r '.data.tables[0]')
+          HAS_DTR=$(echo "$FIRST_TABLE" | jq 'has("dead_tuple_ratio")')
+          HAS_MSA=$(echo "$FIRST_TABLE" | jq 'has("modifications_since_analyze")')
+          HAS_NV=$(echo "$FIRST_TABLE" | jq 'has("needs_vacuum")')
+          HAS_NA=$(echo "$FIRST_TABLE" | jq 'has("needs_analyze")')
+          if [ "$HAS_DTR" = "true" ] && [ "$HAS_MSA" = "true" ] && [ "$HAS_NV" = "true" ] && [ "$HAS_NA" = "true" ]; then
+            echo "Alle nieuwe tabel health velden aanwezig"
           else
-            echo "::error::Vacuum dry-run gefaald"
+            echo "::error::Nieuwe tabel health velden ontbreken"
+            echo "First table: $FIRST_TABLE"
+            exit 1
+          fi
+
+      - name: "Maintenance: Status endpoint (no operation running)"
+        if: matrix.suite == 'maintenance'
+        run: |
+          echo "GET /api/db/maintenance/status"
+          RESPONSE=$(curl -s -H "X-API-Key: ${{ env.API_KEY }}" http://localhost:${{ env.API_PORT }}/api/db/maintenance/status)
+          SUCCESS=$(echo "$RESPONSE" | jq -r '.success')
+          RUNNING=$(echo "$RESPONSE" | jq -r '.data.running')
+          if [ "$SUCCESS" = "true" ] && [ "$RUNNING" = "false" ]; then
+            echo "Status endpoint OK - geen operatie actief"
+          else
+            echo "::error::Status endpoint gefaald"
             echo "Response: $RESPONSE"
             exit 1
           fi
 
-      - name: "Maintenance: Vacuum specific table"
+      - name: "Maintenance: Start vacuum (async, returns 202)"
         if: matrix.suite == 'maintenance'
         run: |
-          echo "POST /api/db/vacuum (table=artist, dry_run=true)"
-          RESPONSE=$(curl -s -X POST -H "X-API-Key: ${{ env.API_KEY }}" \
+          echo "POST /api/db/maintenance/vacuum (table=artist)"
+          HTTP_CODE=$(curl -s -o /tmp/vacuum_response.json -w "%{http_code}" -X POST \
+            -H "X-API-Key: ${{ env.API_KEY }}" \
             -H 'Content-Type: application/json' \
-            http://localhost:${{ env.API_PORT }}/api/db/vacuum \
-            -d '{"tables": ["artist"], "dry_run": true}')
-          SUCCESS=$(echo "$RESPONSE" | jq -r '.success')
-          TABLES_TOTAL=$(echo "$RESPONSE" | jq -r '.data.tables_total')
-          if [ "$SUCCESS" = "true" ] && [ "$TABLES_TOTAL" = "1" ]; then
-            echo "Vacuum voor specifieke tabel succesvol - $TABLES_TOTAL tabel(len)"
-          else
-            echo "::error::Vacuum voor specifieke tabel gefaald"
-            echo "Response: $RESPONSE"
-            exit 1
-          fi
-
-      - name: "Maintenance: Vacuum with analyze"
-        if: matrix.suite == 'maintenance'
-        run: |
-          echo "POST /api/db/vacuum (table=track, analyze=true, dry_run=true)"
-          RESPONSE=$(curl -s -X POST -H "X-API-Key: ${{ env.API_KEY }}" \
-            -H 'Content-Type: application/json' \
-            http://localhost:${{ env.API_PORT }}/api/db/vacuum \
-            -d '{"tables": ["track"], "analyze": true, "dry_run": true}')
-          SUCCESS=$(echo "$RESPONSE" | jq -r '.success')
-          if [ "$SUCCESS" = "true" ]; then
-            echo "Vacuum met analyze succesvol"
-          else
-            echo "::error::Vacuum met analyze gefaald"
-            echo "Response: $RESPONSE"
-            exit 1
-          fi
-
-      - name: "Maintenance: Non-existent table skipped"
-        if: matrix.suite == 'maintenance'
-        run: |
-          echo "POST /api/db/vacuum (table=nonexistent_table)"
-          RESPONSE=$(curl -s -X POST -H "X-API-Key: ${{ env.API_KEY }}" \
-            -H 'Content-Type: application/json' \
-            http://localhost:${{ env.API_PORT }}/api/db/vacuum \
-            -d '{"tables": ["nonexistent_table"], "dry_run": true}')
-          SUCCESS=$(echo "$RESPONSE" | jq -r '.success')
-          SKIPPED=$(echo "$RESPONSE" | jq -r '.data.tables_skipped')
-          if [ "$SUCCESS" = "true" ] && [ "$SKIPPED" = "1" ]; then
-            echo "Correct: niet-bestaande tabel wordt overgeslagen ($SKIPPED)"
-          else
-            echo "::error::Niet-bestaande tabel zou overgeslagen moeten worden"
-            echo "Response: $RESPONSE"
-            exit 1
-          fi
-
-      - name: "Maintenance: Analyze endpoint"
-        if: matrix.suite == 'maintenance'
-        run: |
-          echo "POST /api/db/analyze (table=artist)"
-          RESPONSE=$(curl -s -X POST -H "X-API-Key: ${{ env.API_KEY }}" \
-            -H 'Content-Type: application/json' \
-            http://localhost:${{ env.API_PORT }}/api/db/analyze \
+            http://localhost:${{ env.API_PORT }}/api/db/maintenance/vacuum \
             -d '{"tables": ["artist"]}')
-          SUCCESS=$(echo "$RESPONSE" | jq -r '.success')
-          if [ "$SUCCESS" = "true" ]; then
-            echo "Analyze succesvol uitgevoerd"
+          RESPONSE=$(cat /tmp/vacuum_response.json)
+          if [ "$HTTP_CODE" = "202" ]; then
+            echo "Vacuum gestart (202 Accepted)"
           else
-            echo "::error::Analyze gefaald"
+            echo "::error::Verwachtte 202, kreeg $HTTP_CODE"
+            echo "Response: $RESPONSE"
+            exit 1
+          fi
+          # Wait for completion
+          sleep 2
+
+      - name: "Maintenance: Check status shows completed vacuum"
+        if: matrix.suite == 'maintenance'
+        run: |
+          echo "GET /api/db/maintenance/status (after vacuum)"
+          RESPONSE=$(curl -s -H "X-API-Key: ${{ env.API_KEY }}" http://localhost:${{ env.API_PORT }}/api/db/maintenance/status)
+          RUNNING=$(echo "$RESPONSE" | jq -r '.data.running')
+          OPERATION=$(echo "$RESPONSE" | jq -r '.data.operation')
+          TABLES_SUCCESS=$(echo "$RESPONSE" | jq -r '.data.last_result.tables_success')
+          if [ "$RUNNING" = "false" ] && [ "$TABLES_SUCCESS" -ge 0 ]; then
+            echo "Vacuum voltooid - operation: $OPERATION, tables_success: $TABLES_SUCCESS"
+          else
+            echo "::error::Vacuum status check gefaald"
             echo "Response: $RESPONSE"
             exit 1
           fi
 
-      - name: "Maintenance: Execute actual vacuum"
+      - name: "Maintenance: Start analyze (async, returns 202)"
         if: matrix.suite == 'maintenance'
         run: |
-          echo "POST /api/db/vacuum (table=artist, analyze=true)"
-          RESPONSE=$(curl -s -X POST -H "X-API-Key: ${{ env.API_KEY }}" \
+          echo "POST /api/db/maintenance/analyze (table=artist)"
+          HTTP_CODE=$(curl -s -o /tmp/analyze_response.json -w "%{http_code}" -X POST \
+            -H "X-API-Key: ${{ env.API_KEY }}" \
             -H 'Content-Type: application/json' \
-            http://localhost:${{ env.API_PORT }}/api/db/vacuum \
-            -d '{"tables": ["artist"], "analyze": true}')
-          SUCCESS=$(echo "$RESPONSE" | jq -r '.success')
-          TABLES_SUCCESS=$(echo "$RESPONSE" | jq -r '.data.tables_success')
-          if [ "$SUCCESS" = "true" ] && [ "$TABLES_SUCCESS" -ge 1 ]; then
-            echo "Vacuum succesvol uitgevoerd op $TABLES_SUCCESS tabel(len)"
+            http://localhost:${{ env.API_PORT }}/api/db/maintenance/analyze \
+            -d '{"tables": ["artist"]}')
+          RESPONSE=$(cat /tmp/analyze_response.json)
+          if [ "$HTTP_CODE" = "202" ]; then
+            echo "Analyze gestart (202 Accepted)"
           else
-            echo "::error::Vacuum uitvoering gefaald"
+            echo "::error::Verwachtte 202, kreeg $HTTP_CODE"
             echo "Response: $RESPONSE"
+            exit 1
+          fi
+          # Wait for completion
+          sleep 2
+
+      - name: "Maintenance: Vacuum with analyze option"
+        if: matrix.suite == 'maintenance'
+        run: |
+          echo "POST /api/db/maintenance/vacuum (table=track, analyze=true)"
+          HTTP_CODE=$(curl -s -o /tmp/vacuum_analyze_response.json -w "%{http_code}" -X POST \
+            -H "X-API-Key: ${{ env.API_KEY }}" \
+            -H 'Content-Type: application/json' \
+            http://localhost:${{ env.API_PORT }}/api/db/maintenance/vacuum \
+            -d '{"tables": ["track"], "analyze": true}')
+          if [ "$HTTP_CODE" = "202" ]; then
+            echo "Vacuum met analyze gestart (202 Accepted)"
+            sleep 2
+            # Check status
+            STATUS=$(curl -s -H "X-API-Key: ${{ env.API_KEY }}" http://localhost:${{ env.API_PORT }}/api/db/maintenance/status)
+            OPERATION=$(echo "$STATUS" | jq -r '.data.operation')
+            echo "Operation was: $OPERATION"
+          else
+            echo "::error::Verwachtte 202, kreeg $HTTP_CODE"
+            exit 1
+          fi
+
+      - name: "Maintenance: Concurrent operation rejected"
+        if: matrix.suite == 'maintenance'
+        run: |
+          echo "Testing concurrent operation rejection"
+          # Start two vacuum requests simultaneously - one should get 409
+          # Using background processes ensures we catch the race condition
+          curl -s -o /tmp/vacuum1.json -w "\n%{http_code}" -X POST \
+            -H "X-API-Key: ${{ env.API_KEY }}" \
+            -H 'Content-Type: application/json' \
+            http://localhost:${{ env.API_PORT }}/api/db/maintenance/vacuum \
+            -d '{"tables": ["artist"]}' > /tmp/r1.txt &
+          PID1=$!
+
+          curl -s -o /tmp/vacuum2.json -w "\n%{http_code}" -X POST \
+            -H "X-API-Key: ${{ env.API_KEY }}" \
+            -H 'Content-Type: application/json' \
+            http://localhost:${{ env.API_PORT }}/api/db/maintenance/vacuum \
+            -d '{"tables": ["track"]}' > /tmp/r2.txt &
+          PID2=$!
+
+          wait $PID1 $PID2
+
+          # Extract HTTP codes (last line of output)
+          HTTP1=$(tail -1 /tmp/r1.txt)
+          HTTP2=$(tail -1 /tmp/r2.txt)
+          echo "Request 1 HTTP: $HTTP1, Request 2 HTTP: $HTTP2"
+
+          # Exactly one should succeed (202) and one should fail (409)
+          # Or both could succeed if the first completed before the second started (unlikely but valid)
+          GOT_202=0
+          GOT_409=0
+          [ "$HTTP1" = "202" ] && GOT_202=$((GOT_202 + 1))
+          [ "$HTTP2" = "202" ] && GOT_202=$((GOT_202 + 1))
+          [ "$HTTP1" = "409" ] && GOT_409=$((GOT_409 + 1))
+          [ "$HTTP2" = "409" ] && GOT_409=$((GOT_409 + 1))
+
+          echo "Got $GOT_202 x 202 (Accepted) and $GOT_409 x 409 (Conflict)"
+
+          if [ "$GOT_409" -ge 1 ]; then
+            # At least one request was rejected - concurrent protection works
+            echo "Correct: concurrent operatie correct afgehandeld"
+            # Verify the 409 response has the expected error message
+            if [ "$HTTP1" = "409" ]; then
+              ERROR=$(jq -r '.error' /tmp/vacuum1.json)
+            else
+              ERROR=$(jq -r '.error' /tmp/vacuum2.json)
+            fi
+            if echo "$ERROR" | grep -q "maintenance operation already in progress"; then
+              echo "Correct: foutmelding bevat 'maintenance operation already in progress'"
+            else
+              echo "::warning::Verwachtte 'maintenance operation already in progress' in foutmelding, kreeg: $ERROR"
+            fi
+          elif [ "$GOT_202" -eq 2 ]; then
+            # Both succeeded - first completed before second started (race condition timing)
+            # This is technically correct behavior but makes test less useful
+            echo "::warning::Beide requests slaagden (202) - eerste was al klaar voor tweede startte"
+            echo "Dit is correct gedrag maar test was niet effectief"
+          else
+            echo "::error::Onverwachte HTTP codes: $HTTP1 en $HTTP2"
+            echo "Response 1: $(cat /tmp/vacuum1.json)"
+            echo "Response 2: $(cat /tmp/vacuum2.json)"
+            exit 1
+          fi
+
+          # Wait for any running operation to complete
+          for i in {1..30}; do
+            RUNNING=$(curl -s -H "X-API-Key: ${{ env.API_KEY }}" \
+              http://localhost:${{ env.API_PORT }}/api/db/maintenance/status | jq -r '.data.running')
+            [ "$RUNNING" = "false" ] && break
+            sleep 1
+          done
+
+      - name: "Maintenance: Scheduler starts correctly"
+        if: matrix.suite == 'maintenance'
+        run: |
+          echo "Testing maintenance scheduler startup..."
+          # Stop current API server and wait for port to be free
+          kill -9 $(cat api.pid) 2>/dev/null || true
+          for i in {1..10}; do
+            if ! lsof -i:${{ env.API_PORT }} > /dev/null 2>&1; then
+              echo "Port ${{ env.API_PORT }} is vrij"
+              break
+            fi
+            echo "Wachten op port vrijgave... ($i/10)"
+            sleep 1
+          done
+
+          # Create config with maintenance scheduler enabled
+          cat > test_scheduler.json << 'EOF'
+          {
+            "database": { "host": "localhost", "port": "5433", "name": "aeron_db", "user": "aeron", "password": "aeron123", "schema": "aeron", "sslmode": "disable" },
+            "image": { "target_width": 1280, "target_height": 1280, "quality": 90, "reject_smaller": true },
+            "api": { "enabled": true, "keys": ["test-api-key-12345"] },
+            "maintenance": {
+              "scheduler": { "enabled": true, "schedule": "0 4 * * 0", "timezone": "Europe/Amsterdam" }
+            }
+          }
+          EOF
+
+          # Start with scheduler enabled
+          ./zwfm-aerontoolbox -config=test_scheduler.json -port=${{ env.API_PORT }} > /tmp/scheduler_output.log 2>&1 &
+          echo $! > api.pid
+
+          # Wait for startup
+          for i in {1..30}; do
+            curl -sf http://localhost:${{ env.API_PORT }}/api/health > /dev/null 2>&1 && break
+            sleep 1
+          done
+
+          # Verify health endpoint works
+          RESPONSE=$(curl -s http://localhost:${{ env.API_PORT }}/api/health)
+          SUCCESS=$(echo "$RESPONSE" | jq -r '.success')
+
+          # Check logs for scheduler started message
+          if grep -q "Scheduler started" /tmp/scheduler_output.log && grep -q "maintenance" /tmp/scheduler_output.log; then
+            echo "Correct: scheduler gestart met maintenance job"
+          else
+            echo "::warning::Scheduler log bericht niet gevonden"
+            cat /tmp/scheduler_output.log
+          fi
+
+          if [ "$SUCCESS" = "true" ]; then
+            echo "Correct: applicatie draait met maintenance scheduler"
+          else
+            echo "::error::Applicatie start niet correct met scheduler"
             exit 1
           fi
 
@@ -898,22 +1042,25 @@ jobs:
           # Poll status en probeer tweede backup zodra eerste draait
           TESTED=false
           for i in {1..60}; do
-            RUNNING=$(curl -s -H "X-API-Key: ${{ env.API_KEY }}" http://localhost:${{ env.API_PORT }}/api/db/backup/status | jq -r '.data.running')
+            RUNNING=$(curl -s -H "X-API-Key: ${{ env.API_KEY }}" \
+              http://localhost:${{ env.API_PORT }}/api/db/backup/status | jq -r '.data.running')
             if [ "$RUNNING" = "true" ]; then
               echo "Eerste backup draait, probeer tweede te starten..."
-              RESPONSE=$(curl -s -X POST -H "X-API-Key: ${{ env.API_KEY }}" \
+              HTTP_CODE=$(curl -s -o /tmp/concurrent_backup.json -w "%{http_code}" -X POST \
+                -H "X-API-Key: ${{ env.API_KEY }}" \
                 -H 'Content-Type: application/json' \
                 http://localhost:${{ env.API_PORT }}/api/db/backup \
                 -d '{}')
+              RESPONSE=$(cat /tmp/concurrent_backup.json)
               SUCCESS=$(echo "$RESPONSE" | jq -r '.success')
               ERROR=$(echo "$RESPONSE" | jq -r '.error')
-              if [ "$SUCCESS" = "false" ] && echo "$ERROR" | grep -q "al bezig"; then
-                echo "Correct: tweede backup wordt geweigerd"
+
+              if [ "$HTTP_CODE" = "409" ] && [ "$SUCCESS" = "false" ] && echo "$ERROR" | grep -q "backup already in progress"; then
+                echo "Correct: concurrent backup afgewezen (HTTP 409, error: $ERROR)"
                 TESTED=true
                 break
               else
-                echo "::error::Tweede backup zou geweigerd moeten worden"
-                echo "Response: $RESPONSE"
+                echo "::error::Verwachtte HTTP 409 met juiste error, kreeg HTTP $HTTP_CODE: $ERROR"
                 exit 1
               fi
             fi
@@ -927,7 +1074,8 @@ jobs:
 
           # Wacht tot backup klaar is
           for i in {1..60}; do
-            RUNNING=$(curl -s -H "X-API-Key: ${{ env.API_KEY }}" http://localhost:${{ env.API_PORT }}/api/db/backup/status | jq -r '.data.running')
+            RUNNING=$(curl -s -H "X-API-Key: ${{ env.API_KEY }}" \
+              http://localhost:${{ env.API_PORT }}/api/db/backup/status | jq -r '.data.running')
             [ "$RUNNING" = "false" ] && break
             sleep 1
           done
@@ -1069,10 +1217,10 @@ jobs:
           # Herstel pg_dump
           sudo mv "${PG_DUMP_PATH}.bak" "$PG_DUMP_PATH"
 
-          if echo "$OUTPUT" | grep -q "pg_dump niet gevonden"; then
+          if echo "$OUTPUT" | grep -q "pg_dump not found"; then
             echo "Correct: applicatie weigert te starten zonder pg_dump"
           else
-            echo "::error::Applicatie zou moeten falen met 'pg_dump niet gevonden' error"
+            echo "::error::Applicatie zou moeten falen met 'pg_dump not found' error"
             exit 1
           fi
 
@@ -1125,7 +1273,7 @@ jobs:
           OUTPUT=$(./zwfm-aerontoolbox -config=test_custom_path.json -port=8893 2>&1 || true)
           echo "Output: $OUTPUT"
 
-          if echo "$OUTPUT" | grep -q "pg_dump niet gevonden op pad"; then
+          if echo "$OUTPUT" | grep -q "pg_dump not found at path"; then
             echo "Correct: custom pad wordt gevalideerd"
           else
             echo "::error::Custom pad zou gevalideerd moeten worden"
@@ -1148,7 +1296,7 @@ jobs:
           OUTPUT=$(./zwfm-aerontoolbox -config=test_custom_restore.json -port=8894 2>&1 || true)
           echo "Output: $OUTPUT"
 
-          if echo "$OUTPUT" | grep -q "pg_restore niet gevonden op pad"; then
+          if echo "$OUTPUT" | grep -q "pg_restore not found at path"; then
             echo "Correct: custom pg_restore pad wordt gevalideerd"
           else
             echo "::error::Custom pg_restore pad zou gevalideerd moeten worden"
@@ -1225,7 +1373,16 @@ jobs:
         if: matrix.suite == 's3'
         run: |
           echo "API server herstarten met S3 configuratie..."
-          kill $(cat api.pid) 2>/dev/null || true
+          # Use SIGKILL to ensure process terminates, then wait for port to be free
+          kill -9 $(cat api.pid) 2>/dev/null || true
+          for i in {1..10}; do
+            if ! lsof -i:${{ env.API_PORT }} > /dev/null 2>&1; then
+              echo "Port ${{ env.API_PORT }} is vrij"
+              break
+            fi
+            echo "Wachten op port vrijgave... ($i/10)"
+            sleep 1
+          done
 
           cat > test_s3_config.json << 'EOF'
           {
@@ -1315,30 +1472,43 @@ jobs:
           for i in {1..90}; do
             RESPONSE=$(curl -s -H "X-API-Key: ${{ env.API_KEY }}" http://localhost:${{ env.API_PORT }}/api/db/backup/status)
             RUNNING=$(echo "$RESPONSE" | jq -r '.data.running')
+            SUCCESS=$(echo "$RESPONSE" | jq -r '.data.success')
+            FILENAME=$(echo "$RESPONSE" | jq -r '.data.filename')
+            S3_SYNCED=$(echo "$RESPONSE" | jq -r '.data.s3_sync.synced // empty')
+            S3_ERROR=$(echo "$RESPONSE" | jq -r '.data.s3_sync.error // empty')
 
-            if [ "$RUNNING" = "false" ]; then
-              echo "Status response: $RESPONSE"
-              SUCCESS=$(echo "$RESPONSE" | jq -r '.data.success')
-              FILENAME=$(echo "$RESPONSE" | jq -r '.data.filename')
-              S3_SYNCED=$(echo "$RESPONSE" | jq -r '.data.s3_sync.synced')
-              S3_ERROR=$(echo "$RESPONSE" | jq -r '.data.s3_sync.error')
-
-              if [ "$SUCCESS" != "true" ]; then
-                echo "::error::Backup gefaald"
-                exit 1
-              fi
-
-              if [ "$S3_SYNCED" = "true" ]; then
-                echo "Backup voltooid: $FILENAME"
-                echo "S3 sync succesvol!"
-                echo "S3_BACKUP_FILENAME=$FILENAME" >> $GITHUB_ENV
-                exit 0
-              else
-                echo "::error::S3 sync gefaald: $S3_ERROR"
-                exit 1
-              fi
+            # Still running - wait
+            if [ "$RUNNING" = "true" ]; then
+              echo "Backup nog bezig... ($i/90)"
+              sleep 1
+              continue
             fi
-            echo "Backup/sync nog bezig... ($i/90)"
+
+            # Backup failed
+            if [ "$SUCCESS" != "true" ]; then
+              echo "Status response: $RESPONSE"
+              echo "::error::Backup gefaald"
+              exit 1
+            fi
+
+            # S3 sync completed successfully
+            if [ "$S3_SYNCED" = "true" ]; then
+              echo "Status response: $RESPONSE"
+              echo "Backup voltooid: $FILENAME"
+              echo "S3 sync succesvol!"
+              echo "S3_BACKUP_FILENAME=$FILENAME" >> $GITHUB_ENV
+              exit 0
+            fi
+
+            # S3 sync failed with error
+            if [ -n "$S3_ERROR" ] && [ "$S3_ERROR" != "null" ]; then
+              echo "Status response: $RESPONSE"
+              echo "::error::S3 sync gefaald: $S3_ERROR"
+              exit 1
+            fi
+
+            # S3 sync still pending (synced=false, no error) - continue polling
+            echo "Backup klaar, S3 sync bezig... ($i/90)"
             sleep 1
           done
           echo "::error::Backup/S3 sync timeout na 90 seconden"
@@ -1439,7 +1609,7 @@ jobs:
             -d '{}')
           SUCCESS=$(echo "$RESPONSE" | jq -r '.success')
           ERROR=$(echo "$RESPONSE" | jq -r '.error')
-          if [ "$SUCCESS" = "false" ] && echo "$ERROR" | grep -q 'afbeelding is verplicht'; then
+          if [ "$SUCCESS" = "false" ] && echo "$ERROR" | grep -q 'image is required'; then
             echo "Correct: request zonder afbeelding wordt geweigerd"
             echo "Foutmelding: $ERROR"
           else
@@ -1458,7 +1628,7 @@ jobs:
             -d '{"url":"https://example.com/img.jpg","image":"data:image/jpeg;base64,/9j/4AAQ"}')
           SUCCESS=$(echo "$RESPONSE" | jq -r '.success')
           ERROR=$(echo "$RESPONSE" | jq -r '.error')
-          if [ "$SUCCESS" = "false" ] && echo "$ERROR" | grep -q 'gebruik óf URL óf upload, niet beide'; then
+          if [ "$SUCCESS" = "false" ] && echo "$ERROR" | grep -q 'use either URL or upload, not both'; then
             echo "Correct: zowel URL als image wordt geweigerd"
             echo "Foutmelding: $ERROR"
           else

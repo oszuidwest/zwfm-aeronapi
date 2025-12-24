@@ -9,7 +9,7 @@ import (
 	"github.com/oszuidwest/zwfm-aerontoolbox/internal/types"
 )
 
-// playlistItemColumns contains the SQL SELECT clause for playlist item data.
+// playlistItemColumns defines the fields returned for each playlist item.
 const playlistItemColumns = `
 	pi.titleid as trackid,
 	COALESCE(t.tracktitle, '') as tracktitle,
@@ -25,7 +25,7 @@ const playlistItemColumns = `
 	CASE WHEN t.userid = '%s' THEN true ELSE false END as is_voicetrack,
 	CASE WHEN COALESCE(pi.commblock, 0) > 0 THEN true ELSE false END as is_commblock`
 
-// playlistItemJoins contains the SQL FROM and JOIN clauses for playlist items.
+// playlistItemJoins defines the table relationships for playlist item queries.
 const playlistItemJoins = `
 	FROM %s.playlistitem pi
 	LEFT JOIN %s.track t ON pi.titleid = t.titleid
@@ -70,7 +70,7 @@ type PlaylistOptions struct {
 	ArtistImage *bool
 }
 
-// BuildPlaylistQuery constructs a filtered playlist query based on the provided options.
+// BuildPlaylistQuery generates a parameterized SQL query from playlist filter options.
 func BuildPlaylistQuery(schema string, opts *PlaylistOptions) (query string, params []any, err error) {
 	var conditions []string
 	paramCount := 0
@@ -128,7 +128,7 @@ func BuildPlaylistQuery(schema string, opts *PlaylistOptions) (query string, par
 	}
 
 	if !types.IsValidIdentifier(schema) {
-		return "", nil, types.NewValidationError("schema", fmt.Sprintf("ongeldige schema naam: %s", schema))
+		return "", nil, types.NewValidationError("schema", fmt.Sprintf("invalid schema name: %s", schema))
 	}
 
 	columns := fmt.Sprintf(playlistItemColumns, types.VoicetrackUserID)
@@ -147,12 +147,12 @@ func BuildPlaylistQuery(schema string, opts *PlaylistOptions) (query string, par
 	return query, params, nil
 }
 
-// ExecutePlaylistQuery runs the query and returns playlist items.
+// ExecutePlaylistQuery executes a playlist query and maps results to PlaylistItem structs.
 func ExecutePlaylistQuery(ctx context.Context, db DB, query string, params []any) ([]PlaylistItem, error) {
 	var items []PlaylistItem
 	err := db.SelectContext(ctx, &items, query, params...)
 	if err != nil {
-		return nil, &types.OperationError{Operation: "ophalen van playlist", Err: err}
+		return nil, &types.OperationError{Operation: "fetch playlist", Err: err}
 	}
 
 	return items, nil

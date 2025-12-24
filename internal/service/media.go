@@ -44,13 +44,13 @@ func (s *MediaService) GetTrack(ctx context.Context, id string) (*database.Track
 
 // GetImage retrieves the image for an entity.
 func (s *MediaService) GetImage(ctx context.Context, entityType types.EntityType, id string) ([]byte, error) {
-	table := types.TableForEntityType(entityType)
+	table := types.Table(entityType)
 	return s.repo.GetImage(ctx, table, id)
 }
 
 // DeleteImage removes the image from an entity.
 func (s *MediaService) DeleteImage(ctx context.Context, entityType types.EntityType, id string) error {
-	table := types.TableForEntityType(entityType)
+	table := types.Table(entityType)
 	return s.repo.DeleteImage(ctx, table, id)
 }
 
@@ -73,7 +73,7 @@ type ImageUploadResult struct {
 
 // UploadImage downloads, resizes, optimizes, and stores an image for an artist or track.
 func (s *MediaService) UploadImage(ctx context.Context, params *ImageUploadParams) (*ImageUploadResult, error) {
-	slog.Debug("Image upload gestart", "entityType", params.EntityType, "id", params.ID, "hasURL", params.ImageURL != "", "hasData", len(params.ImageData) > 0)
+	slog.Debug("Image upload started", "entityType", params.EntityType, "id", params.ID, "hasURL", params.ImageURL != "", "hasData", len(params.ImageData) > 0)
 
 	if err := validateImageUploadParams(params); err != nil {
 		return nil, err
@@ -101,8 +101,8 @@ func (s *MediaService) UploadImage(ctx context.Context, params *ImageUploadParam
 	if params.ImageURL != "" {
 		imageData, err = image.DownloadImage(params.ImageURL, s.config.Image.GetMaxDownloadBytes())
 		if err != nil {
-			slog.Error("Afbeelding download mislukt", "url", params.ImageURL, "error", err)
-			return nil, types.NewValidationError("image", fmt.Sprintf("downloaden mislukt: %v", err))
+			slog.Error("Image download failed", "url", params.ImageURL, "error", err)
+			return nil, types.NewValidationError("image", fmt.Sprintf("download failed: %v", err))
 		}
 	} else {
 		imageData = params.ImageData
@@ -114,17 +114,17 @@ func (s *MediaService) UploadImage(ctx context.Context, params *ImageUploadParam
 		Quality:       s.config.Image.Quality,
 		RejectSmaller: s.config.Image.RejectSmaller,
 	}
-	slog.Debug("Image processing gestart", "inputSize", len(imageData), "targetWidth", imgConfig.TargetWidth, "targetHeight", imgConfig.TargetHeight)
+	slog.Debug("Image processing started", "inputSize", len(imageData), "targetWidth", imgConfig.TargetWidth, "targetHeight", imgConfig.TargetHeight)
 	processingResult, err := image.Process(imageData, imgConfig)
 	if err != nil {
-		slog.Error("Afbeelding verwerking mislukt", "error", err)
-		return nil, types.NewValidationError("image", fmt.Sprintf("verwerken mislukt: %v", err))
+		slog.Error("Image processing failed", "error", err)
+		return nil, types.NewValidationError("image", fmt.Sprintf("processing failed: %v", err))
 	}
-	slog.Debug("Image processing voltooid", "originalSize", processingResult.Original.Size, "optimizedSize", processingResult.Optimized.Size, "savings", processingResult.Savings)
+	slog.Debug("Image processing completed", "originalSize", processingResult.Original.Size, "optimizedSize", processingResult.Optimized.Size, "savings", processingResult.Savings)
 
-	table := types.TableForEntityType(params.EntityType)
+	table := types.Table(params.EntityType)
 	if err := s.repo.UpdateImage(ctx, table, params.ID, processingResult.Data); err != nil {
-		slog.Error("Afbeelding opslaan mislukt", "entityType", params.EntityType, "id", params.ID, "error", err)
+		slog.Error("Image save failed", "entityType", params.EntityType, "id", params.ID, "error", err)
 		return nil, err
 	}
 
@@ -152,7 +152,7 @@ func (s *MediaService) GetStatistics(ctx context.Context, entityType types.Entit
 		return nil, err
 	}
 
-	table := types.TableForEntityType(entityType)
+	table := types.Table(entityType)
 
 	withImages, err := s.repo.CountWithImages(ctx, table)
 	if err != nil {
@@ -183,7 +183,7 @@ func (s *MediaService) DeleteAllImages(ctx context.Context, entityType types.Ent
 		return nil, err
 	}
 
-	table := types.TableForEntityType(entityType)
+	table := types.Table(entityType)
 
 	count, err := s.repo.CountWithImages(ctx, table)
 	if err != nil {
@@ -274,7 +274,7 @@ func (s *MediaService) GetPlaylistWithTracks(ctx context.Context, date string) (
 // validateEntityType ensures the entity type is either artist or track.
 func validateEntityType(entityType types.EntityType) error {
 	if entityType != types.EntityTypeArtist && entityType != types.EntityTypeTrack {
-		return types.NewValidationError("entityType", fmt.Sprintf("ongeldig type: gebruik '%s' of '%s'", types.EntityTypeArtist, types.EntityTypeTrack))
+		return types.NewValidationError("entityType", fmt.Sprintf("invalid type: use '%s' or '%s'", types.EntityTypeArtist, types.EntityTypeTrack))
 	}
 	return nil
 }
@@ -289,11 +289,11 @@ func validateImageUploadParams(params *ImageUploadParams) error {
 	hasImageData := len(params.ImageData) > 0
 
 	if !hasURL && !hasImageData {
-		return types.NewValidationError("image", "afbeelding is verplicht")
+		return types.NewValidationError("image", "image is required")
 	}
 
 	if hasURL && hasImageData {
-		return types.NewValidationError("image", "gebruik óf URL óf upload, niet beide")
+		return types.NewValidationError("image", "use either URL or upload, not both")
 	}
 
 	return nil

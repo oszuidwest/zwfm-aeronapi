@@ -22,42 +22,11 @@ const (
 	TableTrack Table = "track"
 )
 
-const (
-	// LabelArtist is the Dutch display label for artist entities.
-	LabelArtist = "artiest"
-	// LabelTrack is the Dutch display label for track entities.
-	LabelTrack = "track"
-)
-
 // VoicetrackUserID is the UUID used in Aeron to identify voice tracks.
 const VoicetrackUserID = "021F097E-B504-49BB-9B89-16B64D2E8422"
 
 // SupportedFormats lists the image formats that can be processed.
 var SupportedFormats = []string{"jpeg", "jpg", "png"}
-
-// TableForEntityType returns the database table name for the given entity type.
-func TableForEntityType(entityType EntityType) Table {
-	if entityType == EntityTypeTrack {
-		return TableTrack
-	}
-	return TableArtist
-}
-
-// LabelForEntityType returns the Dutch display label for the given entity type.
-func LabelForEntityType(entityType EntityType) string {
-	if entityType == EntityTypeTrack {
-		return "track"
-	}
-	return "artiest"
-}
-
-// LabelForTable returns the Dutch display label for the given table.
-func LabelForTable(table Table) string {
-	if table == TableTrack {
-		return "track"
-	}
-	return "artiest"
-}
 
 // IDColumnForTable returns the primary key column name for the given table.
 func IDColumnForTable(table Table) string {
@@ -83,10 +52,10 @@ func IsValidIdentifier(name string) bool {
 // QualifiedTable returns a fully qualified schema.table name after validating both identifiers.
 func QualifiedTable(schema string, table Table) (string, error) {
 	if !IsValidIdentifier(schema) {
-		return "", fmt.Errorf("ongeldige schema naam: %s", schema)
+		return "", fmt.Errorf("invalid schema name: %s", schema)
 	}
 	if !IsValidIdentifier(string(table)) {
-		return "", fmt.Errorf("ongeldige tabel naam: %s", table)
+		return "", fmt.Errorf("invalid table name: %s", table)
 	}
 	return fmt.Sprintf("%s.%s", schema, table), nil
 }

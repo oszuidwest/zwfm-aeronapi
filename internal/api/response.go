@@ -17,13 +17,19 @@ type Response struct {
 	Error   string `json:"error,omitempty"`
 }
 
+// AsyncStartResponse is the response for async operations (backup, vacuum, analyze).
+type AsyncStartResponse struct {
+	Message string `json:"message"`
+	Check   string `json:"check"`
+}
+
 func respondJSON(w http.ResponseWriter, statusCode int, data any) {
 	w.WriteHeader(statusCode)
 	if err := json.NewEncoder(w).Encode(Response{
 		Success: true,
 		Data:    data,
 	}); err != nil {
-		slog.Debug("Schrijven JSON response naar client mislukt", "error", err)
+		slog.Debug("Failed to write JSON response to client", "error", err)
 	}
 }
 
@@ -33,7 +39,7 @@ func respondError(w http.ResponseWriter, statusCode int, errorMsg string) {
 		Success: false,
 		Error:   errorMsg,
 	}); err != nil {
-		slog.Debug("Schrijven error response naar client mislukt", "error", err)
+		slog.Debug("Failed to write error response to client", "error", err)
 	}
 }
 

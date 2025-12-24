@@ -11,21 +11,20 @@ import (
 
 // VacuumRequest represents the JSON request body for vacuum operations.
 type VacuumRequest struct {
-	Tables  []string `json:"tables"`  // Specific tables to vacuum (empty = auto-select based on bloat)
-	Analyze bool     `json:"analyze"` // Run ANALYZE after VACUUM
-	DryRun  bool     `json:"dry_run"` // Only show what would be done, don't execute
+	Tables  []string `json:"tables"`  // Tables specifies which tables to vacuum
+	Analyze bool     `json:"analyze"` // Analyze indicates whether to run ANALYZE after VACUUM
 }
 
 // AnalyzeRequest represents the JSON request body for analyze operations.
 type AnalyzeRequest struct {
-	Tables []string `json:"tables"` // Specific tables to analyze (empty = auto-select)
+	Tables []string `json:"tables"` // Tables specifies which tables to analyze
 }
 
 func (s *Server) handleDatabaseHealth(w http.ResponseWriter, r *http.Request) {
 	health, err := s.service.Maintenance.GetHealth(r.Context())
 	if err != nil {
-		slog.Error("Database health check mislukt", "error", err)
-		respondError(w, http.StatusInternalServerError, err.Error())
+		slog.Error("Database health check failed", "error", err)
+		respondError(w, errorCode(err), err.Error())
 		return
 	}
 
@@ -35,37 +34,52 @@ func (s *Server) handleDatabaseHealth(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleVacuum(w http.ResponseWriter, r *http.Request) {
 	var req VacuumRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err.Error() != "EOF" {
-		respondError(w, http.StatusBadRequest, "Ongeldige aanvraaginhoud")
+		respondError(w, http.StatusBadRequest, "Invalid request content")
 		return
 	}
 
-	result, err := s.service.Maintenance.Vacuum(r.Context(), service.VacuumOptions{
+	err := s.service.Maintenance.StartVacuum(service.VacuumOptions{
 		Tables:  req.Tables,
 		Analyze: req.Analyze,
-		DryRun:  req.DryRun,
 	})
 	if err != nil {
-		slog.Error("Vacuum operatie mislukt", "tables", req.Tables, "error", err)
-		respondError(w, http.StatusInternalServerError, err.Error())
+		slog.Error("Failed to start vacuum", "tables", req.Tables, "error", err)
+		respondError(w, errorCode(err), err.Error())
 		return
 	}
 
-	respondJSON(w, http.StatusOK, result)
+	msg := "Vacuum started"
+	if req.Analyze {
+		msg = "Vacuum with analyze started"
+	}
+	slog.Info(msg, "tables", req.Tables)
+	respondJSON(w, http.StatusAccepted, AsyncStartResponse{
+		Message: msg,
+		Check:   "/api/db/maintenance/status",
+	})
 }
 
 func (s *Server) handleAnalyze(w http.ResponseWriter, r *http.Request) {
 	var req AnalyzeRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err.Error() != "EOF" {
-		respondError(w, http.StatusBadRequest, "Ongeldige aanvraaginhoud")
+		respondError(w, http.StatusBadRequest, "Invalid request content")
 		return
 	}
 
-	result, err := s.service.Maintenance.Analyze(r.Context(), req.Tables)
+	err := s.service.Maintenance.StartAnalyze(req.Tables)
 	if err != nil {
-		slog.Error("Analyze operatie mislukt", "tables", req.Tables, "error", err)
-		respondError(w, http.StatusInternalServerError, err.Error())
+		slog.Error("Failed to start analyze", "tables", req.Tables, "error", err)
+		respondError(w, errorCode(err), err.Error())
 		return
 	}
 
-	respondJSON(w, http.StatusOK, result)
+	slog.Info("Analyze started", "tables", req.Tables)
+	respondJSON(w, http.StatusAccepted, AsyncStartResponse{
+		Message: "Analyze started",
+		Check:   "/api/db/maintenance/status",
+	})
+}
+
+func (s *Server) handleMaintenanceStatus(w http.ResponseWriter, r *http.Request) {
+	respondJSON(w, http.StatusOK, s.service.Maintenance.Status())
 }

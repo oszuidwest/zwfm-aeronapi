@@ -41,7 +41,7 @@ func newS3Service(cfg *config.S3Config) (*s3Service, error) {
 		),
 	})
 
-	slog.Info("S3 synchronisatie ingeschakeld",
+	slog.Info("S3 sync enabled",
 		"bucket", cfg.Bucket,
 		"region", cfg.Region,
 		"endpoint", cfg.Endpoint,
@@ -67,11 +67,11 @@ func ptrOrNil(s string) *string {
 func (s *s3Service) upload(ctx context.Context, filename, localPath string) (err error) {
 	file, err := os.Open(localPath)
 	if err != nil {
-		return types.NewOperationError("S3 upload", fmt.Errorf("bestand openen: %w", err))
+		return types.NewOperationError("S3 upload", fmt.Errorf("open file: %w", err))
 	}
 	defer func() {
 		if closeErr := file.Close(); closeErr != nil && err == nil {
-			err = types.NewOperationError("S3 upload", fmt.Errorf("bestand sluiten: %w", closeErr))
+			err = types.NewOperationError("S3 upload", fmt.Errorf("close file: %w", closeErr))
 		}
 	}()
 
@@ -87,7 +87,7 @@ func (s *s3Service) upload(ctx context.Context, filename, localPath string) (err
 		return types.NewOperationError("S3 upload", err)
 	}
 
-	slog.Info("Backup naar S3 geüpload",
+	slog.Info("Backup uploaded to S3",
 		"key", key,
 		"duration", time.Since(start).Round(time.Millisecond))
 
@@ -106,6 +106,6 @@ func (s *s3Service) delete(ctx context.Context, filename string) error {
 		return types.NewOperationError("S3 delete", err)
 	}
 
-	slog.Info("Backup van S3 verwijderd", "key", key)
+	slog.Info("Backup deleted from S3", "key", key)
 	return nil
 }

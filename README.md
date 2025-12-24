@@ -9,8 +9,8 @@ Het radioautomatiseringssysteem Aeron mist een REST API. Aeron Toolbox vult een 
 
 - **Afbeeldingen:** upload en optimaliseer albumhoezen en artiestfoto's
 - **Media:** browse artiesten, tracks en playlists met metadata
-- **Onderhoud:** monitor database-gezondheid, voer VACUUM en ANALYZE uit
-- **Backups:** maak, valideer en download database-backups (optioneel naar S3)
+- **Onderhoud:** monitor gezondheid van de database, automatische of handmatige VACUUM/ANALYZE
+- **Backups:** maak, valideer en download databasebackups (optioneel naar S3)
 
 ## Snel starten
 
@@ -61,10 +61,11 @@ Kopieer [`config.example.json`](config.example.json) naar `config.json`. De bela
 | `database` | PostgreSQL-verbinding (host, poort, credentials, schema) |
 | `image` | Doelafmetingen en JPEG-kwaliteit voor geüploade afbeeldingen |
 | `api` | API-sleutels voor authenticatie |
-| `backup` | Backup-pad, retentie, scheduler en optionele S3-sync |
+| `maintenance` | Thresholds en automatische scheduler voor databaseonderhoud |
+| `backup` | Pad naar backups, retentie, scheduler en optionele S3-sync |
 | `log` | Logniveau (`debug`, `info`, `warn`, `error`) en format (`text`, `json`) |
 
-### Backup-functionaliteit
+### Backupfunctionaliteit
 
 Voor backups heb je `pg_dump` en `pg_restore` nodig op het systeem:
 
@@ -81,6 +82,21 @@ brew install libpq
 
 De applicatie valideert bij het opstarten of deze tools beschikbaar zijn wanneer `backup.enabled: true`.
 
+### Automatisch onderhoud
+
+Database-onderhoud (VACUUM/ANALYZE) kan automatisch worden uitgevoerd:
+
+```json
+"maintenance": {
+  "scheduler": {
+    "enabled": true,
+    "schedule": "0 4 * * 0"
+  }
+}
+```
+
+Dit draait elke zondag om 04:00 VACUUM ANALYZE op tabellen die het nodig hebben. Zie [API.md](API.md) voor details.
+
 ## Voorbeelden
 
 ```bash
@@ -93,7 +109,7 @@ curl -X POST http://localhost:8080/api/artists/{id}/image \
   -H "Content-Type: application/json" \
   -d '{"url":"https://example.com/artist.jpg"}'
 
-# Database backup starten
+# Database backup starten (retourneert 202 Accepted, draait async)
 curl -X POST http://localhost:8080/api/db/backup \
   -H "X-API-Key: jouw-api-sleutel"
 ```

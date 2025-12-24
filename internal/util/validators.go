@@ -18,6 +18,7 @@ import (
 	"github.com/oszuidwest/zwfm-aerontoolbox/internal/types"
 )
 
+// uuidRegex is a lazily-initialized pattern for validating UUID v4 format.
 var uuidRegex = sync.OnceValue(func() *regexp.Regexp {
 	return regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
 })
@@ -25,16 +26,17 @@ var uuidRegex = sync.OnceValue(func() *regexp.Regexp {
 // ValidateEntityID validates that an ID is a proper UUID v4 format.
 func ValidateEntityID(id, entityLabel string) error {
 	if id == "" {
-		return types.NewValidationError("id", fmt.Sprintf("ongeldige %s-ID: mag niet leeg zijn", entityLabel))
+		return types.NewValidationError("id", fmt.Sprintf("invalid %s ID: must not be empty", entityLabel))
 	}
 
 	if !uuidRegex().MatchString(id) {
-		return types.NewValidationError("id", fmt.Sprintf("ongeldige %s-ID: moet een UUID zijn", entityLabel))
+		return types.NewValidationError("id", fmt.Sprintf("invalid %s ID: must be a UUID", entityLabel))
 	}
 
 	return nil
 }
 
+// newSafeHTTPClient creates an HTTP client with SSRF protection.
 func newSafeHTTPClient() *safeurl.WrappedClient {
 	config := safeurl.GetConfigBuilder().Build()
 	return safeurl.Client(config)
@@ -43,20 +45,20 @@ func newSafeHTTPClient() *safeurl.WrappedClient {
 // ValidateURL validates a URL for allowed schemes and hostname presence.
 func ValidateURL(urlString string) error {
 	if urlString == "" {
-		return types.NewValidationError("url", "lege URL")
+		return types.NewValidationError("url", "empty URL")
 	}
 
 	parsedURL, err := url.Parse(urlString)
 	if err != nil {
-		return types.NewValidationError("url", fmt.Sprintf("ongeldige URL: %v", err))
+		return types.NewValidationError("url", fmt.Sprintf("invalid URL: %v", err))
 	}
 
 	if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
-		return types.NewValidationError("url", "alleen HTTP en HTTPS URLs toegestaan")
+		return types.NewValidationError("url", "only HTTP and HTTPS URLs allowed")
 	}
 
 	if parsedURL.Host == "" {
-		return types.NewValidationError("url", "geen hostname opgegeven")
+		return types.NewValidationError("url", "no hostname specified")
 	}
 
 	return nil
@@ -65,7 +67,7 @@ func ValidateURL(urlString string) error {
 // ValidateContentType validates that a Content-Type header indicates an image.
 func ValidateContentType(contentType string) error {
 	if contentType != "" && !strings.HasPrefix(contentType, "image/") {
-		return types.NewValidationError("image", fmt.Sprintf("geen afbeelding content-type: %s", contentType))
+		return types.NewValidationError("image", fmt.Sprintf("not an image content-type: %s", contentType))
 	}
 	return nil
 }
@@ -73,12 +75,12 @@ func ValidateContentType(contentType string) error {
 // ValidateImageData validates that byte data represents a valid image.
 func ValidateImageData(data []byte) error {
 	if len(data) == 0 {
-		return types.NewValidationError("image", "afbeelding is leeg")
+		return types.NewValidationError("image", "image is empty")
 	}
 
 	_, _, err := image.DecodeConfig(bytes.NewReader(data))
 	if err != nil {
-		return types.NewValidationError("image", fmt.Sprintf("ongeldige afbeelding: %v", err))
+		return types.NewValidationError("image", fmt.Sprintf("invalid image: %v", err))
 	}
 
 	return nil
@@ -87,7 +89,7 @@ func ValidateImageData(data []byte) error {
 // ValidateImageFormat validates that an image format is supported.
 func ValidateImageFormat(format string) error {
 	if !slices.Contains(types.SupportedFormats, format) {
-		return types.NewValidationError("image", fmt.Sprintf("bestandsformaat %s wordt niet ondersteund (gebruik: %v)", format, types.SupportedFormats))
+		return types.NewValidationError("image", fmt.Sprintf("file format %s is not supported (use: %v)", format, types.SupportedFormats))
 	}
 	return nil
 }
@@ -102,16 +104,16 @@ func ValidateAndDownloadImage(urlString string, maxSize int64) ([]byte, error) {
 
 	resp, err := client.Get(urlString)
 	if err != nil {
-		return nil, types.NewValidationError("image", fmt.Sprintf("downloaden mislukt: %v", err))
+		return nil, types.NewValidationError("image", fmt.Sprintf("download failed: %v", err))
 	}
 	defer func() {
 		if err := resp.Body.Close(); err != nil {
-			slog.Debug("Sluiten response body mislukt", "error", err)
+			slog.Debug("Failed to close response body", "error", err)
 		}
 	}()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, types.NewValidationError("image", fmt.Sprintf("downloaden mislukt: HTTP %d", resp.StatusCode))
+		return nil, types.NewValidationError("image", fmt.Sprintf("download failed: HTTP %d", resp.StatusCode))
 	}
 
 	contentType := resp.Header.Get("Content-Type")
@@ -122,7 +124,7 @@ func ValidateAndDownloadImage(urlString string, maxSize int64) ([]byte, error) {
 	limitedReader := io.LimitReader(resp.Body, maxSize)
 	data, err := io.ReadAll(limitedReader)
 	if err != nil {
-		return nil, types.NewValidationError("image", fmt.Sprintf("fout bij lezen: %v", err))
+		return nil, types.NewValidationError("image", fmt.Sprintf("error reading: %v", err))
 	}
 
 	if err := ValidateImageData(data); err != nil {

@@ -60,11 +60,10 @@ type ImageDeleteResponse struct {
 	TrackID  string `json:"track_id,omitzero"`
 }
 
-// validateAndGetEntityID extracts and validates the entity ID from the request.
-// Returns the ID or writes an error response and returns empty string.
+// validateAndGetEntityID extracts and validates the entity ID from the request URL.
 func (s *Server) validateAndGetEntityID(w http.ResponseWriter, r *http.Request, entityType types.EntityType) string {
 	entityID := chi.URLParam(r, "id")
-	if err := util.ValidateEntityID(entityID, types.LabelForEntityType(entityType)); err != nil {
+	if err := util.ValidateEntityID(entityID, string(entityType)); err != nil {
 		respondError(w, http.StatusBadRequest, err.Error())
 		return ""
 	}
@@ -75,7 +74,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	dbStatus := "connected"
 	if err := s.service.Repository().Ping(r.Context()); err != nil {
 		dbStatus = "disconnected"
-		slog.Warn("Database health check mislukt", "error", err)
+		slog.Warn("Database health check failed", "error", err)
 	}
 
 	respondJSON(w, http.StatusOK, HealthResponse{
@@ -90,7 +89,7 @@ func (s *Server) handleStats(entityType types.EntityType) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		stats, err := s.service.Media.GetStatistics(r.Context(), entityType)
 		if err != nil {
-			slog.Error("Statistieken ophalen mislukt", "entityType", entityType, "error", err)
+			slog.Error("Failed to retrieve statistics", "entityType", entityType, "error", err)
 			respondError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
@@ -150,10 +149,10 @@ func (s *Server) uploadResponse(result *service.ImageUploadResult, entityType ty
 func (s *Server) handleBulkDelete(entityType types.EntityType) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		const confirmHeader = "X-Confirm-Bulk-Delete"
-		const confirmValue = "VERWIJDER ALLES"
+		const confirmValue = "DELETE ALL"
 
 		if r.Header.Get(confirmHeader) != confirmValue {
-			respondError(w, http.StatusBadRequest, "Ontbrekende bevestigingsheader: "+confirmHeader)
+			respondError(w, http.StatusBadRequest, "Missing confirmation header: "+confirmHeader)
 			return
 		}
 
@@ -163,9 +162,9 @@ func (s *Server) handleBulkDelete(entityType types.EntityType) http.HandlerFunc 
 			return
 		}
 
-		label := types.LabelForEntityType(entityType)
+		label := string(entityType)
 
-		message := strconv.FormatInt(result.DeletedCount, 10) + " " + label + "-afbeeldingen verwijderd"
+		message := strconv.FormatInt(result.DeletedCount, 10) + " " + label + " images deleted"
 		respondJSON(w, http.StatusOK, BulkDeleteResponse{
 			Deleted: result.DeletedCount,
 			Message: message,
@@ -193,7 +192,7 @@ func (s *Server) handleGetImage(entityType types.EntityType) http.HandlerFunc {
 
 		w.WriteHeader(http.StatusOK)
 		if _, err := w.Write(imageData); err != nil {
-			slog.Debug("Schrijven afbeelding naar client mislukt", "error", err)
+			slog.Debug("Failed to write image to client", "error", err)
 		}
 	}
 }
@@ -207,7 +206,7 @@ func (s *Server) handleImageUpload(entityType types.EntityType) http.HandlerFunc
 
 		var req ImageUploadRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			respondError(w, http.StatusBadRequest, "Ongeldige aanvraaginhoud")
+			respondError(w, http.StatusBadRequest, "Invalid request content")
 			return
 		}
 
@@ -220,7 +219,7 @@ func (s *Server) handleImageUpload(entityType types.EntityType) http.HandlerFunc
 		if req.Image != "" {
 			imageData, err := service.DecodeBase64(req.Image)
 			if err != nil {
-				respondError(w, http.StatusBadRequest, "Ongeldige base64-afbeelding")
+				respondError(w, http.StatusBadRequest, "Invalid base64 image")
 				return
 			}
 			params.ImageData = imageData
@@ -247,13 +246,13 @@ func (s *Server) handleDeleteImage(entityType types.EntityType) http.HandlerFunc
 
 		err := s.service.Media.DeleteImage(r.Context(), entityType, entityID)
 		if err != nil {
-			slog.Error("Afbeelding verwijderen mislukt", "entityType", entityType, "id", entityID, "error", err)
+			slog.Error("Failed to delete image", "entityType", entityType, "id", entityID, "error", err)
 			respondError(w, errorCode(err), err.Error())
 			return
 		}
 
 		response := ImageDeleteResponse{
-			Message: types.LabelForEntityType(entityType) + "-afbeelding succesvol verwijderd",
+			Message: string(entityType) + " image deleted successfully",
 		}
 		if entityType == types.EntityTypeArtist {
 			response.ArtistID = entityID
@@ -305,7 +304,7 @@ func (s *Server) handlePlaylist(w http.ResponseWriter, r *http.Request) {
 		opts := parsePlaylistOptions(query)
 		playlist, err := s.service.Media.GetPlaylist(r.Context(), &opts)
 		if err != nil {
-			slog.Error("Playlist ophalen mislukt", "block_id", opts.BlockID, "error", err)
+			slog.Error("Failed to retrieve playlist", "block_id", opts.BlockID, "error", err)
 			respondError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
@@ -317,7 +316,7 @@ func (s *Server) handlePlaylist(w http.ResponseWriter, r *http.Request) {
 	date := query.Get("date")
 	result, err := s.service.Media.GetPlaylistWithTracks(r.Context(), date)
 	if err != nil {
-		slog.Error("Playlist met tracks ophalen mislukt", "date", date, "error", err)
+		slog.Error("Failed to retrieve playlist with tracks", "date", date, "error", err)
 		respondError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
