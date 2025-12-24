@@ -4,96 +4,97 @@ package config
 import (
 	"cmp"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"strings"
 	"time"
 
+	"github.com/go-playground/validator/v10"
+
 	"github.com/oszuidwest/zwfm-aerontoolbox/internal/types"
 )
 
 // DatabaseConfig contains PostgreSQL database connection parameters.
 type DatabaseConfig struct {
-	Host                   string `json:"host"`
-	Port                   string `json:"port"`
-	Name                   string `json:"name"`
-	User                   string `json:"user"`
-	Password               string `json:"password"`
-	Schema                 string `json:"schema"`
-	SSLMode                string `json:"sslmode"`
-	MaxOpenConns           int    `json:"max_open_conns"`
-	MaxIdleConns           int    `json:"max_idle_conns"`
-	ConnMaxLifetimeMinutes int    `json:"conn_max_lifetime_minutes"`
+	Host                   string `json:"host" validate:"required"`
+	Port                   string `json:"port" validate:"required"`
+	Name                   string `json:"name" validate:"required"`
+	User                   string `json:"user" validate:"required"`
+	Password               string `json:"password" validate:"required"`
+	Schema                 string `json:"schema" validate:"required,identifier"`
+	SSLMode                string `json:"sslmode" validate:"required"`
+	MaxOpenConns           int    `json:"max_open_conns" validate:"gte=0"`
+	MaxIdleConns           int    `json:"max_idle_conns" validate:"gte=0"`
+	ConnMaxLifetimeMinutes int    `json:"conn_max_lifetime_minutes" validate:"gte=0"`
 }
 
 // ImageConfig contains image processing and optimization settings.
 type ImageConfig struct {
-	TargetWidth               int   `json:"target_width"`
-	TargetHeight              int   `json:"target_height"`
-	Quality                   int   `json:"quality"`
+	TargetWidth               int   `json:"target_width" validate:"required,gt=0"`
+	TargetHeight              int   `json:"target_height" validate:"required,gt=0"`
+	Quality                   int   `json:"quality" validate:"required,min=1,max=100"`
 	RejectSmaller             bool  `json:"reject_smaller"`
-	MaxImageDownloadSizeBytes int64 `json:"max_image_download_size_bytes"`
+	MaxImageDownloadSizeBytes int64 `json:"max_image_download_size_bytes" validate:"gte=0"`
 }
 
 // APIConfig contains API authentication and server settings.
 type APIConfig struct {
 	Enabled               bool     `json:"enabled"`
 	Keys                  []string `json:"keys"`
-	RequestTimeoutSeconds int      `json:"request_timeout_seconds"`
+	RequestTimeoutSeconds int      `json:"request_timeout_seconds" validate:"gte=0"`
 }
 
 // MaintenanceConfig contains thresholds and settings for database maintenance operations.
 type MaintenanceConfig struct {
-	BloatThreshold           float64         `json:"bloat_threshold"`
-	DeadTupleThreshold       int64           `json:"dead_tuple_threshold"`
-	VacuumStalenessDays      int             `json:"vacuum_staleness_days"`
-	MinRowsForRecommendation int64           `json:"min_rows_for_recommendation"`
-	ToastSizeWarningBytes    int64           `json:"toast_size_warning_bytes"`
-	StaleStatsThresholdPct   int             `json:"stale_stats_threshold_pct"`
-	SeqScanRatioThreshold    float64         `json:"seq_scan_ratio_threshold"`
-	TimeoutMinutes           int             `json:"timeout_minutes"`
+	BloatThreshold           float64         `json:"bloat_threshold" validate:"gte=0"`
+	DeadTupleThreshold       int64           `json:"dead_tuple_threshold" validate:"gte=0"`
+	VacuumStalenessDays      int             `json:"vacuum_staleness_days" validate:"gte=0"`
+	MinRowsForRecommendation int64           `json:"min_rows_for_recommendation" validate:"gte=0"`
+	ToastSizeWarningBytes    int64           `json:"toast_size_warning_bytes" validate:"gte=0"`
+	StaleStatsThresholdPct   int             `json:"stale_stats_threshold_pct" validate:"gte=0,lte=100"`
+	SeqScanRatioThreshold    float64         `json:"seq_scan_ratio_threshold" validate:"gte=0"`
+	TimeoutMinutes           int             `json:"timeout_minutes" validate:"gte=0"`
 	Scheduler                SchedulerConfig `json:"scheduler"`
 }
 
-// SchedulerConfig contains settings for automatic scheduled backups.
+// SchedulerConfig contains settings for scheduled operations.
 type SchedulerConfig struct {
 	Enabled  bool   `json:"enabled"`
-	Schedule string `json:"schedule"` // Cron expression, e.g., "0 3 * * *"
-	Timezone string `json:"timezone"` // Optional IANA timezone, e.g., "Europe/Amsterdam"
+	Schedule string `json:"schedule" validate:"required_if=Enabled true"`
+	Timezone string `json:"timezone" validate:"omitempty,timezone"`
 }
 
 // S3Config contains settings for S3-compatible storage synchronization.
 type S3Config struct {
 	Enabled         bool   `json:"enabled"`
-	Bucket          string `json:"bucket"`
-	Region          string `json:"region"`
-	Endpoint        string `json:"endpoint"` // Custom endpoint for S3-compatible services (MinIO, Backblaze B2, etc.)
-	AccessKeyID     string `json:"access_key_id"`
-	SecretAccessKey string `json:"secret_access_key"`
-	PathPrefix      string `json:"path_prefix"`      // Prefix for S3 keys, e.g., "backups/"
-	ForcePathStyle  bool   `json:"force_path_style"` // Use path-style URLs (required for MinIO)
+	Bucket          string `json:"bucket" validate:"required_if=Enabled true"`
+	Region          string `json:"region" validate:"required_if=Enabled true,required_without=Endpoint"`
+	Endpoint        string `json:"endpoint"`
+	AccessKeyID     string `json:"access_key_id" validate:"required_if=Enabled true"`
+	SecretAccessKey string `json:"secret_access_key" validate:"required_if=Enabled true"`
+	PathPrefix      string `json:"path_prefix"`
+	ForcePathStyle  bool   `json:"force_path_style"`
 }
 
 // BackupConfig contains settings for database backup functionality.
 type BackupConfig struct {
 	Enabled            bool            `json:"enabled"`
 	Path               string          `json:"path"`
-	RetentionDays      int             `json:"retention_days"`
-	MaxBackups         int             `json:"max_backups"`
-	DefaultCompression int             `json:"default_compression"`
-	TimeoutMinutes     int             `json:"timeout_minutes"`
-	PgDumpPath         string          `json:"pg_dump_path"`    // Custom path to pg_dump, empty = auto-detect
-	PgRestorePath      string          `json:"pg_restore_path"` // Custom path to pg_restore, empty = auto-detect
+	RetentionDays      int             `json:"retention_days" validate:"gte=0"`
+	MaxBackups         int             `json:"max_backups" validate:"gte=0"`
+	DefaultCompression int             `json:"default_compression" validate:"gte=0,lte=9"`
+	TimeoutMinutes     int             `json:"timeout_minutes" validate:"gte=0"`
+	PgDumpPath         string          `json:"pg_dump_path"`
+	PgRestorePath      string          `json:"pg_restore_path"`
 	Scheduler          SchedulerConfig `json:"scheduler"`
 	S3                 S3Config        `json:"s3"`
 }
 
 // LogConfig contains logging configuration.
 type LogConfig struct {
-	Level  string `json:"level"`  // "debug", "info", "warn", "error"
-	Format string `json:"format"` // "text", "json"
+	Level  string `json:"level" validate:"omitempty,oneof=debug info warn error"`
+	Format string `json:"format" validate:"omitempty,oneof=text json"`
 }
 
 // Config represents the complete application configuration.
@@ -261,17 +262,17 @@ func Load(configPath string) (*Config, error) {
 		if _, err := os.Stat("config.json"); err == nil {
 			configPath = "config.json"
 		} else {
-			return nil, fmt.Errorf("configuratiebestand config.json niet gevonden")
+			return nil, fmt.Errorf("config file config.json not found")
 		}
 	}
 
 	data, err := os.ReadFile(configPath)
 	if err != nil {
-		return nil, fmt.Errorf("lezen van configuratiebestand mislukt: %w", err)
+		return nil, fmt.Errorf("failed to read config file: %w", err)
 	}
 
 	if err := json.Unmarshal(data, config); err != nil {
-		return nil, fmt.Errorf("fout in configuratiebestand: %w", err)
+		return nil, fmt.Errorf("config file error: %w", err)
 	}
 
 	// Environment variable overrides
@@ -280,121 +281,92 @@ func Load(configPath string) (*Config, error) {
 	}
 
 	if err := validate(config); err != nil {
-		return nil, fmt.Errorf("configuratie is onvolledig: %w", err)
+		return nil, fmt.Errorf("configuration invalid: %w", err)
 	}
 
 	return config, nil
 }
 
-// validator accumulates validation errors with a field prefix for clear error messages.
-type validator struct {
-	prefix string
-	errs   []error
+// configValidator is the singleton validator instance with custom validations.
+var configValidator = newConfigValidator()
+
+func newConfigValidator() *validator.Validate {
+	v := validator.New(validator.WithRequiredStructEnabled())
+
+	// Register custom identifier validator
+	_ = v.RegisterValidation("identifier", func(fl validator.FieldLevel) bool {
+		return types.IsValidIdentifier(fl.Field().String())
+	})
+
+	// Register custom timezone validator
+	_ = v.RegisterValidation("timezone", func(fl validator.FieldLevel) bool {
+		tz := fl.Field().String()
+		if tz == "" {
+			return true
+		}
+		_, err := time.LoadLocation(tz)
+		return err == nil
+	})
+
+	return v
 }
 
-func newValidator(prefix string) *validator {
-	return &validator{prefix: prefix}
-}
-
-func (v *validator) required(value, field string) {
-	if value == "" {
-		v.errs = append(v.errs, fmt.Errorf("%s.%s is verplicht", v.prefix, field))
-	}
-}
-
-func (v *validator) positive(value int, field string) {
-	if value <= 0 {
-		v.errs = append(v.errs, fmt.Errorf("%s.%s moet groter dan 0 zijn", v.prefix, field))
-	}
-}
-
-func (v *validator) inRange(value, minVal, maxVal int, field string) {
-	if value < minVal || value > maxVal {
-		v.errs = append(v.errs, fmt.Errorf("%s.%s moet tussen %d en %d zijn", v.prefix, field, minVal, maxVal))
-	}
-}
-
-func (v *validator) timezone(tz, field string) {
-	if tz == "" {
-		return
-	}
-	if _, err := time.LoadLocation(tz); err != nil {
-		v.errs = append(v.errs, fmt.Errorf("%s.%s is ongeldig: %s", v.prefix, field, tz))
-	}
-}
-
-func (v *validator) identifier(value, field string) {
-	if value != "" && !types.IsValidIdentifier(value) {
-		v.errs = append(v.errs, fmt.Errorf("%s.%s bevat ongeldige tekens", v.prefix, field))
-	}
-}
-
-func (v *validator) errors() []error {
-	return v.errs
-}
-
-// validate checks the configuration for required fields and valid values.
+// validate validates the configuration using struct tags.
 func validate(config *Config) error {
-	var errs []error
-	errs = append(errs, validateDatabase(&config.Database)...)
-	errs = append(errs, validateImage(&config.Image)...)
-	errs = append(errs, validateScheduler(&config.Maintenance.Scheduler, "maintenance.scheduler")...)
-	errs = append(errs, validateBackup(&config.Backup)...)
-	return errors.Join(errs...)
-}
-
-func validateDatabase(cfg *DatabaseConfig) []error {
-	v := newValidator("database")
-	v.required(cfg.Host, "host")
-	v.required(cfg.Port, "port")
-	v.required(cfg.Name, "name")
-	v.required(cfg.User, "user")
-	v.required(cfg.Password, "password")
-	v.required(cfg.Schema, "schema")
-	v.required(cfg.SSLMode, "sslmode")
-	v.identifier(cfg.Schema, "schema")
-	return v.errors()
-}
-
-func validateImage(cfg *ImageConfig) []error {
-	v := newValidator("image")
-	v.positive(cfg.TargetWidth, "target_width")
-	v.positive(cfg.TargetHeight, "target_height")
-	v.inRange(cfg.Quality, 1, 100, "quality")
-	return v.errors()
-}
-
-func validateScheduler(cfg *SchedulerConfig, prefix string) []error {
-	v := newValidator(prefix)
-	if cfg.Enabled && cfg.Schedule == "" {
-		v.required("", "schedule") // triggers error
+	if err := configValidator.Struct(config); err != nil {
+		return formatErrors(err)
 	}
-	v.timezone(cfg.Timezone, "timezone")
-	return v.errors()
+
+	// Additional cross-field validation that can't be expressed in tags
+	if config.Backup.S3.Enabled && config.Backup.S3.Region == "" && config.Backup.S3.Endpoint == "" {
+		return fmt.Errorf("backup.s3.region is required when no endpoint is specified")
+	}
+
+	return nil
 }
 
-func validateBackup(cfg *BackupConfig) []error {
-	v := newValidator("backup")
-	if cfg.TimeoutMinutes < 0 {
-		v.errs = append(v.errs, fmt.Errorf("backup.timeout_minutes mag niet negatief zijn"))
+// formatErrors converts validator errors to user-friendly messages.
+func formatErrors(err error) error {
+	ve, ok := err.(validator.ValidationErrors)
+	if !ok {
+		return err
 	}
-	v.errs = append(v.errs, validateScheduler(&cfg.Scheduler, "backup.scheduler")...)
-	v.errs = append(v.errs, validateS3(&cfg.S3)...)
-	return v.errors()
+
+	var msgs []string
+	for _, e := range ve {
+		field := strings.ToLower(e.Namespace()[7:]) // Strip "Config." prefix
+		msgs = append(msgs, fmt.Sprintf("%s %s", field, tagMessage(e.Tag(), e.Param())))
+	}
+
+	return fmt.Errorf("%s", strings.Join(msgs, "; "))
 }
 
-func validateS3(cfg *S3Config) []error {
-	if !cfg.Enabled {
-		return nil
+// tagMessage returns an English message for a validation tag.
+func tagMessage(tag, param string) string {
+	switch tag {
+	case "required":
+		return "is required"
+	case "required_if":
+		return "is required when enabled"
+	case "required_without":
+		return "is required when no alternative is specified"
+	case "gt":
+		return fmt.Sprintf("must be greater than %s", param)
+	case "gte":
+		return fmt.Sprintf("must be %s or greater", param)
+	case "min":
+		return fmt.Sprintf("must be at least %s", param)
+	case "max", "lte":
+		return fmt.Sprintf("must be at most %s", param)
+	case "oneof":
+		return fmt.Sprintf("must be one of [%s]", param)
+	case "identifier":
+		return "contains invalid characters (only letters, numbers and underscores allowed)"
+	case "timezone":
+		return "is not a valid timezone"
+	default:
+		return fmt.Sprintf("is invalid (%s)", tag)
 	}
-	v := newValidator("backup.s3")
-	v.required(cfg.Bucket, "bucket")
-	v.required(cfg.AccessKeyID, "access_key_id")
-	v.required(cfg.SecretAccessKey, "secret_access_key")
-	if cfg.Region == "" && cfg.Endpoint == "" {
-		v.errs = append(v.errs, fmt.Errorf("backup.s3.region is verplicht wanneer geen endpoint is opgegeven"))
-	}
-	return v.errors()
 }
 
 // ConnectionString returns a PostgreSQL connection string.
