@@ -128,7 +128,7 @@ func BuildPlaylistQuery(schema string, opts *PlaylistOptions) (query string, par
 	}
 
 	if !types.IsValidIdentifier(schema) {
-		return "", nil, types.NewValidationError("schema", fmt.Sprintf("ongeldige schema naam: %s", schema))
+		return "", nil, types.NewValidationError("schema", fmt.Sprintf("invalid schema name: %s", schema))
 	}
 
 	columns := fmt.Sprintf(playlistItemColumns, types.VoicetrackUserID)
@@ -152,7 +152,7 @@ func ExecutePlaylistQuery(ctx context.Context, db DB, query string, params []any
 	var items []PlaylistItem
 	err := db.SelectContext(ctx, &items, query, params...)
 	if err != nil {
-		return nil, &types.OperationError{Operation: "ophalen van playlist", Err: err}
+		return nil, &types.OperationError{Operation: "fetch playlist", Err: err}
 	}
 
 	return items, nil

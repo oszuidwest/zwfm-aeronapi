@@ -79,12 +79,12 @@ func newBackupService(repo *database.Repository, cfg *config.Config) (*BackupSer
 
 		backupPath := cfg.Backup.GetPath()
 		if err := os.MkdirAll(backupPath, 0o750); err != nil {
-			return nil, types.NewConfigError("backup.path", fmt.Sprintf("backup directory niet toegankelijk: %v", err))
+			return nil, types.NewConfigError("backup.path", fmt.Sprintf("backup directory not accessible: %v", err))
 		}
 
 		root, err := os.OpenRoot(backupPath)
 		if err != nil {
-			return nil, types.NewConfigError("backup.path", fmt.Sprintf("backup directory niet te openen: %v", err))
+			return nil, types.NewConfigError("backup.path", fmt.Sprintf("backup directory cannot be opened: %v", err))
 		}
 		svc.backupRoot = root
 
@@ -134,14 +134,14 @@ var safeBackupFilenamePattern = regexp.MustCompile(`^[a-zA-Z0-9_\-.]+$`)
 func resolveToolPath(customPath, toolName string) (string, error) {
 	if customPath != "" {
 		if _, err := os.Stat(customPath); err != nil {
-			return "", types.NewConfigError(toolName, fmt.Sprintf("%s niet gevonden op pad: %s", toolName, customPath))
+			return "", types.NewConfigError(toolName, fmt.Sprintf("%s not found at path: %s", toolName, customPath))
 		}
 		return customPath, nil
 	}
 
 	path, err := exec.LookPath(toolName)
 	if err != nil {
-		return "", types.NewConfigError(toolName, fmt.Sprintf("%s niet gevonden in PATH", toolName))
+		return "", types.NewConfigError(toolName, fmt.Sprintf("%s not found in PATH", toolName))
 	}
 	return path, nil
 }
@@ -149,7 +149,7 @@ func resolveToolPath(customPath, toolName string) (string, error) {
 // checkEnabled returns an error if backup functionality is disabled.
 func (s *BackupService) checkEnabled() error {
 	if !s.config.Backup.Enabled || s.backupRoot == nil {
-		return types.NewConfigError("backup.enabled", "backup functionaliteit is niet ingeschakeld")
+		return types.NewConfigError("backup.enabled", "backup functionality is not enabled")
 	}
 	return nil
 }
@@ -157,10 +157,10 @@ func (s *BackupService) checkEnabled() error {
 // validateBackupFilename ensures the filename has valid characters, expected prefix and .dump extension.
 func validateBackupFilename(filename string) error {
 	if !safeBackupFilenamePattern.MatchString(filename) {
-		return types.NewValidationError("filename", "ongeldige bestandsnaam")
+		return types.NewValidationError("filename", "invalid filename")
 	}
 	if !strings.HasPrefix(filename, "aeron-backup-") || !strings.HasSuffix(filename, ".dump") {
-		return types.NewValidationError("filename", "geen geldig backup bestand")
+		return types.NewValidationError("filename", "not a valid backup file")
 	}
 	return nil
 }
@@ -186,7 +186,7 @@ func (s *BackupService) compressionLevel(requested int) (int, error) {
 		level = s.config.Backup.GetDefaultCompression()
 	}
 	if level < 0 || level > 9 {
-		return 0, types.NewValidationError("compression", fmt.Sprintf("ongeldige compressie waarde: %d (gebruik 0-9)", level))
+		return 0, types.NewValidationError("compression", fmt.Sprintf("invalid compression value: %d (use 0-9)", level))
 	}
 	return level, nil
 }
@@ -200,7 +200,7 @@ func (s *BackupService) validateBackupFile(ctx context.Context, filePath string)
 		if errMsg == "" {
 			errMsg = err.Error()
 		}
-		return types.NewOperationError("backup validatie", fmt.Errorf("bestand is corrupt of onleesbaar: %s", errMsg))
+		return types.NewOperationError("backup validation", fmt.Errorf("file is corrupt or unreadable: %s", errMsg))
 	}
 	return nil
 }
@@ -222,33 +222,33 @@ func (s *BackupService) executePgDump(ctx context.Context, pgDumpPath, filename,
 
 	if err != nil {
 		if removeErr := s.backupRoot.Remove(filename); removeErr != nil && !os.IsNotExist(removeErr) {
-			slog.Warn("Opruimen van mislukte backup gefaald", "filename", filename, "error", removeErr)
+			slog.Warn("Failed to clean up failed backup", "filename", filename, "error", removeErr)
 		}
 
 		// Provide clear error message based on error type
 		var errMsg string
 		switch {
 		case ctx.Err() == context.DeadlineExceeded:
-			errMsg = fmt.Sprintf("backup timeout na %s (configureer backup.timeout_minutes)", duration.Round(time.Second))
+			errMsg = fmt.Sprintf("backup timeout after %s (configure backup.timeout_minutes)", duration.Round(time.Second))
 		case ctx.Err() == context.Canceled:
-			errMsg = "backup geannuleerd"
+			errMsg = "backup cancelled"
 		case len(output) > 0:
 			errMsg = strings.TrimSpace(string(output))
 		default:
 			errMsg = err.Error()
 		}
 
-		slog.Error("Backup mislukt", "error", err, "duration", duration, "output", string(output))
-		return nil, 0, types.NewOperationError("backup maken", errors.New(errMsg))
+		slog.Error("Backup failed", "error", err, "duration", duration, "output", string(output))
+		return nil, 0, types.NewOperationError("create backup", errors.New(errMsg))
 	}
 
 	fileInfo, err := s.backupRoot.Stat(filename)
 	if err != nil {
-		return nil, 0, types.NewOperationError("backup maken", fmt.Errorf("backup bestand niet gevonden na creatie: %w", err))
+		return nil, 0, types.NewOperationError("create backup", fmt.Errorf("backup file not found after creation: %w", err))
 	}
 
 	if err := os.Chmod(fullPath, 0o600); err != nil {
-		slog.Warn("Kon bestandspermissies niet instellen", "file", filename, "error", err)
+		slog.Warn("Could not set file permissions", "file", filename, "error", err)
 	}
 
 	return fileInfo, duration, nil
@@ -266,7 +266,7 @@ func (s *BackupService) Start(req BackupRequest) error {
 	}
 
 	if !s.runner.TryStart() {
-		return types.NewConflictError("backup", "backup is al bezig")
+		return types.NewConflictError("backup", "backup already in progress")
 	}
 
 	// Initialize status before spawning goroutine to prevent race condition
@@ -285,7 +285,7 @@ func (s *BackupService) Start(req BackupRequest) error {
 // Run executes a database backup synchronously, blocking until completion.
 func (s *BackupService) Run(ctx context.Context, req BackupRequest) error {
 	if !s.runner.TryStart() {
-		return types.NewConflictError("backup", "backup is al bezig")
+		return types.NewConflictError("backup", "backup already in progress")
 	}
 	defer s.runner.Done()
 
@@ -315,7 +315,7 @@ func (s *BackupService) execute(ctx context.Context, req BackupRequest) error {
 	args = append(args, "--file="+fullPath)
 
 	s.setStatusFilename(filename)
-	slog.Info("Backup gestart", "filename", filename)
+	slog.Info("Backup started", "filename", filename)
 
 	fileInfo, duration, err := s.executePgDump(ctx, s.pgDumpPath, filename, fullPath, args)
 	if err != nil {
@@ -324,21 +324,21 @@ func (s *BackupService) execute(ctx context.Context, req BackupRequest) error {
 	}
 
 	// Validate backup file integrity
-	slog.Info("Backup valideren", "filename", filename)
+	slog.Info("Validating backup", "filename", filename)
 
 	validateCtx, validateCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer validateCancel()
 
 	if err := s.validateBackupFile(validateCtx, fullPath); err != nil {
-		slog.Error("Backup validatie mislukt", "filename", filename, "error", err)
+		slog.Error("Backup validation failed", "filename", filename, "error", err)
 		s.setStatusDone(false, filename, err.Error())
 		return err
 	}
 
-	slog.Info("Backup gevalideerd", "filename", filename)
+	slog.Info("Backup validated", "filename", filename)
 
 	s.setStatusDone(true, filename, "")
-	slog.Info("Backup voltooid",
+	slog.Info("Backup completed",
 		"filename", filename,
 		"size", util.FormatBytes(fileInfo.Size()),
 		"duration", duration.Round(time.Millisecond).String())
@@ -350,7 +350,7 @@ func (s *BackupService) execute(ctx context.Context, req BackupRequest) error {
 			defer cancel()
 
 			if err := s.s3.upload(uploadCtx, filename, fullPath); err != nil {
-				slog.Error("S3 synchronisatie mislukt", "filename", filename, "error", err)
+				slog.Error("S3 synchronization failed", "filename", filename, "error", err)
 				s.setS3SyncStatus(false, err.Error())
 			} else {
 				s.setS3SyncStatus(true, "")
@@ -430,7 +430,7 @@ func (s *BackupService) List() (*BackupListResponse, error) {
 				TotalCount: 0,
 			}, nil
 		}
-		return nil, types.NewConfigError("backup.path", fmt.Sprintf("backup directory niet leesbaar: %v", err))
+		return nil, types.NewConfigError("backup.path", fmt.Sprintf("backup directory not readable: %v", err))
 	}
 
 	var backups []BackupInfo
@@ -486,10 +486,10 @@ func (s *BackupService) Delete(filename string) error {
 	}
 
 	if err := s.backupRoot.Remove(filename); err != nil {
-		return types.NewOperationError("backup verwijderen", err)
+		return types.NewOperationError("delete backup", err)
 	}
 
-	slog.Info("Backup verwijderd", "filename", filename)
+	slog.Info("Backup deleted", "filename", filename)
 
 	// Also delete from S3 in background (non-blocking)
 	if s.s3 != nil {
@@ -498,7 +498,7 @@ func (s *BackupService) Delete(filename string) error {
 			defer cancel()
 
 			if err := s.s3.delete(ctx, filename); err != nil {
-				slog.Warn("S3 backup verwijderen mislukt", "filename", filename, "error", err)
+				slog.Warn("Failed to delete S3 backup", "filename", filename, "error", err)
 			}
 		})
 	}
@@ -560,7 +560,7 @@ func (s *BackupService) Validate(filename string) (*ValidationResult, error) {
 func (s *BackupService) cleanupOldBackups() {
 	backups, err := s.List()
 	if err != nil {
-		slog.Error("Kon backups niet ophalen voor cleanup", "error", err)
+		slog.Error("Could not retrieve backups for cleanup", "error", err)
 		return
 	}
 
@@ -573,31 +573,31 @@ func (s *BackupService) cleanupOldBackups() {
 	for _, backup := range backups.Backups {
 		if backup.CreatedAt.Before(cutoff) {
 			if err := s.Delete(backup.Filename); err != nil {
-				slog.Warn("Backup verwijderen mislukt (retention)", "filename", backup.Filename, "error", err)
+				slog.Warn("Failed to delete backup (retention)", "filename", backup.Filename, "error", err)
 			} else {
 				deleted++
-				slog.Info("Oude backup verwijderd (retention)", "filename", backup.Filename)
+				slog.Info("Old backup deleted (retention)", "filename", backup.Filename)
 			}
 		}
 	}
 
 	backups, err = s.List()
 	if err != nil {
-		slog.Error("Backup lijst ophalen mislukt tijdens cleanup", "error", err)
+		slog.Error("Failed to retrieve backup list during cleanup", "error", err)
 		return
 	}
 	if len(backups.Backups) > maxBackups {
 		for i := maxBackups; i < len(backups.Backups); i++ {
 			if err := s.Delete(backups.Backups[i].Filename); err != nil {
-				slog.Warn("Backup verwijderen mislukt (max_backups)", "filename", backups.Backups[i].Filename, "error", err)
+				slog.Warn("Failed to delete backup (max_backups)", "filename", backups.Backups[i].Filename, "error", err)
 			} else {
 				deleted++
-				slog.Info("Oude backup verwijderd (max_backups)", "filename", backups.Backups[i].Filename)
+				slog.Info("Old backup deleted (max_backups)", "filename", backups.Backups[i].Filename)
 			}
 		}
 	}
 
 	if deleted > 0 {
-		slog.Info("Backup cleanup voltooid", "deleted", deleted)
+		slog.Info("Backup cleanup completed", "deleted", deleted)
 	}
 }

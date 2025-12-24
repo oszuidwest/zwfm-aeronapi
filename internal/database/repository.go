@@ -44,7 +44,7 @@ func (r *Repository) Ping(ctx context.Context) error {
 func (r *Repository) GetArtist(ctx context.Context, id string) (*ArtistDetails, error) {
 	slog.Debug("Entity lookup", "type", "artist", "id", id)
 	query := fmt.Sprintf(artistDetailsQuery, r.schema)
-	return getEntityByID[ArtistDetails](ctx, r.db, query, id, "artiest", "ophalen artiest")
+	return getEntityByID[ArtistDetails](ctx, r.db, query, id, "artist", "fetch artist")
 }
 
 // --- Track operations ---
@@ -53,7 +53,7 @@ func (r *Repository) GetArtist(ctx context.Context, id string) (*ArtistDetails, 
 func (r *Repository) GetTrack(ctx context.Context, id string) (*TrackDetails, error) {
 	slog.Debug("Entity lookup", "type", "track", "id", id)
 	query := fmt.Sprintf(trackDetailsQuery, r.schema)
-	return getEntityByID[TrackDetails](ctx, r.db, query, id, "track", "ophalen track")
+	return getEntityByID[TrackDetails](ctx, r.db, query, id, "track", "fetch track")
 }
 
 // --- Image operations ---
@@ -62,7 +62,7 @@ func (r *Repository) GetTrack(ctx context.Context, id string) (*TrackDetails, er
 func (r *Repository) GetImage(ctx context.Context, table types.Table, id string) ([]byte, error) {
 	qualifiedTableName, err := types.QualifiedTable(r.schema, table)
 	if err != nil {
-		return nil, types.NewValidationError("table", fmt.Sprintf("ongeldige tabel configuratie: %v", err))
+		return nil, types.NewValidationError("table", fmt.Sprintf("invalid table configuration: %v", err))
 	}
 	label := types.LabelForTable(table)
 	idCol := types.IDColumnForTable(table)
@@ -76,7 +76,7 @@ func (r *Repository) GetImage(ctx context.Context, table types.Table, id string)
 		return nil, types.NewNotFoundError(label, id)
 	}
 	if err != nil {
-		return nil, types.NewOperationError(fmt.Sprintf("ophalen %s afbeelding", label), err)
+		return nil, types.NewOperationError(fmt.Sprintf("fetch %s image", label), err)
 	}
 	if imageData == nil {
 		return nil, types.NewNoImageError(label, id)
@@ -89,7 +89,7 @@ func (r *Repository) GetImage(ctx context.Context, table types.Table, id string)
 func (r *Repository) UpdateImage(ctx context.Context, table types.Table, id string, imageData []byte) error {
 	qualifiedTableName, err := types.QualifiedTable(r.schema, table)
 	if err != nil {
-		return types.NewValidationError("table", fmt.Sprintf("ongeldige tabel configuratie: %v", err))
+		return types.NewValidationError("table", fmt.Sprintf("invalid table configuration: %v", err))
 	}
 	label := types.LabelForTable(table)
 	idCol := types.IDColumnForTable(table)
@@ -98,7 +98,7 @@ func (r *Repository) UpdateImage(ctx context.Context, table types.Table, id stri
 
 	_, err = r.db.ExecContext(ctx, query, imageData, id)
 	if err != nil {
-		return types.NewOperationError(fmt.Sprintf("bijwerken van %s", label), err)
+		return types.NewOperationError(fmt.Sprintf("update %s", label), err)
 	}
 	return nil
 }
@@ -107,7 +107,7 @@ func (r *Repository) UpdateImage(ctx context.Context, table types.Table, id stri
 func (r *Repository) DeleteImage(ctx context.Context, table types.Table, id string) error {
 	qualifiedTableName, err := types.QualifiedTable(r.schema, table)
 	if err != nil {
-		return types.NewValidationError("table", fmt.Sprintf("ongeldige tabel configuratie: %v", err))
+		return types.NewValidationError("table", fmt.Sprintf("invalid table configuration: %v", err))
 	}
 	label := types.LabelForTable(table)
 	idCol := types.IDColumnForTable(table)
@@ -116,16 +116,16 @@ func (r *Repository) DeleteImage(ctx context.Context, table types.Table, id stri
 
 	result, err := r.db.ExecContext(ctx, query, id)
 	if err != nil {
-		return types.NewOperationError(fmt.Sprintf("verwijderen van %s-afbeelding", label), err)
+		return types.NewOperationError(fmt.Sprintf("delete %s image", label), err)
 	}
 
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {
-		return types.NewOperationError(fmt.Sprintf("verwijderen van %s-afbeelding", label), err)
+		return types.NewOperationError(fmt.Sprintf("delete %s image", label), err)
 	}
 
 	if rowsAffected == 0 {
-		return types.NewNotFoundError(label+"-afbeelding", id)
+		return types.NewNotFoundError(label+" image", id)
 	}
 
 	return nil
@@ -151,14 +151,14 @@ func (r *Repository) countItems(ctx context.Context, table types.Table, hasImage
 
 	qualifiedTableName, err := types.QualifiedTable(r.schema, table)
 	if err != nil {
-		return 0, types.NewValidationError("table", fmt.Sprintf("ongeldige tabel configuratie: %v", err))
+		return 0, types.NewValidationError("table", fmt.Sprintf("invalid table configuration: %v", err))
 	}
 	query := fmt.Sprintf("SELECT COUNT(*) FROM %s WHERE picture %s", qualifiedTableName, condition)
 
 	var count int
 	err = r.db.GetContext(ctx, &count, query)
 	if err != nil {
-		return 0, types.NewOperationError(fmt.Sprintf("tellen van %s", table), err)
+		return 0, types.NewOperationError(fmt.Sprintf("count %s", table), err)
 	}
 
 	return count, nil
@@ -168,7 +168,7 @@ func (r *Repository) countItems(ctx context.Context, table types.Table, hasImage
 func (r *Repository) DeleteAllImages(ctx context.Context, table types.Table) (int64, error) {
 	qualifiedTableName, err := types.QualifiedTable(r.schema, table)
 	if err != nil {
-		return 0, types.NewValidationError("table", fmt.Sprintf("ongeldige tabel configuratie: %v", err))
+		return 0, types.NewValidationError("table", fmt.Sprintf("invalid table configuration: %v", err))
 	}
 
 	query := fmt.Sprintf("UPDATE %s SET picture = NULL WHERE picture IS NOT NULL", qualifiedTableName)
@@ -176,7 +176,7 @@ func (r *Repository) DeleteAllImages(ctx context.Context, table types.Table) (in
 	result, err := r.db.ExecContext(ctx, query)
 	if err != nil {
 		label := types.LabelForTable(table)
-		return 0, types.NewOperationError(fmt.Sprintf("verwijderen van %s-afbeeldingen", label), err)
+		return 0, types.NewOperationError(fmt.Sprintf("delete %s images", label), err)
 	}
 
 	return result.RowsAffected()
@@ -220,7 +220,7 @@ func (r *Repository) GetPlaylistBlocks(ctx context.Context, date string) ([]Play
 	var blocks []PlaylistBlock
 	err := r.db.SelectContext(ctx, &blocks, query, params...)
 	if err != nil {
-		return nil, types.NewOperationError("ophalen van playlist blocks", err)
+		return nil, types.NewOperationError("fetch playlist blocks", err)
 	}
 
 	return blocks, nil
@@ -274,7 +274,7 @@ func (r *Repository) GetPlaylistWithTracks(ctx context.Context, date string) ([]
 	var tempItems []playlistItemWithBlockID
 	err = r.db.SelectContext(ctx, &tempItems, query, params...)
 	if err != nil {
-		return nil, nil, types.NewOperationError("ophalen van playlist items", err)
+		return nil, nil, types.NewOperationError("fetch playlist items", err)
 	}
 
 	tracksByBlock := make(map[string][]PlaylistItem)

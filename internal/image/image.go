@@ -75,7 +75,7 @@ func (o *Optimizer) OptimizeImage(data []byte) (optimized []byte, format, encode
 	case "png":
 		return o.convertPNGToJPEG(data)
 	default:
-		return data, format, "origineel", nil
+		return data, format, "original", nil
 	}
 }
 
@@ -83,7 +83,7 @@ func (o *Optimizer) optimizeJPEG(data []byte) (optimized []byte, format, encoder
 	var sourceImage image.Image
 	sourceImage, err = jpeg.Decode(bytes.NewReader(data))
 	if err != nil {
-		return nil, "", "", types.NewValidationError("image", fmt.Sprintf("decoderen van JPEG mislukt: %v", err))
+		return nil, "", "", types.NewValidationError("image", fmt.Sprintf("failed to decode JPEG: %v", err))
 	}
 
 	return o.processImage(sourceImage, data, "jpeg")
@@ -93,7 +93,7 @@ func (o *Optimizer) convertPNGToJPEG(data []byte) (optimized []byte, format, enc
 	var sourceImage image.Image
 	sourceImage, err = png.Decode(bytes.NewReader(data))
 	if err != nil {
-		return nil, "", "", types.NewValidationError("image", fmt.Sprintf("decoderen van PNG mislukt: %v", err))
+		return nil, "", "", types.NewValidationError("image", fmt.Sprintf("failed to decode PNG: %v", err))
 	}
 
 	return o.processImage(sourceImage, data, "jpeg")
@@ -109,15 +109,15 @@ func (o *Optimizer) processImage(sourceImage image.Image, originalData []byte, o
 
 	var jpegBuffer bytes.Buffer
 	if err := jpeg.Encode(&jpegBuffer, sourceImage, &jpeg.Options{Quality: o.Config.Quality}); err != nil {
-		return nil, "", "", types.NewValidationError("image", fmt.Sprintf("JPEG encoding mislukt: %v", err))
+		return nil, "", "", types.NewValidationError("image", fmt.Sprintf("JPEG encoding failed: %v", err))
 	}
 	optimizedData := jpegBuffer.Bytes()
 
 	if len(optimizedData) < len(originalData) {
-		return optimizedData, outputFormat, "geoptimaliseerd", nil
+		return optimizedData, outputFormat, "optimized", nil
 	}
 
-	return originalData, outputFormat, "origineel", nil
+	return originalData, outputFormat, "original", nil
 }
 
 func (o *Optimizer) resizeImage(sourceImage image.Image, maxWidth, maxHeight int) image.Image {
@@ -169,7 +169,7 @@ func validateImage(info *Info, config Config) error {
 func extractImageInfo(imageData []byte) (*Info, error) {
 	format, width, height, err := getImageInfo(imageData)
 	if err != nil {
-		return nil, types.NewValidationError("image", fmt.Sprintf("ophalen van afbeeldingsinformatie mislukt: %v", err))
+		return nil, types.NewValidationError("image", fmt.Sprintf("failed to get image information: %v", err))
 	}
 
 	return &Info{
@@ -184,7 +184,7 @@ func validateImageDimensions(info *Info, config Config) error {
 	if config.RejectSmaller && (info.Width < config.TargetWidth || info.Height < config.TargetHeight) {
 		return &types.ValidationError{
 			Field: "dimensions",
-			Message: fmt.Sprintf("afbeelding is te klein: %dx%d (minimaal %dx%d vereist)",
+			Message: fmt.Sprintf("image is too small: %dx%d (minimum %dx%d required)",
 				info.Width, info.Height, config.TargetWidth, config.TargetHeight),
 		}
 	}
@@ -199,7 +199,7 @@ func createSkippedResult(imageData []byte, originalInfo *Info) *ProcessingResult
 	return &ProcessingResult{
 		Data:      imageData,
 		Format:    originalInfo.Format,
-		Encoder:   "origineel (geen optimalisatie nodig)",
+		Encoder:   "original (no optimization needed)",
 		Original:  *originalInfo,
 		Optimized: *originalInfo,
 		Savings:   0,
@@ -210,7 +210,7 @@ func optimizeImageData(imageData []byte, originalInfo *Info, config Config) (*Pr
 	optimizer := NewOptimizer(config)
 	optimizedData, optFormat, optEncoder, err := optimizer.OptimizeImage(imageData)
 	if err != nil {
-		return nil, types.NewValidationError("image", fmt.Sprintf("optimaliseren mislukt: %v", err))
+		return nil, types.NewValidationError("image", fmt.Sprintf("optimization failed: %v", err))
 	}
 
 	optimizedInfo, err := extractImageInfo(optimizedData)
@@ -227,7 +227,7 @@ func optimizeImageData(imageData []byte, originalInfo *Info, config Config) (*Pr
 		return &ProcessingResult{
 			Data:      imageData,
 			Format:    originalInfo.Format,
-			Encoder:   "origineel (kleiner dan geoptimaliseerde versie)",
+			Encoder:   "original (smaller than optimized version)",
 			Original:  *originalInfo,
 			Optimized: *originalInfo,
 			Savings:   0,

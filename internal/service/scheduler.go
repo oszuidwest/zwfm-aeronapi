@@ -72,7 +72,7 @@ func (s *Scheduler) addJob(cfg config.SchedulerConfig, name string, job func()) 
 	}
 
 	s.jobs = append(s.jobs, name)
-	slog.Info("Scheduled job geregistreerd", "job", name, "schedule", schedule)
+	slog.Info("Scheduled job registered", "job", name, "schedule", schedule)
 	return nil
 }
 
@@ -82,7 +82,7 @@ func (s *Scheduler) Start() {
 		return
 	}
 	s.cron.Start()
-	slog.Info("Scheduler gestart", "jobs", s.jobs)
+	slog.Info("Scheduler started", "jobs", s.jobs)
 }
 
 // Stop halts the scheduler and waits for running jobs to finish.
@@ -90,7 +90,7 @@ func (s *Scheduler) Stop() context.Context {
 	if len(s.jobs) == 0 {
 		return context.Background()
 	}
-	slog.Info("Scheduler wordt gestopt...", "jobs", s.jobs)
+	slog.Info("Scheduler stopping...", "jobs", s.jobs)
 	return s.cron.Stop()
 }
 
@@ -105,24 +105,24 @@ func (s *Scheduler) runBackup() {
 	ctx, cancel := context.WithTimeout(context.Background(), cfg.GetTimeout())
 	defer cancel()
 
-	slog.Info("Geplande backup gestart")
+	slog.Info("Scheduled backup started")
 	if err := s.service.Backup.Run(ctx, BackupRequest{
 		Compression: cfg.GetDefaultCompression(),
 	}); err != nil {
-		slog.Error("Geplande backup mislukt", "error", err)
+		slog.Error("Scheduled backup failed", "error", err)
 	}
 }
 
 // runMaintenance performs scheduled VACUUM ANALYZE on tables that need it.
 func (s *Scheduler) runMaintenance() {
-	slog.Info("Geplande maintenance gestart")
+	slog.Info("Scheduled maintenance started")
 
 	// StartVacuum uses TryStart() internally which is atomic - no pre-check needed
 	if err := s.service.Maintenance.StartVacuum(VacuumOptions{Analyze: true}); err != nil {
 		// This includes "already running" errors - just log and continue
-		slog.Warn("Geplande maintenance niet gestart", "reason", err)
+		slog.Warn("Scheduled maintenance not started", "reason", err)
 		return
 	}
 
-	slog.Info("Geplande maintenance draait op achtergrond")
+	slog.Info("Scheduled maintenance running in background")
 }

@@ -45,14 +45,14 @@ func (s *Server) Start(port string) error {
 
 	router.NotFound(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		respondError(w, http.StatusNotFound, "Endpoint niet gevonden")
+		respondError(w, http.StatusNotFound, "Endpoint not found")
 	})
 
 	router.Route("/api", func(r chi.Router) {
 		r.Use(middleware.SetHeader("Content-Type", "application/json; charset=utf-8"))
 
 		r.NotFound(func(w http.ResponseWriter, r *http.Request) {
-			respondError(w, http.StatusNotFound, "Endpoint niet gevonden")
+			respondError(w, http.StatusNotFound, "Endpoint not found")
 		})
 
 		r.Get("/health", s.handleHealth)
@@ -139,13 +139,13 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 		apiKey := r.Header.Get("X-API-Key")
 
 		if !s.isValidAPIKey(apiKey) {
-			slog.Warn("Authenticatie mislukt",
-				"reason", "ongeldige_api_key",
+			slog.Warn("Authentication failed",
+				"reason", "invalid_api_key",
 				"path", r.URL.Path,
 				"method", r.Method,
 				"remote_addr", r.RemoteAddr)
 
-			respondError(w, http.StatusUnauthorized, "Niet geautoriseerd: ongeldige of ontbrekende API-sleutel")
+			respondError(w, http.StatusUnauthorized, "Unauthorized: invalid or missing API key")
 			return
 		}
 

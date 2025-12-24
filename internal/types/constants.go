@@ -23,9 +23,9 @@ const (
 )
 
 const (
-	// LabelArtist is the Dutch display label for artist entities.
-	LabelArtist = "artiest"
-	// LabelTrack is the Dutch display label for track entities.
+	// LabelArtist is the display label for artist entities.
+	LabelArtist = "artist"
+	// LabelTrack is the display label for track entities.
 	LabelTrack = "track"
 )
 
@@ -43,20 +43,20 @@ func TableForEntityType(entityType EntityType) Table {
 	return TableArtist
 }
 
-// LabelForEntityType returns the Dutch display label for the given entity type.
+// LabelForEntityType returns the display label for the given entity type.
 func LabelForEntityType(entityType EntityType) string {
 	if entityType == EntityTypeTrack {
 		return "track"
 	}
-	return "artiest"
+	return "artist"
 }
 
-// LabelForTable returns the Dutch display label for the given table.
+// LabelForTable returns the display label for the given table.
 func LabelForTable(table Table) string {
 	if table == TableTrack {
 		return "track"
 	}
-	return "artiest"
+	return "artist"
 }
 
 // IDColumnForTable returns the primary key column name for the given table.
@@ -83,10 +83,10 @@ func IsValidIdentifier(name string) bool {
 // QualifiedTable returns a fully qualified schema.table name after validating both identifiers.
 func QualifiedTable(schema string, table Table) (string, error) {
 	if !IsValidIdentifier(schema) {
-		return "", fmt.Errorf("ongeldige schema naam: %s", schema)
+		return "", fmt.Errorf("invalid schema name: %s", schema)
 	}
 	if !IsValidIdentifier(string(table)) {
-		return "", fmt.Errorf("ongeldige tabel naam: %s", table)
+		return "", fmt.Errorf("invalid table name: %s", table)
 	}
 	return fmt.Sprintf("%s.%s", schema, table), nil
 }

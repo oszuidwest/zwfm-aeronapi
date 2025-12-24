@@ -23,7 +23,7 @@ type AnalyzeRequest struct {
 func (s *Server) handleDatabaseHealth(w http.ResponseWriter, r *http.Request) {
 	health, err := s.service.Maintenance.GetHealth(r.Context())
 	if err != nil {
-		slog.Error("Database health check mislukt", "error", err)
+		slog.Error("Database health check failed", "error", err)
 		respondError(w, errorCode(err), err.Error())
 		return
 	}
@@ -34,7 +34,7 @@ func (s *Server) handleDatabaseHealth(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleVacuum(w http.ResponseWriter, r *http.Request) {
 	var req VacuumRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err.Error() != "EOF" {
-		respondError(w, http.StatusBadRequest, "Ongeldige aanvraaginhoud")
+		respondError(w, http.StatusBadRequest, "Invalid request content")
 		return
 	}
 
@@ -43,14 +43,14 @@ func (s *Server) handleVacuum(w http.ResponseWriter, r *http.Request) {
 		Analyze: req.Analyze,
 	})
 	if err != nil {
-		slog.Error("Vacuum starten mislukt", "tables", req.Tables, "error", err)
+		slog.Error("Failed to start vacuum", "tables", req.Tables, "error", err)
 		respondError(w, errorCode(err), err.Error())
 		return
 	}
 
-	msg := "Vacuum gestart"
+	msg := "Vacuum started"
 	if req.Analyze {
-		msg = "Vacuum met analyze gestart"
+		msg = "Vacuum with analyze started"
 	}
 	slog.Info(msg, "tables", req.Tables)
 	respondJSON(w, http.StatusAccepted, AsyncStartResponse{
@@ -62,20 +62,20 @@ func (s *Server) handleVacuum(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleAnalyze(w http.ResponseWriter, r *http.Request) {
 	var req AnalyzeRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err.Error() != "EOF" {
-		respondError(w, http.StatusBadRequest, "Ongeldige aanvraaginhoud")
+		respondError(w, http.StatusBadRequest, "Invalid request content")
 		return
 	}
 
 	err := s.service.Maintenance.StartAnalyze(req.Tables)
 	if err != nil {
-		slog.Error("Analyze starten mislukt", "tables", req.Tables, "error", err)
+		slog.Error("Failed to start analyze", "tables", req.Tables, "error", err)
 		respondError(w, errorCode(err), err.Error())
 		return
 	}
 
-	slog.Info("Analyze gestart", "tables", req.Tables)
+	slog.Info("Analyze started", "tables", req.Tables)
 	respondJSON(w, http.StatusAccepted, AsyncStartResponse{
-		Message: "Analyze gestart",
+		Message: "Analyze started",
 		Check:   "/api/db/maintenance/status",
 	})
 }

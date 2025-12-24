@@ -18,7 +18,7 @@ type BackupDeleteResponse struct {
 func (s *Server) handleCreateBackup(w http.ResponseWriter, r *http.Request) {
 	var req service.BackupRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err.Error() != "EOF" {
-		respondError(w, http.StatusBadRequest, "Ongeldige aanvraaginhoud")
+		respondError(w, http.StatusBadRequest, "Invalid request content")
 		return
 	}
 
@@ -28,7 +28,7 @@ func (s *Server) handleCreateBackup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respondJSON(w, http.StatusAccepted, AsyncStartResponse{
-		Message: "Backup gestart op achtergrond",
+		Message: "Backup started in background",
 		Check:   "/api/db/backup/status",
 	})
 }
@@ -70,7 +70,7 @@ func (s *Server) handleDeleteBackup(w http.ResponseWriter, r *http.Request) {
 	// Require confirmation header
 	const confirmHeader = "X-Confirm-Delete"
 	if r.Header.Get(confirmHeader) != filename {
-		respondError(w, http.StatusBadRequest, "Bevestigingsheader ontbreekt: "+confirmHeader+" moet de bestandsnaam bevatten")
+		respondError(w, http.StatusBadRequest, "Confirmation header missing: "+confirmHeader+" must contain the filename")
 		return
 	}
 
@@ -81,7 +81,7 @@ func (s *Server) handleDeleteBackup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respondJSON(w, http.StatusOK, BackupDeleteResponse{
-		Message:  "Backup succesvol verwijderd",
+		Message:  "Backup deleted successfully",
 		Filename: filename,
 	})
 }

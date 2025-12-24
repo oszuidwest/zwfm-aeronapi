@@ -47,7 +47,7 @@ func run() error {
 
 	cfg, err := config.Load(*configFile)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Configuratiefout: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Configuration error: %v\n", err)
 		return err
 	}
 
@@ -61,14 +61,14 @@ func run() error {
 
 	svc, err := service.New(db, cfg)
 	if err != nil {
-		slog.Error("Service initialisatie mislukt", "error", err)
+		slog.Error("Service initialization failed", "error", err)
 		return err
 	}
 	defer svc.Close()
 
 	scheduler, err := service.NewScheduler(svc)
 	if err != nil {
-		slog.Error("Scheduler initialisatie mislukt", "error", err)
+		slog.Error("Scheduler initialization failed", "error", err)
 		return err
 	}
 	scheduler.Start()
@@ -97,14 +97,14 @@ func initLogger(cfg *config.Config) {
 	}
 
 	slog.SetDefault(slog.New(handler))
-	slog.Info("Logger geïnitialiseerd", "level", level.String(), "format", cfg.Log.GetFormat())
+	slog.Info("Logger initialized", "level", level.String(), "format", cfg.Log.GetFormat())
 }
 
 // setupDatabase establishes a database connection pool and returns a cleanup function.
 func setupDatabase(cfg *config.Config) (*sqlx.DB, func(), error) {
 	db, err := sqlx.Open("postgres", cfg.Database.ConnectionString())
 	if err != nil {
-		slog.Error("Database verbinding mislukt", "error", err)
+		slog.Error("Database connection failed", "error", err)
 		return nil, nil, err
 	}
 
@@ -112,22 +112,22 @@ func setupDatabase(cfg *config.Config) (*sqlx.DB, func(), error) {
 	db.SetMaxIdleConns(cfg.Database.GetMaxIdleConns())
 	db.SetConnMaxLifetime(cfg.Database.GetConnMaxLifetime())
 
-	slog.Info("Database connection pool geconfigureerd",
+	slog.Info("Database connection pool configured",
 		"max_open", cfg.Database.GetMaxOpenConns(),
 		"max_idle", cfg.Database.GetMaxIdleConns(),
 		"max_lifetime", cfg.Database.GetConnMaxLifetime())
 
 	if err := db.Ping(); err != nil {
-		slog.Error("Database ping mislukt", "error", err)
+		slog.Error("Database ping failed", "error", err)
 		if closeErr := db.Close(); closeErr != nil {
-			slog.Warn("Database sluiten na ping fout mislukt", "error", closeErr)
+			slog.Warn("Failed to close database after ping error", "error", closeErr)
 		}
 		return nil, nil, err
 	}
 
 	cleanup := func() {
 		if err := db.Close(); err != nil {
-			slog.Error("Fout bij sluiten database", "error", err)
+			slog.Error("Failed to close database", "error", err)
 		}
 	}
 
@@ -141,7 +141,7 @@ func serveUntilShutdown(server *api.Server, port string, scheduler *service.Sche
 
 	serverErr := make(chan error, 1)
 	go func() {
-		slog.Info("API-server gestart op poort", "poort", port)
+		slog.Info("API server started", "port", port)
 		if err := server.Start(port); err != nil && err != http.ErrServerClosed {
 			serverErr <- err
 		}
@@ -149,9 +149,9 @@ func serveUntilShutdown(server *api.Server, port string, scheduler *service.Sche
 
 	select {
 	case <-stop:
-		slog.Info("Shutdown signaal ontvangen, server wordt gestopt...")
+		slog.Info("Shutdown signal received, stopping server...")
 	case err := <-serverErr:
-		slog.Error("API server fout", "error", err)
+		slog.Error("API server error", "error", err)
 		return err
 	}
 
@@ -165,20 +165,20 @@ func gracefulShutdown(server *api.Server, scheduler *service.Scheduler) error {
 	select {
 	case <-ctx.Done():
 		if scheduler.HasJobs() {
-			slog.Info("Scheduler succesvol gestopt")
+			slog.Info("Scheduler stopped successfully")
 		}
 	case <-time.After(35 * time.Second):
-		slog.Warn("Scheduler stop timeout, forceer afsluiten")
+		slog.Warn("Scheduler stop timeout, forcing shutdown")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	if err := server.Shutdown(ctx); err != nil {
-		slog.Error("Fout bij graceful shutdown", "error", err)
+		slog.Error("Graceful shutdown failed", "error", err)
 		return err
 	}
 
-	slog.Info("Server succesvol gestopt")
+	slog.Info("Server stopped successfully")
 	return nil
 }

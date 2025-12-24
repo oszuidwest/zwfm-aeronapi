@@ -163,14 +163,14 @@ func (s *MaintenanceService) GetHealth(ctx context.Context) (*DatabaseHealth, er
 
 	dbSize, dbSizeRaw, err := s.getDatabaseSize(ctx)
 	if err != nil {
-		return nil, types.NewOperationError("ophalen database grootte", err)
+		return nil, types.NewOperationError("get database size", err)
 	}
 	health.DatabaseSize = dbSize
 	health.DatabaseSizeRaw = dbSizeRaw
 
 	tables, err := s.getTableHealth(ctx)
 	if err != nil {
-		return nil, types.NewOperationError("ophalen tabel statistieken", err)
+		return nil, types.NewOperationError("get table statistics", err)
 	}
 	health.Tables = tables
 
@@ -224,7 +224,7 @@ func (s *MaintenanceService) getTableHealth(ctx context.Context) ([]TableHealth,
 
 	var rows []tableHealthRow
 	if err := s.repo.DB().SelectContext(ctx, &rows, query, schema); err != nil {
-		return nil, types.NewOperationError("ophalen tabel statistieken", err)
+		return nil, types.NewOperationError("get table statistics", err)
 	}
 
 	cfg := s.config.Maintenance
@@ -280,7 +280,7 @@ func (s *MaintenanceService) generateRecommendations(tables []TableHealth) []str
 	}
 
 	if len(recs) == 0 {
-		return []string{"Geen problemen gedetecteerd"}
+		return []string{"No issues detected"}
 	}
 	return recs
 }
@@ -290,39 +290,39 @@ func (s *MaintenanceService) checkTableHealth(t *TableHealth, recs []string) []s
 	minRows := cfg.GetMinRowsForRecommendation()
 
 	if t.DeadTupleRatio > cfg.GetBloatThreshold() {
-		recs = append(recs, fmt.Sprintf("Tabel '%s' heeft %.1f%% dead tuples - VACUUM aanbevolen", t.Name, t.DeadTupleRatio))
+		recs = append(recs, fmt.Sprintf("Table '%s' has %.1f%% dead tuples - VACUUM recommended", t.Name, t.DeadTupleRatio))
 	}
 
 	if t.DeadTuples > cfg.GetDeadTupleThreshold() {
-		recs = append(recs, fmt.Sprintf("Tabel '%s' heeft %d dead tuples - VACUUM aanbevolen", t.Name, t.DeadTuples))
+		recs = append(recs, fmt.Sprintf("Table '%s' has %d dead tuples - VACUUM recommended", t.Name, t.DeadTuples))
 	}
 
 	if t.LastVacuum == nil && t.LastAutovacuum == nil && t.RowCount > minRows {
-		recs = append(recs, fmt.Sprintf("Tabel '%s' is nog nooit gevacuumd", t.Name))
+		recs = append(recs, fmt.Sprintf("Table '%s' has never been vacuumed", t.Name))
 	}
 
 	if lastVac := lastVacuumTime(t); lastVac != nil && time.Since(*lastVac) > cfg.GetVacuumStaleness() && t.RowCount > minRows {
-		recs = append(recs, fmt.Sprintf("Tabel '%s' is meer dan %d dagen niet gevacuumd", t.Name, cfg.GetVacuumStalenessDays()))
+		recs = append(recs, fmt.Sprintf("Table '%s' has not been vacuumed in over %d days", t.Name, cfg.GetVacuumStalenessDays()))
 	}
 
 	if t.LastAnalyze == nil && t.LastAutoanalyze == nil && t.RowCount > minRows {
-		recs = append(recs, fmt.Sprintf("Tabel '%s' is nog nooit geanalyseerd - ANALYZE aanbevolen", t.Name))
+		recs = append(recs, fmt.Sprintf("Table '%s' has never been analyzed - ANALYZE recommended", t.Name))
 	}
 
 	// Check for stale statistics based on modifications since last analyze
 	if t.RowCount > 0 && t.ModSinceAnalyze > 0 {
 		threshold := t.RowCount * int64(cfg.GetStaleStatsThreshold()) / 100
 		if t.ModSinceAnalyze > threshold {
-			recs = append(recs, fmt.Sprintf("Tabel '%s' heeft %d wijzigingen sinds laatste ANALYZE - statistieken verouderd", t.Name, t.ModSinceAnalyze))
+			recs = append(recs, fmt.Sprintf("Table '%s' has %d modifications since last ANALYZE - statistics stale", t.Name, t.ModSinceAnalyze))
 		}
 	}
 
 	if t.SeqScans > 1000 && t.IdxScans > 0 && float64(t.SeqScans)/float64(t.IdxScans) > cfg.GetSeqScanRatioThreshold() {
-		recs = append(recs, fmt.Sprintf("Tabel '%s' heeft veel sequential scans (%d) vs index scans (%d) - mogelijk ontbrekende index", t.Name, t.SeqScans, t.IdxScans))
+		recs = append(recs, fmt.Sprintf("Table '%s' has high sequential scans (%d) vs index scans (%d) - possible missing index", t.Name, t.SeqScans, t.IdxScans))
 	}
 
 	if t.ToastSizeRaw > cfg.GetToastSizeWarningBytes() {
-		recs = append(recs, fmt.Sprintf("Tabel '%s' heeft %s aan TOAST data (afbeeldingen)", t.Name, t.ToastSize))
+		recs = append(recs, fmt.Sprintf("Table '%s' has %s of TOAST data (images)", t.Name, t.ToastSize))
 	}
 
 	return recs
@@ -370,9 +370,9 @@ func (mctx *maintenanceContext) selectTablesToProcess(requestedTables []string, 
 				skipped = append(skipped, MaintenanceResult{
 					Table:         tableName,
 					Success:       false,
-					Message:       fmt.Sprintf("Tabel '%s' niet gevonden in schema '%s'", tableName, mctx.schema),
+					Message:       fmt.Sprintf("Table '%s' not found in schema '%s'", tableName, mctx.schema),
 					Skipped:       true,
-					SkippedReason: "niet gevonden",
+					SkippedReason: "not found",
 				})
 			}
 		}
@@ -390,7 +390,7 @@ func (mctx *maintenanceContext) selectTablesToProcess(requestedTables []string, 
 // executeVacuum executes VACUUM on a table with optional ANALYZE.
 func (s *MaintenanceService) executeVacuum(ctx context.Context, tableName string, analyze bool) error {
 	if !types.IsValidIdentifier(tableName) {
-		return types.NewValidationError("table", fmt.Sprintf("ongeldige tabelnaam: %s", tableName))
+		return types.NewValidationError("table", fmt.Sprintf("invalid table name: %s", tableName))
 	}
 
 	schema := s.repo.Schema()
@@ -408,7 +408,7 @@ func (s *MaintenanceService) executeVacuum(ctx context.Context, tableName string
 // executeAnalyze executes ANALYZE on the specified table.
 func (s *MaintenanceService) executeAnalyze(ctx context.Context, tableName string) error {
 	if !types.IsValidIdentifier(tableName) {
-		return types.NewValidationError("table", fmt.Sprintf("ongeldige tabelnaam: %s", tableName))
+		return types.NewValidationError("table", fmt.Sprintf("invalid table name: %s", tableName))
 	}
 
 	schema := s.repo.Schema()
@@ -446,7 +446,7 @@ func (s *MaintenanceService) Status() *MaintenanceStatus {
 // Returns an error if a maintenance operation is already running.
 func (s *MaintenanceService) StartVacuum(opts VacuumOptions) error {
 	if !s.runner.TryStart() {
-		return types.NewConflictError("maintenance", "er loopt al een maintenance operatie")
+		return types.NewConflictError("maintenance", "maintenance operation already in progress")
 	}
 
 	statusKey, opName := "vacuum", "VACUUM"
@@ -480,7 +480,7 @@ func (s *MaintenanceService) StartVacuum(opts VacuumOptions) error {
 // Returns an error if a maintenance operation is already running.
 func (s *MaintenanceService) StartAnalyze(tableNames []string) error {
 	if !s.runner.TryStart() {
-		return types.NewConflictError("maintenance", "er loopt al een maintenance operatie")
+		return types.NewConflictError("maintenance", "maintenance operation already in progress")
 	}
 
 	s.initStatus("analyze")
@@ -550,7 +550,7 @@ func (s *MaintenanceService) runMaintenance(ctx context.Context, task maintenanc
 	for i := range tables {
 		// Check for shutdown/timeout before processing each table
 		if ctx.Err() != nil {
-			s.completeWithError("operatie geannuleerd")
+			s.completeWithError("operation cancelled")
 			return
 		}
 
@@ -572,11 +572,11 @@ func (s *MaintenanceService) runMaintenance(ctx context.Context, task maintenanc
 
 		if err != nil {
 			result.Success = false
-			result.Message = fmt.Sprintf("%s mislukt op '%s': %v", task.operationName, tables[i].Name, err)
+			result.Message = fmt.Sprintf("%s failed on '%s': %v", task.operationName, tables[i].Name, err)
 			response.TablesFailed++
 		} else {
 			result.Success = true
-			result.Message = fmt.Sprintf("%s succesvol uitgevoerd op '%s'", task.operationName, tables[i].Name)
+			result.Message = fmt.Sprintf("%s completed successfully on '%s'", task.operationName, tables[i].Name)
 			response.TablesSuccess++
 		}
 
