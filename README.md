@@ -9,7 +9,7 @@ Het radioautomatiseringssysteem Aeron mist een REST API. Aeron Toolbox vult een 
 
 - **Afbeeldingen:** upload en optimaliseer albumhoezen en artiestfoto's
 - **Media:** browse artiesten, tracks en playlists met metadata
-- **Onderhoud:** monitor database-gezondheid, voer VACUUM en ANALYZE uit
+- **Onderhoud:** monitor database-gezondheid, automatische of handmatige VACUUM/ANALYZE
 - **Backups:** maak, valideer en download database-backups (optioneel naar S3)
 
 ## Snel starten
@@ -61,6 +61,7 @@ Kopieer [`config.example.json`](config.example.json) naar `config.json`. De bela
 | `database` | PostgreSQL-verbinding (host, poort, credentials, schema) |
 | `image` | Doelafmetingen en JPEG-kwaliteit voor geüploade afbeeldingen |
 | `api` | API-sleutels voor authenticatie |
+| `maintenance` | Thresholds en automatische scheduler voor database-onderhoud |
 | `backup` | Backup-pad, retentie, scheduler en optionele S3-sync |
 | `log` | Logniveau (`debug`, `info`, `warn`, `error`) en format (`text`, `json`) |
 
@@ -80,6 +81,21 @@ brew install libpq
 ```
 
 De applicatie valideert bij het opstarten of deze tools beschikbaar zijn wanneer `backup.enabled: true`.
+
+### Automatisch onderhoud
+
+Database-onderhoud (VACUUM/ANALYZE) kan automatisch worden uitgevoerd:
+
+```json
+"maintenance": {
+  "scheduler": {
+    "enabled": true,
+    "schedule": "0 4 * * 0"
+  }
+}
+```
+
+Dit draait elke zondag om 04:00 VACUUM ANALYZE op tabellen die het nodig hebben. Zie [API.md](API.md) voor details.
 
 ## Voorbeelden
 

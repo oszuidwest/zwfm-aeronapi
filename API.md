@@ -48,8 +48,9 @@ De Aeron Toolbox API biedt RESTful-endpoints voor het Aeron-radioautomatiserings
 | `/api/playlist?block_id={id}` | GET | Tracks in playlistblok | Ja |
 | **Database onderhoud** |
 | `/api/db/health` | GET | Database health en statistieken | Ja |
-| `/api/db/vacuum` | POST | VACUUM uitvoeren op tabellen | Ja |
-| `/api/db/analyze` | POST | ANALYZE uitvoeren op tabellen | Ja |
+| `/api/db/vacuum` | POST | VACUUM starten (async) | Ja |
+| `/api/db/analyze` | POST | ANALYZE starten (async) | Ja |
+| `/api/db/maintenance/status` | GET | Onderhoud status opvragen | Ja |
 | **Backups** |
 | `/api/db/backup` | POST | Nieuwe backup aanmaken | Ja |
 | `/api/db/backup/status` | GET | Backup status opvragen | Ja |
@@ -111,6 +112,7 @@ Alle fouten volgen dit formaat:
 - `400` Bad Request - Ongeldige invoerparameters
 - `401` Unauthorized - Ongeldige of ontbrekende API-sleutel
 - `404` Not Found - Bron niet gevonden
+- `409` Conflict - Operatie al bezig (backup of onderhoud)
 - `500` Internal Server Error - Serverfout
 
 ---
@@ -548,7 +550,8 @@ Verkrijg gedetailleerde database statistieken inclusief tabelgroottes, bloat-per
       "name": "track",
       "row_count": 125000,
       "dead_tuples": 4500,
-      "bloat_percent": 3.5,
+      "dead_tuple_ratio": 3.6,
+      "modifications_since_analyze": 1250,
       "total_size": "1.2 GB",
       "total_size_bytes": 1288490188,
       "table_size": "1.0 GB",
@@ -562,20 +565,23 @@ Verkrijg gedetailleerde database statistieken inclusief tabelgroottes, bloat-per
       "last_analyze": "2025-12-20T03:00:00Z",
       "last_autoanalyze": "2025-12-21T04:15:00Z",
       "seq_scans": 1250,
-      "idx_scans": 45000
+      "idx_scans": 45000,
+      "needs_vacuum": true,
+      "needs_analyze": false
     }
   ],
+  "needs_maintenance": true,
   "recommendations": [
-    "Tabel 'playlistitem' heeft 15.2% bloat - VACUUM aanbevolen",
-    "Tabel 'artist' heeft 12500 dead tuples - VACUUM aanbevolen"
+    "Table 'playlistitem' has high dead tuple ratio (15.2%) - VACUUM recommended",
+    "Table 'artist' has 12500 dead tuples - VACUUM recommended"
   ],
   "checked_at": "2025-12-22T14:30:00Z"
 }
 ```
 
-### VACUUM uitvoeren
+### VACUUM starten
 
-Voer VACUUM uit op tabellen om ruimte terug te winnen en prestaties te verbeteren.
+Start VACUUM op tabellen om ruimte terug te winnen en prestaties te verbeteren. De operatie draait asynchroon op de achtergrond.
 
 **Endpoint:** `POST /api/db/vacuum`
 **Authenticatie:** Vereist
@@ -584,49 +590,32 @@ Voer VACUUM uit op tabellen om ruimte terug te winnen en prestaties te verbetere
 ```json
 {
   "tables": ["track", "artist"],
-  "dry_run": false
+  "analyze": true
 }
 ```
 
 **Parameters:**
-- `tables` (optioneel): Specifieke tabellen om te vacuumen. Indien leeg, worden tabellen met hoge bloat automatisch geselecteerd.
-- `dry_run` (optioneel): Indien `true`, worden geen wijzigingen doorgevoerd maar alleen een preview getoond.
+- `tables` (optioneel): Specifieke tabellen om te vacuumen. Indien leeg, worden tabellen die onderhoud nodig hebben automatisch geselecteerd.
+- `analyze` (optioneel): Indien `true`, wordt ANALYZE na VACUUM uitgevoerd.
 
-**Response:** `200 OK`
+**Response:** `202 Accepted`
 ```json
 {
-  "dry_run": false,
-  "tables_total": 2,
-  "tables_success": 2,
-  "tables_failed": 0,
-  "tables_skipped": 0,
-  "results": [
-    {
-      "table": "track",
-      "success": true,
-      "message": "VACUUM succesvol uitgevoerd",
-      "dead_tuples_before": 4500,
-      "bloat_percent_before": 3.5,
-      "duration": "1.25s",
-      "analyzed": false
-    },
-    {
-      "table": "artist",
-      "success": true,
-      "message": "VACUUM succesvol uitgevoerd",
-      "dead_tuples_before": 1200,
-      "bloat_percent_before": 2.1,
-      "duration": "340ms",
-      "analyzed": false
-    }
-  ],
-  "executed_at": "2025-12-22T14:30:00Z"
+  "message": "Vacuum with analyze started",
+  "check": "/api/db/maintenance/status"
 }
 ```
 
-### ANALYZE uitvoeren
+**Foutresponse:** `409 Conflict`
+```json
+{
+  "error": "maintenance operation already in progress"
+}
+```
 
-Werk tabelstatistieken bij voor de PostgreSQL query optimizer.
+### ANALYZE starten
+
+Start ANALYZE om tabelstatistieken bij te werken voor de PostgreSQL query optimizer.
 
 **Endpoint:** `POST /api/db/analyze`
 **Authenticatie:** Vereist
@@ -634,34 +623,107 @@ Werk tabelstatistieken bij voor de PostgreSQL query optimizer.
 **Request Body:**
 ```json
 {
-  "tables": ["track"],
-  "dry_run": false
+  "tables": ["track"]
 }
 ```
 
 **Parameters:**
-- `tables` (optioneel): Specifieke tabellen om te analyzeren. Indien leeg, worden alle tabellen geanalyseerd.
-- `dry_run` (optioneel): Indien `true`, worden geen wijzigingen doorgevoerd maar alleen een preview getoond.
+- `tables` (optioneel): Specifieke tabellen om te analyzeren. Indien leeg, worden tabellen die het nodig hebben automatisch geselecteerd.
 
-**Response:** `200 OK`
+**Response:** `202 Accepted`
 ```json
 {
-  "dry_run": false,
-  "tables_total": 1,
-  "tables_success": 1,
-  "tables_failed": 0,
-  "tables_skipped": 0,
-  "results": [
-    {
-      "table": "track",
-      "success": true,
-      "message": "ANALYZE succesvol uitgevoerd",
-      "duration": "890ms"
-    }
-  ],
-  "executed_at": "2025-12-22T14:30:00Z"
+  "message": "Analyze started",
+  "check": "/api/db/maintenance/status"
 }
 ```
+
+### Onderhoud status opvragen
+
+Controleer de voortgang en resultaten van de laatste onderhoudsoperatie.
+
+**Endpoint:** `GET /api/db/maintenance/status`
+**Authenticatie:** Vereist
+
+**Response tijdens onderhoud:** `200 OK`
+```json
+{
+  "running": true,
+  "operation": "vacuum",
+  "started_at": "2025-12-22T14:30:00Z",
+  "tables_total": 5,
+  "tables_done": 2,
+  "current_table": "track"
+}
+```
+
+**Response na voltooiing:** `200 OK`
+```json
+{
+  "running": false,
+  "operation": "vacuum",
+  "started_at": "2025-12-22T14:30:00Z",
+  "ended_at": "2025-12-22T14:30:45Z",
+  "success": true,
+  "tables_total": 5,
+  "tables_done": 5,
+  "last_result": {
+    "tables_total": 5,
+    "tables_success": 5,
+    "tables_failed": 0,
+    "tables_skipped": 0,
+    "results": [
+      {
+        "table": "track",
+        "success": true,
+        "message": "VACUUM completed",
+        "dead_tuples_before": 4500,
+        "dead_tuple_ratio_before": 3.6,
+        "duration": "1.25s",
+        "analyzed": true
+      }
+    ],
+    "executed_at": "2025-12-22T14:30:45Z"
+  }
+}
+```
+
+**Response na fout:** `200 OK`
+```json
+{
+  "running": false,
+  "operation": "vacuum",
+  "started_at": "2025-12-22T14:30:00Z",
+  "ended_at": "2025-12-22T14:30:05Z",
+  "success": false,
+  "error": "maintenance timeout after 30m0s"
+}
+```
+
+### Automatisch onderhoud
+
+Database-onderhoud kan automatisch worden uitgevoerd via de ingebouwde scheduler. Configureer dit in `config.json`:
+
+```json
+"maintenance": {
+  "bloat_threshold": 10.0,
+  "dead_tuple_threshold": 10000,
+  "timeout_minutes": 30,
+  "scheduler": {
+    "enabled": true,
+    "schedule": "0 4 * * 0"
+  }
+}
+```
+
+**Parameters:**
+- `bloat_threshold`: Percentage dead tuples waarboven VACUUM wordt aanbevolen
+- `dead_tuple_threshold`: Absoluut aantal dead tuples waarboven VACUUM wordt aanbevolen
+- `timeout_minutes`: Maximale tijd voor onderhoudsoperaties (standaard: 30)
+- `scheduler.enabled`: Schakel automatisch onderhoud in/uit
+- `scheduler.schedule`: Cron-expressie (zie backup-sectie voor voorbeelden)
+
+De scheduler draait VACUUM ANALYZE op tabellen die aan de threshold-criteria voldoen. Alle jobs gebruiken de Europe/Amsterdam tijdzone.
 
 ---
 
@@ -698,8 +760,7 @@ Backups kunnen automatisch worden uitgevoerd via de ingebouwde scheduler. Config
   "timeout_minutes": 30,
   "scheduler": {
     "enabled": true,
-    "schedule": "0 3 * * *",
-    "timezone": "Europe/Amsterdam"
+    "schedule": "0 3 * * *"
   }
 }
 ```
@@ -710,7 +771,8 @@ Backups kunnen automatisch worden uitgevoerd via de ingebouwde scheduler. Config
 - `pg_restore_path`: Custom pad naar pg_restore executable (leeg = automatische detectie via PATH)
 - `enabled`: Schakel automatische backups in/uit
 - `schedule`: Cron-expressie voor het backup-schema
-- `timezone`: IANA-tijdzone (optioneel, standaard: systeemtijd)
+
+> **Let op:** Alle geplande taken (backup én onderhoud) gebruiken de Europe/Amsterdam tijdzone.
 
 **Cron-expressieformaat:** `minuut uur dag maand weekdag`
 
@@ -1204,7 +1266,12 @@ Het gedrag van de API kan worden geconfigureerd via `config.json`:
   },
   "maintenance": {
     "bloat_threshold": 10.0,
-    "dead_tuple_threshold": 10000
+    "dead_tuple_threshold": 10000,
+    "timeout_minutes": 30,
+    "scheduler": {
+      "enabled": false,
+      "schedule": "0 4 * * 0"
+    }
   },
   "backup": {
     "enabled": false,
@@ -1217,8 +1284,7 @@ Het gedrag van de API kan worden geconfigureerd via `config.json`:
     "pg_restore_path": "",
     "scheduler": {
       "enabled": false,
-      "schedule": "0 3 * * *",
-      "timezone": ""
+      "schedule": "0 3 * * *"
     },
     "s3": {
       "enabled": false,
@@ -1279,7 +1345,7 @@ CREATE TABLE {schema}.playlistblock (
 
 ## Belangrijke opmerkingen
 
-- Alle foutmeldingen zijn in het Nederlands conform het Aeron-systeem
 - UUID's zijn hoofdletterongevoelig
 - Het contenttype van afbeeldingen wordt automatisch gedetecteerd
 - De API maakt gebruik van connection pooling voor optimale databaseprestaties
+- Foutmeldingen worden in het Engels geretourneerd
