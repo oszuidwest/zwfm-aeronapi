@@ -47,9 +47,9 @@ De Aeron Toolbox API biedt RESTful-endpoints voor het Aeron-radioautomatiserings
 | `/api/playlist` | GET | Playlistblokken voor datum | Ja |
 | `/api/playlist?block_id={id}` | GET | Tracks in playlistblok | Ja |
 | **Database onderhoud** |
-| `/api/db/health` | GET | Database health en statistieken | Ja |
-| `/api/db/vacuum` | POST | VACUUM starten (async) | Ja |
-| `/api/db/analyze` | POST | ANALYZE starten (async) | Ja |
+| `/api/db/maintenance/health` | GET | Database health en statistieken | Ja |
+| `/api/db/maintenance/vacuum` | POST | VACUUM starten (async) | Ja |
+| `/api/db/maintenance/analyze` | POST | ANALYZE starten (async) | Ja |
 | `/api/db/maintenance/status` | GET | Onderhoud status opvragen | Ja |
 | **Backups** |
 | `/api/db/backup` | POST | Nieuwe backup aanmaken | Ja |
@@ -69,7 +69,7 @@ Wanneer authenticatie is ingeschakeld in de configuratie, vereisen alle endpoint
 ```json
 {
   "success": false,
-  "error": "Niet geautoriseerd: ongeldige of ontbrekende API-sleutel"
+  "error": "unauthorized: invalid or missing API key"
 }
 ```
 
@@ -92,11 +92,12 @@ Of bij fouten:
 ```json
 {
   "success": false,
-  "error": "Foutmelding in het Nederlands"
+  "error": "error message"
 }
 ```
 
-**Let op:** In de voorbeelden hieronder wordt voor de leesbaarheid alleen de inhoud van het `data`-veld getoond, maar in werkelijkheid wordt altijd de complete wrapper geretourneerd.
+> [!NOTE]
+> In de voorbeelden hieronder wordt voor de leesbaarheid alleen de inhoud van het `data`-veld getoond, maar in werkelijkheid wordt altijd de complete wrapper geretourneerd.
 
 ## Foutmeldingen
 
@@ -104,7 +105,7 @@ Alle fouten volgen dit formaat:
 ```json
 {
   "success": false,
-  "error": "Foutmelding"
+  "error": "error message"
 }
 ```
 
@@ -145,7 +146,7 @@ Controleer de status van de API.
 
 ### Artieststatistieken ophalen
 
-Verkrijg statistieken over artiesten en hun afbeeldingen.
+Bekijk statistieken over artiesten en hun afbeeldingen.
 
 **Endpoint:** `GET /api/artists`
 **Authenticatie:** Vereist
@@ -161,39 +162,44 @@ Verkrijg statistieken over artiesten en hun afbeeldingen.
 
 ### Artiest ophalen via ID
 
-Verkrijg artiestgegevens inclusief afbeeldingsstatus.
+Bekijk artiestgegevens inclusief afbeeldingsstatus.
 
 **Endpoint:** `GET /api/artists/{id}`
 **Authenticatie:** Vereist
 
 **Parameters:**
-- `id` (pad, vereist): Artiest-UUID
+- `id` (padparameter, vereist): Artiest-UUID
 
 **Response:** `200 OK`
 ```json
 {
   "artistid": "123e4567-e89b-12d3-a456-426614174000",
   "artist": "The Beatles",
-  "has_image": true
+  "info": "Britse rockband uit Liverpool",
+  "website": "https://www.thebeatles.com",
+  "twitter": "thebeatles",
+  "instagram": "thebeatles",
+  "has_image": true,
+  "repeat_value": 0
 }
 ```
 
 **Foutresponse:** `404 Not Found`
 ```json
 {
-  "error": "Artist niet gevonden"
+  "error": "artist not found"
 }
 ```
 
 ### Artiestafbeelding ophalen
 
-Verkrijg de afbeelding van de artiest.
+Bekijk de afbeelding van de artiest.
 
 **Endpoint:** `GET /api/artists/{id}/image`
 **Authenticatie:** Vereist
 
 **Parameters:**
-- `id` (pad, vereist): Artiest-UUID
+- `id` (padparameter, vereist): Artiest-UUID
 
 **Response:** `200 OK`
 - Content-Type: `image/jpeg`, `image/png` of `image/webp`
@@ -202,19 +208,19 @@ Verkrijg de afbeelding van de artiest.
 **Foutresponse:** `404 Not Found`
 ```json
 {
-  "error": "Afbeelding niet gevonden"
+  "error": "artist image not found"
 }
 ```
 
 ### Artiestafbeelding uploaden
 
-Upload of werk een artiestafbeelding bij.
+Een artiestafbeelding uploaden of bijwerken.
 
 **Endpoint:** `POST /api/artists/{id}/image`
 **Authenticatie:** Vereist
 
 **Parameters:**
-- `id` (pad, vereist): Artiest-UUID
+- `id` (padparameter, vereist): Artiest-UUID
 
 **Request Body:**
 ```json
@@ -242,18 +248,18 @@ Upload of werk een artiestafbeelding bij.
 
 ### Artiestafbeelding verwijderen
 
-Verwijder een artiestafbeelding.
+Het verwijderen van een artiestafbeelding.
 
 **Endpoint:** `DELETE /api/artists/{id}/image`
 **Authenticatie:** Vereist
 
 **Parameters:**
-- `id` (pad, vereist): Artiest-UUID
+- `id` (padparameter, vereist): Artiest-UUID
 
 **Response:** `200 OK`
 ```json
 {
-  "message": "Artist-afbeelding succesvol verwijderd",
+  "message": "image deleted",
   "artist_id": "123e4567-e89b-12d3-a456-426614174000"
 }
 ```
@@ -261,13 +267,13 @@ Verwijder een artiestafbeelding.
 **Foutresponse:** `404 Not Found`
 ```json
 {
-  "error": "Afbeelding niet gevonden"
+  "error": "artist image not found"
 }
 ```
 
 ### Bulkverwijdering artiestafbeeldingen
 
-Verwijder alle artiestafbeeldingen uit de database.
+Het verwijderen van alle artiestafbeeldingen uit de database.
 
 **Endpoint:** `DELETE /api/artists/bulk-delete`
 **Authenticatie:** Vereist
@@ -279,14 +285,14 @@ Verwijder alle artiestafbeeldingen uit de database.
 ```json
 {
   "deleted": 450,
-  "message": "450 artist-afbeeldingen verwijderd"
+  "message": "450 artist images deleted"
 }
 ```
 
-**Fout Response:** `400 Bad Request`
+**Foutresponse:** `400 Bad Request`
 ```json
 {
-  "error": "Ontbrekende bevestigingsheader: X-Confirm-Bulk-Delete"
+  "error": "missing confirmation header: X-Confirm-Bulk-Delete"
 }
 ```
 
@@ -296,7 +302,7 @@ Verwijder alle artiestafbeeldingen uit de database.
 
 ### Trackstatistieken ophalen
 
-Verkrijg statistieken over tracks en hun afbeeldingen.
+Bekijk statistieken over tracks en hun afbeeldingen.
 
 **Endpoint:** `GET /api/tracks`
 **Authenticatie:** Vereist
@@ -312,13 +318,13 @@ Verkrijg statistieken over tracks en hun afbeeldingen.
 
 ### Track ophalen via ID
 
-Verkrijg trackgegevens inclusief afbeeldingsstatus.
+Bekijk trackgegevens inclusief afbeeldingsstatus.
 
 **Endpoint:** `GET /api/tracks/{id}`
 **Authenticatie:** Vereist
 
 **Parameters:**
-- `id` (pad, vereist): Track-UUID
+- `id` (padparameter, vereist): Track-UUID
 
 **Response:** `200 OK`
 ```json
@@ -327,27 +333,48 @@ Verkrijg trackgegevens inclusief afbeeldingsstatus.
   "tracktitle": "Hey Jude",
   "artist": "The Beatles",
   "artistid": "123e4567-e89b-12d3-a456-426614174000",
+  "year": 1968,
+  "knownlength": 431000,
+  "introtime": 8000,
+  "outrotime": 120000,
+  "tempo": 75,
+  "bpm": 75,
+  "gender": 0,
+  "language": 2,
+  "mood": 1,
+  "exporttype": 0,
+  "repeat_value": 0,
+  "rating": 5,
   "has_image": true,
-  "exporttype": 0
+  "website": "",
+  "conductor": "",
+  "orchestra": ""
 }
 ```
+
+**Veldverklaringen:**
+- `knownlength`, `introtime`, `outrotime`: Duur in milliseconden
+- `tempo`, `bpm`: Tempo/BPM van de track
+- `gender`, `language`, `mood`: Numerieke classificatiecodes
+- `rating`: Waardering (0-5)
+- `repeat_value`: Herhalingswaarde voor scheduling
 
 **Foutresponse:** `404 Not Found`
 ```json
 {
-  "error": "Track niet gevonden"
+  "error": "track not found"
 }
 ```
 
 ### Trackafbeelding ophalen
 
-Verkrijg de albumhoes van de track.
+Bekijk de albumhoes van de track.
 
 **Endpoint:** `GET /api/tracks/{id}/image`
 **Authenticatie:** Vereist
 
 **Parameters:**
-- `id` (pad, vereist): Track-UUID
+- `id` (padparameter, vereist): Track-UUID
 
 **Response:** `200 OK`
 - Content-Type: `image/jpeg`, `image/png` of `image/webp`
@@ -356,19 +383,19 @@ Verkrijg de albumhoes van de track.
 **Foutresponse:** `404 Not Found`
 ```json
 {
-  "error": "Afbeelding niet gevonden"
+  "error": "track image not found"
 }
 ```
 
 ### Trackafbeelding uploaden
 
-Upload of werk een albumhoes bij.
+Een albumhoes uploaden of bijwerken.
 
 **Endpoint:** `POST /api/tracks/{id}/image`
 **Authenticatie:** Vereist
 
 **Parameters:**
-- `id` (pad, vereist): Track-UUID
+- `id` (padparameter, vereist): Track-UUID
 
 **Request Body:**
 ```json
@@ -390,25 +417,25 @@ Upload of werk een albumhoes bij.
 }
 ```
 
-**Fout Responses:**
+**Foutresponses:**
 - `400` Bad Request - Ongeldige invoer
 - `404` Not Found - Track niet gevonden
-- `422` Unprocessable Entity - Afbeelding validatie mislukt
+- `422` Unprocessable Entity - Afbeeldingsvalidatie mislukt
 
 ### Trackafbeelding verwijderen
 
-Verwijder de albumhoes van een track.
+Het verwijderen van de albumhoes van een track.
 
 **Endpoint:** `DELETE /api/tracks/{id}/image`
 **Authenticatie:** Vereist
 
 **Parameters:**
-- `id` (pad, vereist): Track-UUID
+- `id` (padparameter, vereist): Track-UUID
 
 **Response:** `200 OK`
 ```json
 {
-  "message": "Track-afbeelding succesvol verwijderd",
+  "message": "image deleted",
   "track_id": "456e7890-e89b-12d3-a456-426614174000"
 }
 ```
@@ -416,13 +443,13 @@ Verwijder de albumhoes van een track.
 **Foutresponse:** `404 Not Found`
 ```json
 {
-  "error": "Afbeelding niet gevonden"
+  "error": "track image not found"
 }
 ```
 
 ### Bulkverwijdering trackafbeeldingen
 
-Verwijder alle trackafbeeldingen uit de database.
+Het verwijderen van alle trackafbeeldingen uit de database.
 
 **Endpoint:** `DELETE /api/tracks/bulk-delete`
 **Authenticatie:** Vereist
@@ -434,14 +461,14 @@ Verwijder alle trackafbeeldingen uit de database.
 ```json
 {
   "deleted": 1200,
-  "message": "1200 track-afbeeldingen verwijderd"
+  "message": "1200 track images deleted"
 }
 ```
 
-**Fout Response:** `400 Bad Request`
+**Foutresponse:** `400 Bad Request`
 ```json
 {
-  "error": "Ontbrekende bevestigingsheader: X-Confirm-Bulk-Delete"
+  "error": "missing confirmation header: X-Confirm-Bulk-Delete"
 }
 ```
 
@@ -451,13 +478,13 @@ Verwijder alle trackafbeeldingen uit de database.
 
 ### Playlistblokken ophalen
 
-Verkrijg alle playlistblokken voor een specifieke datum.
+Bekijk alle playlistblokken voor een specifieke datum.
 
 **Endpoint:** `GET /api/playlist`
 **Authenticatie:** Vereist
 
 **Queryparameters:**
-- `date` (optioneel): Datum in JJJJ-MM-DD-formaat (standaard: vandaag)
+- `date` (optioneel): Datum in YYYY-MM-DD-indeling (standaard: vandaag)
 
 **Response:** `200 OK`
 ```json
@@ -491,7 +518,7 @@ Verkrijg alle playlistblokken voor een specifieke datum.
 
 ### Playlisttracks per blok ophalen
 
-Verkrijg tracks voor een specifiek playlistblok.
+Bekijk tracks voor een specifiek playlistblok.
 
 **Endpoint:** `GET /api/playlist?block_id={block_id}`
 **Authenticatie:** Vereist
@@ -532,9 +559,9 @@ Verkrijg tracks voor een specifiek playlistblok.
 
 ### Database health ophalen
 
-Verkrijg gedetailleerde database statistieken inclusief tabelgroottes, bloat-percentages en onderhoudsaanbevelingen.
+Bekijk gedetailleerde databasestatistieken inclusief tabelgroottes, bloat-percentages en onderhoudsaanbevelingen.
 
-**Endpoint:** `GET /api/db/health`
+**Endpoint:** `GET /api/db/maintenance/health`
 **Authenticatie:** Vereist
 
 **Response:** `200 OK`
@@ -581,9 +608,9 @@ Verkrijg gedetailleerde database statistieken inclusief tabelgroottes, bloat-per
 
 ### VACUUM starten
 
-Start VACUUM op tabellen om ruimte terug te winnen en prestaties te verbeteren. De operatie draait asynchroon op de achtergrond.
+VACUUM starten op tabellen om opslagruimte vrij te maken en prestaties te verbeteren. De operatie draait asynchroon op de achtergrond.
 
-**Endpoint:** `POST /api/db/vacuum`
+**Endpoint:** `POST /api/db/maintenance/vacuum`
 **Authenticatie:** Vereist
 
 **Request Body:**
@@ -615,9 +642,9 @@ Start VACUUM op tabellen om ruimte terug te winnen en prestaties te verbeteren. 
 
 ### ANALYZE starten
 
-Start ANALYZE om tabelstatistieken bij te werken voor de PostgreSQL query optimizer.
+ANALYZE starten om tabelstatistieken bij te werken voor de PostgreSQL-queryoptimizer.
 
-**Endpoint:** `POST /api/db/analyze`
+**Endpoint:** `POST /api/db/maintenance/analyze`
 **Authenticatie:** Vereist
 
 **Request Body:**
@@ -723,14 +750,16 @@ Database-onderhoud kan automatisch worden uitgevoerd via de ingebouwde scheduler
 - `scheduler.enabled`: Schakel automatisch onderhoud in/uit
 - `scheduler.schedule`: Cron-expressie (zie backup-sectie voor voorbeelden)
 
-De scheduler draait VACUUM ANALYZE op tabellen die aan de threshold-criteria voldoen. Alle jobs gebruiken de Europe/Amsterdam tijdzone.
+De scheduler draait VACUUM ANALYZE op tabellen die aan de threshold-criteria voldoen. Alle jobs gebruiken de Europe/Amsterdam-tijdzone.
 
 ---
 
 ## Backup-endpoints
 
-> **Let op:** Backup-endpoints zijn alleen beschikbaar indien `backup.enabled: true` in de configuratie.
+> [!WARNING]
+> Backup-endpoints zijn alleen beschikbaar indien `backup.enabled: true` in de configuratie.
 
+> [!IMPORTANT]
 > **Systeemvereisten:** Bij het opstarten valideert de applicatie of `pg_dump` en `pg_restore` beschikbaar zijn. Zonder deze tools weigert de applicatie te starten. Zie de README voor installatie-instructies.
 
 ### Backup workflow
@@ -772,7 +801,8 @@ Backups kunnen automatisch worden uitgevoerd via de ingebouwde scheduler. Config
 - `enabled`: Schakel automatische backups in/uit
 - `schedule`: Cron-expressie voor het backup-schema
 
-> **Let op:** Alle geplande taken (backup én onderhoud) gebruiken de Europe/Amsterdam tijdzone.
+> [!IMPORTANT]
+> Alle geplande taken (backup én onderhoud) gebruiken de Europe/Amsterdam-tijdzone (hardcoded, niet configureerbaar).
 
 **Cron-expressieformaat:** `minuut uur dag maand weekdag`
 
@@ -834,7 +864,7 @@ Backups kunnen automatisch worden gesynchroniseerd naar S3-compatibele storage (
 
 ### Backup starten
 
-Start een nieuwe database backup op de achtergrond.
+Een nieuwe databasebackup starten op de achtergrond.
 
 **Endpoint:** `POST /api/db/backup`
 **Authenticatie:** Vereist
@@ -852,14 +882,15 @@ Start een nieuwe database backup op de achtergrond.
 **Response:** `202 Accepted`
 ```json
 {
-  "message": "Backup gestart op achtergrond",
+  "message": "backup started",
   "check": "/api/db/backup/status"
 }
 ```
 
 De backup wordt asynchroon uitgevoerd. Controleer `GET /api/db/backup/status` voor de voortgang.
 
-> **Let op:** Er kan slechts één backup tegelijk draaien. Een tweede aanvraag tijdens een lopende backup retourneert een fout.
+> [!WARNING]
+> Er kan slechts één backup tegelijk draaien. Een tweede aanvraag tijdens een lopende backup retourneert een fout.
 
 **Foutresponses:**
 
@@ -873,13 +904,13 @@ De backup wordt asynchroon uitgevoerd. Controleer `GET /api/db/backup/status` vo
 `500 Internal Server Error` - Backup al bezig:
 ```json
 {
-  "error": "backup starten mislukt: backup is al bezig"
+  "error": "backup already in progress"
 }
 ```
 
 ### Backup status
 
-Toont de status van de laatste backup operatie.
+Toont de status van de laatste backupbewerking.
 
 **Endpoint:** `GET /api/db/backup/status`
 **Authenticatie:** Vereist
@@ -940,7 +971,7 @@ Toont de status van de laatste backup operatie.
   "filename": "aeron-backup-2024-01-15-030000.dump",
   "s3_sync": {
     "synced": false,
-    "error": "S3 upload: upload naar backups/aeron-backup-2024-01-15-030000.dump mislukt: ..."
+    "error": "S3 upload failed: backups/aeron-backup-2024-01-15-030000.dump: ..."
   }
 }
 ```
@@ -958,7 +989,7 @@ Toont de status van de laatste backup operatie.
 
 ### Lijst van backups ophalen
 
-Verkrijg een overzicht van alle beschikbare backups.
+Bekijk een overzicht van alle beschikbare backups.
 
 **Endpoint:** `GET /api/db/backups`
 **Authenticatie:** Vereist
@@ -987,13 +1018,13 @@ Verkrijg een overzicht van alle beschikbare backups.
 
 ### Specifieke backup downloaden
 
-Download een specifiek backup bestand.
+Een specifiek backupbestand downloaden.
 
 **Endpoint:** `GET /api/db/backups/{filename}`
 **Authenticatie:** Vereist
 
 **Parameters:**
-- `filename` (pad, vereist): Naam van het backup bestand
+- `filename` (padparameter, vereist): Naam van het backupbestand
 
 **Response:** `200 OK`
 - Content-Type: `application/octet-stream`
@@ -1003,19 +1034,19 @@ Download een specifiek backup bestand.
 **Foutresponse:** `404 Not Found`
 ```json
 {
-  "error": "backup bestand niet gevonden"
+  "error": "backupbestand niet gevonden"
 }
 ```
 
 ### Backup verwijderen
 
-Verwijder een specifiek backup bestand.
+Een specifiek backupbestand verwijderen.
 
 **Endpoint:** `DELETE /api/db/backups/{filename}`
 **Authenticatie:** Vereist
 
 **Parameters:**
-- `filename` (pad, vereist): Naam van het backup bestand
+- `filename` (padparameter, vereist): Naam van het backupbestand
 
 **Vereiste header:**
 - `X-Confirm-Delete: {filename}` (bestandsnaam moet overeenkomen)
@@ -1023,7 +1054,7 @@ Verwijder een specifiek backup bestand.
 **Response:** `200 OK`
 ```json
 {
-  "message": "Backup succesvol verwijderd",
+  "message": "backup deleted",
   "filename": "aeron-backup-2025-12-21T14-30-00.dump"
 }
 ```
@@ -1031,19 +1062,19 @@ Verwijder een specifiek backup bestand.
 **Foutresponse:** `400 Bad Request`
 ```json
 {
-  "error": "Bevestigingsheader ontbreekt: X-Confirm-Delete moet de bestandsnaam bevatten"
+  "error": "confirmation header missing: X-Confirm-Delete must contain the filename"
 }
 ```
 
 ### Backup valideren
 
-Valideer de integriteit van een bestaand backup bestand. Handig voor het controleren van backups na download of herstel van S3.
+De integriteit van een bestaand backupbestand valideren. Handig voor het controleren van backups na download of herstel van S3.
 
 **Endpoint:** `GET /api/db/backups/{filename}/validate`
 **Authenticatie:** Vereist
 
 **Parameters:**
-- `filename` (pad, vereist): Naam van het backup bestand
+- `filename` (padparameter, vereist): Naam van het backupbestand
 
 **Response:** `200 OK`
 ```json
@@ -1065,7 +1096,7 @@ Valideer de integriteit van een bestaand backup bestand. Handig voor het control
 **Foutresponse:** `404 Not Found`
 ```json
 {
-  "error": "backup bestand niet gevonden"
+  "error": "backupbestand niet gevonden"
 }
 ```
 
