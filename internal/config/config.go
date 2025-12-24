@@ -41,13 +41,13 @@ type ImageConfig struct {
 // APIConfig contains API authentication and server settings.
 type APIConfig struct {
 	Enabled               bool     `json:"enabled"`
-	Keys                  []string `json:"keys"`
+	Keys                  []string `json:"keys" validate:"required_if=Enabled true,dive,required"`
 	RequestTimeoutSeconds int      `json:"request_timeout_seconds" validate:"gte=0"`
 }
 
 // MaintenanceConfig contains thresholds and settings for database maintenance operations.
 type MaintenanceConfig struct {
-	BloatThreshold           float64         `json:"bloat_threshold" validate:"gte=0"`
+	BloatThreshold           float64         `json:"bloat_threshold" validate:"gte=0,lte=100"`
 	DeadTupleThreshold       int64           `json:"dead_tuple_threshold" validate:"gte=0"`
 	VacuumStalenessDays      int             `json:"vacuum_staleness_days" validate:"gte=0"`
 	MinRowsForRecommendation int64           `json:"min_rows_for_recommendation" validate:"gte=0"`
@@ -66,10 +66,12 @@ type SchedulerConfig struct {
 }
 
 // S3Config contains settings for S3-compatible storage synchronization.
+// When Enabled is true: Bucket, AccessKeyID, SecretAccessKey are required.
+// Region is required unless a custom Endpoint is provided (validated via struct-level).
 type S3Config struct {
 	Enabled         bool   `json:"enabled"`
 	Bucket          string `json:"bucket" validate:"required_if=Enabled true"`
-	Region          string `json:"region" validate:"required_if=Enabled true"`
+	Region          string `json:"region"`
 	Endpoint        string `json:"endpoint"`
 	AccessKeyID     string `json:"access_key_id" validate:"required_if=Enabled true"`
 	SecretAccessKey string `json:"secret_access_key" validate:"required_if=Enabled true"`
@@ -80,7 +82,7 @@ type S3Config struct {
 // BackupConfig contains settings for database backup functionality.
 type BackupConfig struct {
 	Enabled            bool            `json:"enabled"`
-	Path               string          `json:"path"`
+	Path               string          `json:"path" validate:"required_if=Enabled true"`
 	RetentionDays      int             `json:"retention_days" validate:"gte=0"`
 	MaxBackups         int             `json:"max_backups" validate:"gte=0"`
 	DefaultCompression int             `json:"default_compression" validate:"gte=0,lte=9"`
@@ -293,12 +295,10 @@ var configValidator = newConfigValidator()
 func newConfigValidator() *validator.Validate {
 	v := validator.New(validator.WithRequiredStructEnabled())
 
-	// Register custom identifier validator
+	// Register custom field validators
 	_ = v.RegisterValidation("identifier", func(fl validator.FieldLevel) bool {
 		return types.IsValidIdentifier(fl.Field().String())
 	})
-
-	// Register custom timezone validator
 	_ = v.RegisterValidation("timezone", func(fl validator.FieldLevel) bool {
 		tz := fl.Field().String()
 		if tz == "" {
@@ -308,20 +308,28 @@ func newConfigValidator() *validator.Validate {
 		return err == nil
 	})
 
+	// Register struct-level validators
+	v.RegisterStructValidation(validateS3Config, S3Config{})
+
 	return v
 }
 
-// validate validates the configuration using struct tags.
+// validateS3Config checks that S3 has either a region or custom endpoint when enabled.
+func validateS3Config(sl validator.StructLevel) {
+	s3 := sl.Current().Interface().(S3Config)
+	if !s3.Enabled {
+		return
+	}
+	if s3.Region == "" && s3.Endpoint == "" {
+		sl.ReportError(s3.Region, "region", "Region", "required_without_endpoint", "")
+	}
+}
+
+// validate validates the configuration using struct tags and struct-level validators.
 func validate(config *Config) error {
 	if err := configValidator.Struct(config); err != nil {
 		return formatErrors(err)
 	}
-
-	// Additional cross-field validation that can't be expressed in tags
-	if config.Backup.S3.Enabled && config.Backup.S3.Region == "" && config.Backup.S3.Endpoint == "" {
-		return fmt.Errorf("backup.s3.region is required when no endpoint is specified")
-	}
-
 	return nil
 }
 
@@ -348,8 +356,8 @@ func tagMessage(tag, param string) string {
 		return "is required"
 	case "required_if":
 		return "is required when enabled"
-	case "required_without":
-		return "is required when no alternative is specified"
+	case "required_without_endpoint":
+		return "is required when no endpoint is specified"
 	case "gt":
 		return fmt.Sprintf("must be greater than %s", param)
 	case "gte":
