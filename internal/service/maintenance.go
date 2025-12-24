@@ -421,11 +421,11 @@ func (s *MaintenanceService) executeAnalyze(ctx context.Context, tableName strin
 
 // maintenanceTask defines parameters for a generic maintenance operation.
 type maintenanceTask struct {
-	operationName string                                     // "VACUUM", "VACUUM ANALYZE", "ANALYZE"
-	tables        []string                                   // Requested tables (empty = auto-select)
-	autoSelect    func(TableHealth) bool                     // Auto-selection criteria
+	operationName string                                        // "VACUUM", "VACUUM ANALYZE", "ANALYZE"
+	tables        []string                                      // Requested tables (empty = auto-select)
+	autoSelect    func(TableHealth) bool                        // Auto-selection criteria
 	execute       func(ctx context.Context, table string) error // Execute operation on a table
-	analyzed      bool                                       // Whether this operation includes ANALYZE
+	analyzed      bool                                          // Whether this operation includes ANALYZE
 }
 
 // Status returns the current state and result of the last maintenance operation.
