@@ -44,13 +44,13 @@ func (s *MediaService) GetTrack(ctx context.Context, id string) (*database.Track
 
 // GetImage retrieves the image for an entity.
 func (s *MediaService) GetImage(ctx context.Context, entityType types.EntityType, id string) ([]byte, error) {
-	table := types.TableForEntityType(entityType)
+	table := types.Table(entityType)
 	return s.repo.GetImage(ctx, table, id)
 }
 
 // DeleteImage removes the image from an entity.
 func (s *MediaService) DeleteImage(ctx context.Context, entityType types.EntityType, id string) error {
-	table := types.TableForEntityType(entityType)
+	table := types.Table(entityType)
 	return s.repo.DeleteImage(ctx, table, id)
 }
 
@@ -122,7 +122,7 @@ func (s *MediaService) UploadImage(ctx context.Context, params *ImageUploadParam
 	}
 	slog.Debug("Image processing completed", "originalSize", processingResult.Original.Size, "optimizedSize", processingResult.Optimized.Size, "savings", processingResult.Savings)
 
-	table := types.TableForEntityType(params.EntityType)
+	table := types.Table(params.EntityType)
 	if err := s.repo.UpdateImage(ctx, table, params.ID, processingResult.Data); err != nil {
 		slog.Error("Image save failed", "entityType", params.EntityType, "id", params.ID, "error", err)
 		return nil, err
@@ -152,7 +152,7 @@ func (s *MediaService) GetStatistics(ctx context.Context, entityType types.Entit
 		return nil, err
 	}
 
-	table := types.TableForEntityType(entityType)
+	table := types.Table(entityType)
 
 	withImages, err := s.repo.CountWithImages(ctx, table)
 	if err != nil {
@@ -183,7 +183,7 @@ func (s *MediaService) DeleteAllImages(ctx context.Context, entityType types.Ent
 		return nil, err
 	}
 
-	table := types.TableForEntityType(entityType)
+	table := types.Table(entityType)
 
 	count, err := s.repo.CountWithImages(ctx, table)
 	if err != nil {

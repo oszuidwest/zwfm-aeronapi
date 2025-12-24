@@ -28,14 +28,6 @@ const VoicetrackUserID = "021F097E-B504-49BB-9B89-16B64D2E8422"
 // SupportedFormats lists the image formats that can be processed.
 var SupportedFormats = []string{"jpeg", "jpg", "png"}
 
-// TableForEntityType returns the database table name for the given entity type.
-func TableForEntityType(entityType EntityType) Table {
-	if entityType == EntityTypeTrack {
-		return TableTrack
-	}
-	return TableArtist
-}
-
 // IDColumnForTable returns the primary key column name for the given table.
 func IDColumnForTable(table Table) string {
 	if table == TableTrack {
