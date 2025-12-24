@@ -69,7 +69,7 @@ type SchedulerConfig struct {
 type S3Config struct {
 	Enabled         bool   `json:"enabled"`
 	Bucket          string `json:"bucket" validate:"required_if=Enabled true"`
-	Region          string `json:"region" validate:"required_if=Enabled true,required_without=Endpoint"`
+	Region          string `json:"region" validate:"required_if=Enabled true"`
 	Endpoint        string `json:"endpoint"`
 	AccessKeyID     string `json:"access_key_id" validate:"required_if=Enabled true"`
 	SecretAccessKey string `json:"secret_access_key" validate:"required_if=Enabled true"`
