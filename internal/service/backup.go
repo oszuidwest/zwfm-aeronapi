@@ -225,7 +225,6 @@ func (s *BackupService) executePgDump(ctx context.Context, pgDumpPath, filename,
 			slog.Warn("Failed to clean up failed backup", "filename", filename, "error", removeErr)
 		}
 
-		// Provide clear error message based on error type
 		var errMsg string
 		switch {
 		case ctx.Err() == context.DeadlineExceeded:
@@ -294,7 +293,7 @@ func (s *BackupService) Run(ctx context.Context, req BackupRequest) error {
 	return s.execute(ctx, req)
 }
 
-// execute performs the backup workflow: validation, pg_dump, file validation, and S3 sync.
+// execute creates a database backup and synchronizes it to S3 if configured.
 // Note: Caller must call setStatusStarted() before invoking this method.
 func (s *BackupService) execute(ctx context.Context, req BackupRequest) error {
 	if err := s.checkEnabled(); err != nil {
@@ -337,9 +336,7 @@ func (s *BackupService) execute(ctx context.Context, req BackupRequest) error {
 
 	slog.Info("Backup validated", "filename", filename)
 
-	// Mark S3 sync as pending BEFORE marking backup done to prevent race condition.
-	// This ensures clients always see consistent status (no window where backup is done
-	// but S3 sync status is missing).
+	// Set S3 sync status before completing to prevent race condition in status reporting.
 	if s.s3 != nil {
 		s.setS3SyncStatus(false, "")
 	}
@@ -350,7 +347,7 @@ func (s *BackupService) execute(ctx context.Context, req BackupRequest) error {
 		"size", util.FormatBytes(fileInfo.Size()),
 		"duration", duration.Round(time.Millisecond).String())
 
-	// Sync to S3 in background (non-blocking)
+	// Upload backup to S3 asynchronously
 	if s.s3 != nil {
 		s.runner.GoBackground(func() {
 			uploadCtx, cancel := context.WithTimeout(context.Background(), s.config.Backup.GetTimeout())
@@ -498,7 +495,7 @@ func (s *BackupService) Delete(filename string) error {
 
 	slog.Info("Backup deleted", "filename", filename)
 
-	// Also delete from S3 in background (non-blocking)
+	// Delete from S3 asynchronously
 	if s.s3 != nil {
 		s.runner.GoBackground(func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

@@ -60,8 +60,7 @@ type ImageDeleteResponse struct {
 	TrackID  string `json:"track_id,omitzero"`
 }
 
-// validateAndGetEntityID extracts and validates the entity ID from the request.
-// Returns the ID or writes an error response and returns empty string.
+// validateAndGetEntityID extracts and validates the entity ID from the request URL.
 func (s *Server) validateAndGetEntityID(w http.ResponseWriter, r *http.Request, entityType types.EntityType) string {
 	entityID := chi.URLParam(r, "id")
 	if err := util.ValidateEntityID(entityID, string(entityType)); err != nil {

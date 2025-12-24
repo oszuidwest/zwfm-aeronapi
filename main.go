@@ -33,7 +33,7 @@ func main() {
 	}
 }
 
-// run initializes and starts the API server with graceful shutdown handling.
+// run executes the server lifecycle from initialization through graceful shutdown.
 func run() error {
 	configFile := flag.String("config", "", "Path to config file (default: config.json)")
 	port := flag.String("port", "8080", "API server port (default: 8080)")
@@ -78,13 +78,13 @@ func run() error {
 	return serveUntilShutdown(server, *port, scheduler)
 }
 
-// printVersion outputs the application version information to stdout.
+// printVersion prints the application version, commit hash, and build time.
 func printVersion() {
 	fmt.Printf("Aeron Toolbox %s (%s)\n", Version, Commit)
 	fmt.Printf("Build time: %s\n", BuildTime)
 }
 
-// initLogger configures the global slog logger based on configuration settings.
+// initLogger initializes the global slog logger with the configured level and format.
 func initLogger(cfg *config.Config) {
 	level := cfg.Log.GetLevel()
 	opts := &slog.HandlerOptions{Level: level}
@@ -134,7 +134,7 @@ func setupDatabase(cfg *config.Config) (*sqlx.DB, func(), error) {
 	return db, cleanup, nil
 }
 
-// serveUntilShutdown starts the API server and blocks until shutdown signal is received.
+// serveUntilShutdown runs the API server until a shutdown signal or error occurs.
 func serveUntilShutdown(server *api.Server, port string, scheduler *service.Scheduler) error {
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
@@ -158,7 +158,7 @@ func serveUntilShutdown(server *api.Server, port string, scheduler *service.Sche
 	return gracefulShutdown(server, scheduler)
 }
 
-// gracefulShutdown stops the scheduler and server with timeout protection.
+// gracefulShutdown performs orderly shutdown of the scheduler and server.
 func gracefulShutdown(server *api.Server, scheduler *service.Scheduler) error {
 	// Stop scheduler (handles both backup and maintenance jobs)
 	ctx := scheduler.Stop()

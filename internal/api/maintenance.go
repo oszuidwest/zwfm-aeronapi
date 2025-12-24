@@ -11,13 +11,13 @@ import (
 
 // VacuumRequest represents the JSON request body for vacuum operations.
 type VacuumRequest struct {
-	Tables  []string `json:"tables"`  // Specific tables to vacuum (empty = auto-select)
-	Analyze bool     `json:"analyze"` // Run ANALYZE after VACUUM
+	Tables  []string `json:"tables"`  // Tables specifies which tables to vacuum
+	Analyze bool     `json:"analyze"` // Analyze indicates whether to run ANALYZE after VACUUM
 }
 
 // AnalyzeRequest represents the JSON request body for analyze operations.
 type AnalyzeRequest struct {
-	Tables []string `json:"tables"` // Specific tables to analyze (empty = auto-select)
+	Tables []string `json:"tables"` // Tables specifies which tables to analyze
 }
 
 func (s *Server) handleDatabaseHealth(w http.ResponseWriter, r *http.Request) {

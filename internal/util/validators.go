@@ -18,6 +18,7 @@ import (
 	"github.com/oszuidwest/zwfm-aerontoolbox/internal/types"
 )
 
+// uuidRegex is a lazily-initialized pattern for validating UUID v4 format.
 var uuidRegex = sync.OnceValue(func() *regexp.Regexp {
 	return regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
 })
@@ -35,6 +36,7 @@ func ValidateEntityID(id, entityLabel string) error {
 	return nil
 }
 
+// newSafeHTTPClient creates an HTTP client with SSRF protection.
 func newSafeHTTPClient() *safeurl.WrappedClient {
 	config := safeurl.GetConfigBuilder().Build()
 	return safeurl.Client(config)

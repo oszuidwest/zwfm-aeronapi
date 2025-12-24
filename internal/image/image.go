@@ -54,6 +54,7 @@ func DownloadImage(urlString string, maxSize int64) ([]byte, error) {
 	return util.ValidateAndDownloadImage(urlString, maxSize)
 }
 
+// getImageInfo extracts format, width, and height metadata from image data.
 func getImageInfo(data []byte) (format string, width, height int, err error) {
 	config, format, err := image.DecodeConfig(bytes.NewReader(data))
 	if err != nil {
@@ -79,6 +80,7 @@ func (o *Optimizer) OptimizeImage(data []byte) (optimized []byte, format, encode
 	}
 }
 
+// optimizeJPEG processes JPEG image data to optimize size and dimensions.
 func (o *Optimizer) optimizeJPEG(data []byte) (optimized []byte, format, encoder string, err error) {
 	var sourceImage image.Image
 	sourceImage, err = jpeg.Decode(bytes.NewReader(data))
@@ -89,6 +91,7 @@ func (o *Optimizer) optimizeJPEG(data []byte) (optimized []byte, format, encoder
 	return o.processImage(sourceImage, data, "jpeg")
 }
 
+// convertPNGToJPEG converts PNG image data to optimized JPEG format.
 func (o *Optimizer) convertPNGToJPEG(data []byte) (optimized []byte, format, encoder string, err error) {
 	var sourceImage image.Image
 	sourceImage, err = png.Decode(bytes.NewReader(data))
@@ -99,6 +102,7 @@ func (o *Optimizer) convertPNGToJPEG(data []byte) (optimized []byte, format, enc
 	return o.processImage(sourceImage, data, "jpeg")
 }
 
+// processImage resizes and encodes an image, returning optimized data if smaller.
 func (o *Optimizer) processImage(sourceImage image.Image, originalData []byte, outputFormat string) (optimized []byte, format, encoder string, err error) {
 	bounds := sourceImage.Bounds()
 	width, height := bounds.Dx(), bounds.Dy()
@@ -120,6 +124,7 @@ func (o *Optimizer) processImage(sourceImage image.Image, originalData []byte, o
 	return originalData, outputFormat, "original", nil
 }
 
+// resizeImage scales an image to fit within max dimensions using Catmull-Rom.
 func (o *Optimizer) resizeImage(sourceImage image.Image, maxWidth, maxHeight int) image.Image {
 	bounds := sourceImage.Bounds()
 	width, height := bounds.Dx(), bounds.Dy()
@@ -159,6 +164,7 @@ func Process(imageData []byte, config Config) (*ProcessingResult, error) {
 	return optimizeImageData(imageData, originalInfo, config)
 }
 
+// validateImage checks format support and dimension requirements.
 func validateImage(info *Info, config Config) error {
 	if err := util.ValidateImageFormat(info.Format); err != nil {
 		return err
@@ -166,6 +172,7 @@ func validateImage(info *Info, config Config) error {
 	return validateImageDimensions(info, config)
 }
 
+// extractImageInfo decodes image metadata into an Info struct.
 func extractImageInfo(imageData []byte) (*Info, error) {
 	format, width, height, err := getImageInfo(imageData)
 	if err != nil {
@@ -180,6 +187,7 @@ func extractImageInfo(imageData []byte) (*Info, error) {
 	}, nil
 }
 
+// validateImageDimensions checks minimum size requirements when RejectSmaller is set.
 func validateImageDimensions(info *Info, config Config) error {
 	if config.RejectSmaller && (info.Width < config.TargetWidth || info.Height < config.TargetHeight) {
 		return &types.ValidationError{
@@ -191,10 +199,12 @@ func validateImageDimensions(info *Info, config Config) error {
 	return nil
 }
 
+// isAlreadyTargetSize returns true if image matches target dimensions exactly.
 func isAlreadyTargetSize(info *Info, config Config) bool {
 	return info.Width == config.TargetWidth && info.Height == config.TargetHeight
 }
 
+// createSkippedResult creates a result for images needing no optimization.
 func createSkippedResult(imageData []byte, originalInfo *Info) *ProcessingResult {
 	return &ProcessingResult{
 		Data:      imageData,
@@ -206,6 +216,7 @@ func createSkippedResult(imageData []byte, originalInfo *Info) *ProcessingResult
 	}
 }
 
+// optimizeImageData runs the optimization pipeline and returns processing results.
 func optimizeImageData(imageData []byte, originalInfo *Info, config Config) (*ProcessingResult, error) {
 	optimizer := NewOptimizer(config)
 	optimizedData, optFormat, optEncoder, err := optimizer.OptimizeImage(imageData)

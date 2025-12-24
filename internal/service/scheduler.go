@@ -25,7 +25,7 @@ type Scheduler struct {
 func NewScheduler(svc *AeronService) (*Scheduler, error) {
 	cfg := svc.Config()
 
-	// Use Amsterdam timezone as default for this Dutch application
+	// Default to Europe/Amsterdam timezone for scheduled jobs
 	loc, err := time.LoadLocation("Europe/Amsterdam")
 	if err != nil {
 		loc = time.Local
@@ -55,8 +55,7 @@ func NewScheduler(svc *AeronService) (*Scheduler, error) {
 	return s, nil
 }
 
-// addJob registers a scheduled job.
-// Note: All jobs use the scheduler's global timezone (Europe/Amsterdam by default).
+// addJob registers a scheduled job using the scheduler's configured timezone.
 func (s *Scheduler) addJob(cfg config.SchedulerConfig, name string, job func()) error {
 	if _, err := s.cron.AddFunc(cfg.Schedule, job); err != nil {
 		return err
@@ -108,9 +107,7 @@ func (s *Scheduler) runBackup() {
 func (s *Scheduler) runMaintenance() {
 	slog.Info("Scheduled maintenance started")
 
-	// StartVacuum uses TryStart() internally which is atomic - no pre-check needed
 	if err := s.service.Maintenance.StartVacuum(VacuumOptions{Analyze: true}); err != nil {
-		// Differentiate between "already running" (expected) and real failures
 		var conflictErr *types.ConflictError
 		if errors.As(err, &conflictErr) {
 			slog.Info("Scheduled maintenance skipped (already running)")

@@ -66,8 +66,6 @@ type SchedulerConfig struct {
 }
 
 // S3Config contains settings for S3-compatible storage synchronization.
-// When Enabled is true: Bucket, AccessKeyID, SecretAccessKey are required.
-// Region is required unless a custom Endpoint is provided (validated via struct-level).
 type S3Config struct {
 	Enabled         bool   `json:"enabled"`
 	Bucket          string `json:"bucket" validate:"required_if=Enabled true"`
@@ -225,7 +223,7 @@ func (c *BackupConfig) GetTimeout() time.Duration {
 	return time.Duration(cmp.Or(c.TimeoutMinutes, DefaultBackupTimeoutMinutes)) * time.Minute
 }
 
-// GetPathPrefix returns the S3 path prefix with a trailing slash for key construction.
+// GetPathPrefix returns the S3 path prefix for constructing object keys.
 func (c *S3Config) GetPathPrefix() string {
 	prefix := c.PathPrefix
 	if prefix != "" && !strings.HasSuffix(prefix, "/") {
@@ -234,7 +232,7 @@ func (c *S3Config) GetPathPrefix() string {
 	return prefix
 }
 
-// GetLevel returns the configured log level, defaulting to Info for unrecognized values.
+// GetLevel returns the configured log level as an slog.Level.
 func (c *LogConfig) GetLevel() slog.Level {
 	switch strings.ToLower(c.Level) {
 	case "debug":
@@ -277,7 +275,6 @@ func Load(configPath string) (*Config, error) {
 		return nil, fmt.Errorf("config file error: %w", err)
 	}
 
-	// Environment variable overrides
 	if envLevel := os.Getenv("LOG_LEVEL"); envLevel != "" {
 		config.Log.Level = envLevel
 	}
@@ -295,7 +292,6 @@ var configValidator = newConfigValidator()
 func newConfigValidator() *validator.Validate {
 	v := validator.New(validator.WithRequiredStructEnabled())
 
-	// Register custom field validators
 	_ = v.RegisterValidation("identifier", func(fl validator.FieldLevel) bool {
 		return types.IsValidIdentifier(fl.Field().String())
 	})
@@ -308,7 +304,6 @@ func newConfigValidator() *validator.Validate {
 		return err == nil
 	})
 
-	// Register struct-level validators
 	v.RegisterStructValidation(validateS3Config, S3Config{})
 
 	return v

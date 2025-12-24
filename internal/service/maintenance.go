@@ -93,8 +93,8 @@ type TableHealth struct {
 
 // VacuumOptions configures vacuum operation parameters.
 type VacuumOptions struct {
-	Tables  []string // Specific tables to vacuum (empty = auto-select based on need)
-	Analyze bool     // Run ANALYZE after VACUUM
+	Tables  []string // Tables lists the tables to vacuum; auto-selects when empty
+	Analyze bool     // Analyze runs ANALYZE after VACUUM completes
 }
 
 // MaintenanceResult represents the result of a maintenance operation (vacuum or analyze) on a single table.
@@ -176,7 +176,6 @@ func (s *MaintenanceService) GetHealth(ctx context.Context) (*DatabaseHealth, er
 
 	health.Recommendations = s.generateRecommendations(tables)
 
-	// Determine if any maintenance is needed
 	for i := range tables {
 		if tables[i].NeedsVacuum || tables[i].NeedsAnalyze {
 			health.NeedsMaintenance = true
@@ -255,11 +254,9 @@ func (s *MaintenanceService) getTableHealth(ctx context.Context) ([]TableHealth,
 			table.DeadTupleRatio = float64(row.DeadTuples) / float64(row.LiveTuples+row.DeadTuples) * 100
 		}
 
-		// Calculate NeedsVacuum
 		table.NeedsVacuum = table.DeadTupleRatio > cfg.GetBloatThreshold() ||
 			table.DeadTuples > cfg.GetDeadTupleThreshold()
 
-		// Calculate NeedsAnalyze
 		neverAnalyzed := table.LastAnalyze == nil && table.LastAutoanalyze == nil && table.RowCount > 0
 		staleStats := table.RowCount > 0 && table.ModSinceAnalyze > (table.RowCount*int64(cfg.GetStaleStatsThreshold())/100)
 		table.NeedsAnalyze = neverAnalyzed || staleStats
@@ -309,7 +306,6 @@ func (s *MaintenanceService) checkTableHealth(t *TableHealth, recs []string) []s
 		recs = append(recs, fmt.Sprintf("Table '%s' has never been analyzed - ANALYZE recommended", t.Name))
 	}
 
-	// Check for stale statistics based on modifications since last analyze
 	if t.RowCount > 0 && t.ModSinceAnalyze > 0 {
 		threshold := t.RowCount * int64(cfg.GetStaleStatsThreshold()) / 100
 		if t.ModSinceAnalyze > threshold {
@@ -548,7 +544,7 @@ func (s *MaintenanceService) runMaintenance(ctx context.Context, task maintenanc
 	s.statusMu.Unlock()
 
 	for i := range tables {
-		// Check for shutdown/timeout before processing each table
+		// Abort early if operation was cancelled
 		if ctx.Err() != nil {
 			s.completeWithError("operation cancelled")
 			return
