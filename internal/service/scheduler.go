@@ -22,17 +22,14 @@ type Scheduler struct {
 }
 
 // NewScheduler creates a scheduler and registers all enabled scheduled jobs.
+// The scheduler uses the system's local timezone (set via TZ environment variable).
 func NewScheduler(svc *AeronService) (*Scheduler, error) {
 	cfg := svc.Config()
 
-	// Default to Europe/Amsterdam timezone for scheduled jobs
-	loc, err := time.LoadLocation("Europe/Amsterdam")
-	if err != nil {
-		loc = time.Local
-	}
+	slog.Info("Scheduler using system timezone", "timezone", time.Local.String())
 
 	c := cron.New(
-		cron.WithLocation(loc),
+		cron.WithLocation(time.Local),
 		cron.WithChain(cron.SkipIfStillRunning(cron.DefaultLogger)),
 	)
 

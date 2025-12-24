@@ -29,12 +29,16 @@ Of direct met `docker run`:
 
 ```bash
 docker run -d -p 8080:8080 \
+  -e TZ=Europe/Amsterdam \
   -v $(pwd)/config.json:/app/config.json:ro \
   -v $(pwd)/backups:/backups \
   --name zwfm-aerontoolbox \
   --restart unless-stopped \
   ghcr.io/oszuidwest/zwfm-aerontoolbox:latest
 ```
+
+> [!NOTE]
+> De `TZ` environment variable bepaalt de tijdzone voor geplande taken (backups en onderhoud).
 
 ### Binary
 

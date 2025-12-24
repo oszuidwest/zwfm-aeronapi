@@ -58,11 +58,10 @@ type MaintenanceConfig struct {
 	Scheduler                SchedulerConfig `json:"scheduler"`
 }
 
-// SchedulerConfig contains settings for scheduled operations.
+// SchedulerConfig contains settings for individual scheduled operations.
 type SchedulerConfig struct {
 	Enabled  bool   `json:"enabled"`
 	Schedule string `json:"schedule" validate:"required_if=Enabled true"`
-	Timezone string `json:"timezone" validate:"omitempty,timezone"`
 }
 
 // S3Config contains settings for S3-compatible storage synchronization.
@@ -295,14 +294,6 @@ func newConfigValidator() *validator.Validate {
 	_ = v.RegisterValidation("identifier", func(fl validator.FieldLevel) bool {
 		return types.IsValidIdentifier(fl.Field().String())
 	})
-	_ = v.RegisterValidation("timezone", func(fl validator.FieldLevel) bool {
-		tz := fl.Field().String()
-		if tz == "" {
-			return true
-		}
-		_, err := time.LoadLocation(tz)
-		return err == nil
-	})
 
 	v.RegisterStructValidation(validateS3Config, S3Config{})
 
@@ -365,8 +356,6 @@ func tagMessage(tag, param string) string {
 		return fmt.Sprintf("must be one of [%s]", param)
 	case "identifier":
 		return "contains invalid characters (only letters, numbers and underscores allowed)"
-	case "timezone":
-		return "is not a valid timezone"
 	default:
 		return fmt.Sprintf("is invalid (%s)", tag)
 	}
