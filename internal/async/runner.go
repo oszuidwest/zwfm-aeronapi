@@ -53,10 +53,15 @@ func (r *Runner) Done() {
 // - Close() is called (shutdown requested)
 //
 // The caller must call the returned cancel function when done.
+// The internal goroutine is tracked by the Runner's WaitGroup to ensure
+// graceful shutdown waits for all context watchers to complete.
 func (r *Runner) Context(timeout time.Duration) (context.Context, context.CancelFunc) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 
+	// Track this goroutine to prevent leaks during shutdown
+	r.wg.Add(1)
 	go func() {
+		defer r.wg.Done()
 		select {
 		case <-r.done:
 			cancel()

@@ -337,6 +337,13 @@ func (s *BackupService) execute(ctx context.Context, req BackupRequest) error {
 
 	slog.Info("Backup validated", "filename", filename)
 
+	// Mark S3 sync as pending BEFORE marking backup done to prevent race condition.
+	// This ensures clients always see consistent status (no window where backup is done
+	// but S3 sync status is missing).
+	if s.s3 != nil {
+		s.setS3SyncStatus(false, "")
+	}
+
 	s.setStatusDone(true, filename, "")
 	slog.Info("Backup completed",
 		"filename", filename,
@@ -345,9 +352,6 @@ func (s *BackupService) execute(ctx context.Context, req BackupRequest) error {
 
 	// Sync to S3 in background (non-blocking)
 	if s.s3 != nil {
-		// Mark S3 sync as pending before starting background upload
-		s.setS3SyncStatus(false, "")
-
 		s.runner.GoBackground(func() {
 			uploadCtx, cancel := context.WithTimeout(context.Background(), s.config.Backup.GetTimeout())
 			defer cancel()

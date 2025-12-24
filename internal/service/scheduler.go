@@ -3,12 +3,14 @@ package service
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"time"
 
 	cron "github.com/netresearch/go-cron"
 
 	"github.com/oszuidwest/zwfm-aerontoolbox/internal/config"
+	"github.com/oszuidwest/zwfm-aerontoolbox/internal/types"
 )
 
 // Scheduler manages cron-based scheduled jobs for the application.
@@ -53,26 +55,15 @@ func NewScheduler(svc *AeronService) (*Scheduler, error) {
 	return s, nil
 }
 
-// addJob registers a scheduled job with optional timezone override.
+// addJob registers a scheduled job.
+// Note: All jobs use the scheduler's global timezone (Europe/Amsterdam by default).
 func (s *Scheduler) addJob(cfg config.SchedulerConfig, name string, job func()) error {
-	schedule := cfg.Schedule
-
-	// Handle timezone override per job
-	if cfg.Timezone != "" {
-		loc, err := time.LoadLocation(cfg.Timezone)
-		if err != nil {
-			return err
-		}
-		// Wrap job to use specific timezone for logging
-		_ = loc // timezone is already handled by cron location
-	}
-
-	if _, err := s.cron.AddFunc(schedule, job); err != nil {
+	if _, err := s.cron.AddFunc(cfg.Schedule, job); err != nil {
 		return err
 	}
 
 	s.jobs = append(s.jobs, name)
-	slog.Info("Scheduled job registered", "job", name, "schedule", schedule)
+	slog.Info("Scheduled job registered", "job", name, "schedule", cfg.Schedule)
 	return nil
 }
 
@@ -119,8 +110,13 @@ func (s *Scheduler) runMaintenance() {
 
 	// StartVacuum uses TryStart() internally which is atomic - no pre-check needed
 	if err := s.service.Maintenance.StartVacuum(VacuumOptions{Analyze: true}); err != nil {
-		// This includes "already running" errors - just log and continue
-		slog.Warn("Scheduled maintenance not started", "reason", err)
+		// Differentiate between "already running" (expected) and real failures
+		var conflictErr *types.ConflictError
+		if errors.As(err, &conflictErr) {
+			slog.Info("Scheduled maintenance skipped (already running)")
+		} else {
+			slog.Error("Scheduled maintenance failed to start", "error", err)
+		}
 		return
 	}
 
