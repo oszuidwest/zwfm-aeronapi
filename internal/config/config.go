@@ -46,14 +46,15 @@ type APIConfig struct {
 
 // MaintenanceConfig contains thresholds and settings for database maintenance operations.
 type MaintenanceConfig struct {
-	BloatThreshold           float64 `json:"bloat_threshold"`
-	DeadTupleThreshold       int64   `json:"dead_tuple_threshold"`
-	VacuumStalenessDays      int     `json:"vacuum_staleness_days"`
-	MinRowsForRecommendation int64   `json:"min_rows_for_recommendation"`
-	ToastSizeWarningBytes    int64   `json:"toast_size_warning_bytes"`
-	StaleStatsThresholdPct   int     `json:"stale_stats_threshold_pct"`
-	SeqScanRatioThreshold    float64 `json:"seq_scan_ratio_threshold"`
-	TimeoutMinutes           int     `json:"timeout_minutes"`
+	BloatThreshold           float64         `json:"bloat_threshold"`
+	DeadTupleThreshold       int64           `json:"dead_tuple_threshold"`
+	VacuumStalenessDays      int             `json:"vacuum_staleness_days"`
+	MinRowsForRecommendation int64           `json:"min_rows_for_recommendation"`
+	ToastSizeWarningBytes    int64           `json:"toast_size_warning_bytes"`
+	StaleStatsThresholdPct   int             `json:"stale_stats_threshold_pct"`
+	SeqScanRatioThreshold    float64         `json:"seq_scan_ratio_threshold"`
+	TimeoutMinutes           int             `json:"timeout_minutes"`
+	Scheduler                SchedulerConfig `json:"scheduler"`
 }
 
 // SchedulerConfig contains settings for automatic scheduled backups.
@@ -285,76 +286,115 @@ func Load(configPath string) (*Config, error) {
 	return config, nil
 }
 
+// validator accumulates validation errors with a field prefix for clear error messages.
+type validator struct {
+	prefix string
+	errs   []error
+}
+
+func newValidator(prefix string) *validator {
+	return &validator{prefix: prefix}
+}
+
+func (v *validator) required(value, field string) {
+	if value == "" {
+		v.errs = append(v.errs, fmt.Errorf("%s.%s is verplicht", v.prefix, field))
+	}
+}
+
+func (v *validator) positive(value int, field string) {
+	if value <= 0 {
+		v.errs = append(v.errs, fmt.Errorf("%s.%s moet groter dan 0 zijn", v.prefix, field))
+	}
+}
+
+func (v *validator) inRange(value, minVal, maxVal int, field string) {
+	if value < minVal || value > maxVal {
+		v.errs = append(v.errs, fmt.Errorf("%s.%s moet tussen %d en %d zijn", v.prefix, field, minVal, maxVal))
+	}
+}
+
+func (v *validator) timezone(tz, field string) {
+	if tz == "" {
+		return
+	}
+	if _, err := time.LoadLocation(tz); err != nil {
+		v.errs = append(v.errs, fmt.Errorf("%s.%s is ongeldig: %s", v.prefix, field, tz))
+	}
+}
+
+func (v *validator) identifier(value, field string) {
+	if value != "" && !types.IsValidIdentifier(value) {
+		v.errs = append(v.errs, fmt.Errorf("%s.%s bevat ongeldige tekens", v.prefix, field))
+	}
+}
+
+func (v *validator) errors() []error {
+	return v.errs
+}
+
 // validate checks the configuration for required fields and valid values.
 func validate(config *Config) error {
 	var errs []error
-
-	requiredStrings := []struct {
-		value string
-		field string
-	}{
-		{config.Database.Host, "database.host"},
-		{config.Database.Port, "database.port"},
-		{config.Database.Name, "database.name"},
-		{config.Database.User, "database.user"},
-		{config.Database.Password, "database.password"},
-		{config.Database.Schema, "database.schema"},
-		{config.Database.SSLMode, "database.sslmode"},
-	}
-
-	for _, req := range requiredStrings {
-		if req.value == "" {
-			errs = append(errs, fmt.Errorf("%s is verplicht", req.field))
-		}
-	}
-
-	if config.Database.Schema != "" && !types.IsValidIdentifier(config.Database.Schema) {
-		errs = append(errs, fmt.Errorf("database.schema bevat ongeldige tekens"))
-	}
-
-	if config.Image.TargetWidth <= 0 {
-		errs = append(errs, fmt.Errorf("image.target_width is verplicht"))
-	}
-	if config.Image.TargetHeight <= 0 {
-		errs = append(errs, fmt.Errorf("image.target_height is verplicht"))
-	}
-	if config.Image.Quality <= 0 || config.Image.Quality > 100 {
-		errs = append(errs, fmt.Errorf("image.quality moet tussen 1-100 zijn"))
-	}
-
-	// Validate backup config
-	if config.Backup.TimeoutMinutes < 0 {
-		errs = append(errs, fmt.Errorf("backup.timeout_minutes moet positief zijn"))
-	}
-	if config.Backup.Scheduler.Enabled {
-		if config.Backup.Scheduler.Schedule == "" {
-			errs = append(errs, fmt.Errorf("backup.scheduler.schedule is verplicht wanneer scheduler is ingeschakeld"))
-		}
-	}
-	if config.Backup.Scheduler.Timezone != "" {
-		if _, err := time.LoadLocation(config.Backup.Scheduler.Timezone); err != nil {
-			errs = append(errs, fmt.Errorf("backup.scheduler.timezone is ongeldig: %s", config.Backup.Scheduler.Timezone))
-		}
-	}
-
-	// Validate S3 config
-	if config.Backup.S3.Enabled {
-		if config.Backup.S3.Bucket == "" {
-			errs = append(errs, fmt.Errorf("backup.s3.bucket is verplicht wanneer S3 is ingeschakeld"))
-		}
-		if config.Backup.S3.AccessKeyID == "" {
-			errs = append(errs, fmt.Errorf("backup.s3.access_key_id is verplicht wanneer S3 is ingeschakeld"))
-		}
-		if config.Backup.S3.SecretAccessKey == "" {
-			errs = append(errs, fmt.Errorf("backup.s3.secret_access_key is verplicht wanneer S3 is ingeschakeld"))
-		}
-		// Region is required unless a custom endpoint is provided
-		if config.Backup.S3.Region == "" && config.Backup.S3.Endpoint == "" {
-			errs = append(errs, fmt.Errorf("backup.s3.region is verplicht wanneer geen custom endpoint is opgegeven"))
-		}
-	}
-
+	errs = append(errs, validateDatabase(&config.Database)...)
+	errs = append(errs, validateImage(&config.Image)...)
+	errs = append(errs, validateScheduler(&config.Maintenance.Scheduler, "maintenance.scheduler")...)
+	errs = append(errs, validateBackup(&config.Backup)...)
 	return errors.Join(errs...)
+}
+
+func validateDatabase(cfg *DatabaseConfig) []error {
+	v := newValidator("database")
+	v.required(cfg.Host, "host")
+	v.required(cfg.Port, "port")
+	v.required(cfg.Name, "name")
+	v.required(cfg.User, "user")
+	v.required(cfg.Password, "password")
+	v.required(cfg.Schema, "schema")
+	v.required(cfg.SSLMode, "sslmode")
+	v.identifier(cfg.Schema, "schema")
+	return v.errors()
+}
+
+func validateImage(cfg *ImageConfig) []error {
+	v := newValidator("image")
+	v.positive(cfg.TargetWidth, "target_width")
+	v.positive(cfg.TargetHeight, "target_height")
+	v.inRange(cfg.Quality, 1, 100, "quality")
+	return v.errors()
+}
+
+func validateScheduler(cfg *SchedulerConfig, prefix string) []error {
+	v := newValidator(prefix)
+	if cfg.Enabled && cfg.Schedule == "" {
+		v.required("", "schedule") // triggers error
+	}
+	v.timezone(cfg.Timezone, "timezone")
+	return v.errors()
+}
+
+func validateBackup(cfg *BackupConfig) []error {
+	v := newValidator("backup")
+	if cfg.TimeoutMinutes < 0 {
+		v.errs = append(v.errs, fmt.Errorf("backup.timeout_minutes mag niet negatief zijn"))
+	}
+	v.errs = append(v.errs, validateScheduler(&cfg.Scheduler, "backup.scheduler")...)
+	v.errs = append(v.errs, validateS3(&cfg.S3)...)
+	return v.errors()
+}
+
+func validateS3(cfg *S3Config) []error {
+	if !cfg.Enabled {
+		return nil
+	}
+	v := newValidator("backup.s3")
+	v.required(cfg.Bucket, "bucket")
+	v.required(cfg.AccessKeyID, "access_key_id")
+	v.required(cfg.SecretAccessKey, "secret_access_key")
+	if cfg.Region == "" && cfg.Endpoint == "" {
+		v.errs = append(v.errs, fmt.Errorf("backup.s3.region is verplicht wanneer geen endpoint is opgegeven"))
+	}
+	return v.errors()
 }
 
 // ConnectionString returns a PostgreSQL connection string.

@@ -66,7 +66,12 @@ func run() error {
 	}
 	defer svc.Close()
 
-	scheduler := startSchedulerIfEnabled(cfg, svc)
+	scheduler, err := service.NewScheduler(svc)
+	if err != nil {
+		slog.Error("Scheduler initialisatie mislukt", "error", err)
+		return err
+	}
+	scheduler.Start()
 
 	server := api.New(svc, Version)
 
@@ -129,24 +134,8 @@ func setupDatabase(cfg *config.Config) (*sqlx.DB, func(), error) {
 	return db, cleanup, nil
 }
 
-// startSchedulerIfEnabled creates and starts a backup scheduler if enabled in config.
-func startSchedulerIfEnabled(cfg *config.Config, svc *service.AeronService) *service.BackupScheduler {
-	if !cfg.Backup.Enabled || !cfg.Backup.Scheduler.Enabled {
-		return nil
-	}
-
-	scheduler, err := service.NewBackupScheduler(svc)
-	if err != nil {
-		slog.Error("Backup scheduler initialisatie mislukt", "error", err)
-		return nil
-	}
-
-	scheduler.Start()
-	return scheduler
-}
-
 // serveUntilShutdown starts the API server and blocks until shutdown signal is received.
-func serveUntilShutdown(server *api.Server, port string, scheduler *service.BackupScheduler) error {
+func serveUntilShutdown(server *api.Server, port string, scheduler *service.Scheduler) error {
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 
@@ -170,15 +159,16 @@ func serveUntilShutdown(server *api.Server, port string, scheduler *service.Back
 }
 
 // gracefulShutdown stops the scheduler and server with timeout protection.
-func gracefulShutdown(server *api.Server, scheduler *service.BackupScheduler) error {
-	if scheduler != nil {
-		ctx := scheduler.Stop()
-		select {
-		case <-ctx.Done():
-			slog.Info("Backup scheduler succesvol gestopt")
-		case <-time.After(35 * time.Second):
-			slog.Warn("Backup scheduler stop timeout, forceer afsluiten")
+func gracefulShutdown(server *api.Server, scheduler *service.Scheduler) error {
+	// Stop scheduler (handles both backup and maintenance jobs)
+	ctx := scheduler.Stop()
+	select {
+	case <-ctx.Done():
+		if scheduler.HasJobs() {
+			slog.Info("Scheduler succesvol gestopt")
 		}
+	case <-time.After(35 * time.Second):
+		slog.Warn("Scheduler stop timeout, forceer afsluiten")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

@@ -854,6 +854,55 @@ jobs:
             sleep 1
           done
 
+      - name: "Maintenance: Scheduler starts correctly"
+        if: matrix.suite == 'maintenance'
+        run: |
+          echo "Testing maintenance scheduler startup..."
+          # Stop current API server
+          kill $(cat api.pid) 2>/dev/null || true
+          sleep 1
+
+          # Create config with maintenance scheduler enabled
+          cat > test_scheduler.json << 'EOF'
+          {
+            "database": { "host": "localhost", "port": "5433", "name": "aeron_db", "user": "aeron", "password": "aeron123", "schema": "aeron", "sslmode": "disable" },
+            "image": { "target_width": 1280, "target_height": 1280, "quality": 90, "reject_smaller": true },
+            "api": { "enabled": true, "keys": ["test-api-key-12345"] },
+            "maintenance": {
+              "scheduler": { "enabled": true, "schedule": "0 4 * * 0", "timezone": "Europe/Amsterdam" }
+            }
+          }
+          EOF
+
+          # Start with scheduler enabled
+          ./zwfm-aerontoolbox -config=test_scheduler.json -port=${{ env.API_PORT }} > /tmp/scheduler_output.log 2>&1 &
+          echo $! > api.pid
+
+          # Wait for startup
+          for i in {1..30}; do
+            curl -sf http://localhost:${{ env.API_PORT }}/api/health > /dev/null 2>&1 && break
+            sleep 1
+          done
+
+          # Verify health endpoint works
+          RESPONSE=$(curl -s http://localhost:${{ env.API_PORT }}/api/health)
+          SUCCESS=$(echo "$RESPONSE" | jq -r '.success')
+
+          # Check logs for scheduler started message
+          if grep -q "Scheduler gestart" /tmp/scheduler_output.log && grep -q "maintenance" /tmp/scheduler_output.log; then
+            echo "Correct: scheduler gestart met maintenance job"
+          else
+            echo "::warning::Scheduler log bericht niet gevonden"
+            cat /tmp/scheduler_output.log
+          fi
+
+          if [ "$SUCCESS" = "true" ]; then
+            echo "Correct: applicatie draait met maintenance scheduler"
+          else
+            echo "::error::Applicatie start niet correct met scheduler"
+            exit 1
+          fi
+
       # ==================== BACKUP TESTS ====================
       - name: "Backup: List backups (empty)"
         if: matrix.suite == 'backup'
