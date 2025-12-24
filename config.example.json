@@ -34,8 +34,7 @@
     "timeout_minutes": 30,
     "scheduler": {
       "enabled": false,
-      "schedule": "0 4 * * 0",
-      "timezone": ""
+      "schedule": "0 4 * * 0"
     }
   },
   "backup": {
@@ -49,8 +48,7 @@
     "pg_restore_path": "",
     "scheduler": {
       "enabled": false,
-      "schedule": "0 3 * * *",
-      "timezone": ""
+      "schedule": "0 3 * * *"
     },
     "s3": {
       "enabled": false,

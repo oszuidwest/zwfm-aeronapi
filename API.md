@@ -750,7 +750,7 @@ Database-onderhoud kan automatisch worden uitgevoerd via de ingebouwde scheduler
 - `scheduler.enabled`: Schakel automatisch onderhoud in/uit
 - `scheduler.schedule`: Cron-expressie (zie backup-sectie voor voorbeelden)
 
-De scheduler draait VACUUM ANALYZE op tabellen die aan de threshold-criteria voldoen. Alle jobs gebruiken de Europe/Amsterdam-tijdzone.
+De scheduler draait VACUUM ANALYZE op tabellen die aan de threshold-criteria voldoen. De tijdzone wordt bepaald door de systeemtijdzone (instelbaar via `TZ` environment variable).
 
 ---
 
@@ -801,8 +801,7 @@ Backups kunnen automatisch worden uitgevoerd via de ingebouwde scheduler. Config
 - `enabled`: Schakel automatische backups in/uit
 - `schedule`: Cron-expressie voor het backup-schema
 
-> [!IMPORTANT]
-> Alle geplande taken (backup én onderhoud) gebruiken de Europe/Amsterdam-tijdzone (hardcoded, niet configureerbaar).
+De tijdzone voor alle geplande taken (backup én onderhoud) wordt bepaald door de systeemtijdzone. In Docker: stel `TZ=Europe/Amsterdam` in als environment variable.
 
 **Cron-expressieformaat:** `minuut uur dag maand weekdag`
 
