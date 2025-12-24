@@ -345,6 +345,9 @@ func (s *BackupService) execute(ctx context.Context, req BackupRequest) error {
 
 	// Sync to S3 in background (non-blocking)
 	if s.s3 != nil {
+		// Mark S3 sync as pending before starting background upload
+		s.setS3SyncStatus(false, "")
+
 		s.runner.GoBackground(func() {
 			uploadCtx, cancel := context.WithTimeout(context.Background(), s.config.Backup.GetTimeout())
 			defer cancel()

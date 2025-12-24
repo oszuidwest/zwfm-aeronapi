@@ -399,6 +399,7 @@ jobs:
         run: |
           echo "API server herstarten zonder authenticatie..."
           kill $(cat api.pid) 2>/dev/null || true
+          sleep 2  # Wait for process to fully terminate
           cat > test_no_auth.json << 'EOF'
           {
             "database": { "host": "localhost", "port": "5433", "name": "aeron_db", "user": "aeron", "password": "aeron123", "schema": "aeron", "sslmode": "disable" },
@@ -1446,30 +1447,43 @@ jobs:
           for i in {1..90}; do
             RESPONSE=$(curl -s -H "X-API-Key: ${{ env.API_KEY }}" http://localhost:${{ env.API_PORT }}/api/db/backup/status)
             RUNNING=$(echo "$RESPONSE" | jq -r '.data.running')
+            SUCCESS=$(echo "$RESPONSE" | jq -r '.data.success')
+            FILENAME=$(echo "$RESPONSE" | jq -r '.data.filename')
+            S3_SYNCED=$(echo "$RESPONSE" | jq -r '.data.s3_sync.synced // empty')
+            S3_ERROR=$(echo "$RESPONSE" | jq -r '.data.s3_sync.error // empty')
 
-            if [ "$RUNNING" = "false" ]; then
-              echo "Status response: $RESPONSE"
-              SUCCESS=$(echo "$RESPONSE" | jq -r '.data.success')
-              FILENAME=$(echo "$RESPONSE" | jq -r '.data.filename')
-              S3_SYNCED=$(echo "$RESPONSE" | jq -r '.data.s3_sync.synced')
-              S3_ERROR=$(echo "$RESPONSE" | jq -r '.data.s3_sync.error')
-
-              if [ "$SUCCESS" != "true" ]; then
-                echo "::error::Backup gefaald"
-                exit 1
-              fi
-
-              if [ "$S3_SYNCED" = "true" ]; then
-                echo "Backup voltooid: $FILENAME"
-                echo "S3 sync succesvol!"
-                echo "S3_BACKUP_FILENAME=$FILENAME" >> $GITHUB_ENV
-                exit 0
-              else
-                echo "::error::S3 sync gefaald: $S3_ERROR"
-                exit 1
-              fi
+            # Still running - wait
+            if [ "$RUNNING" = "true" ]; then
+              echo "Backup nog bezig... ($i/90)"
+              sleep 1
+              continue
             fi
-            echo "Backup/sync nog bezig... ($i/90)"
+
+            # Backup failed
+            if [ "$SUCCESS" != "true" ]; then
+              echo "Status response: $RESPONSE"
+              echo "::error::Backup gefaald"
+              exit 1
+            fi
+
+            # S3 sync completed successfully
+            if [ "$S3_SYNCED" = "true" ]; then
+              echo "Status response: $RESPONSE"
+              echo "Backup voltooid: $FILENAME"
+              echo "S3 sync succesvol!"
+              echo "S3_BACKUP_FILENAME=$FILENAME" >> $GITHUB_ENV
+              exit 0
+            fi
+
+            # S3 sync failed with error
+            if [ -n "$S3_ERROR" ] && [ "$S3_ERROR" != "null" ]; then
+              echo "Status response: $RESPONSE"
+              echo "::error::S3 sync gefaald: $S3_ERROR"
+              exit 1
+            fi
+
+            # S3 sync still pending (synced=false, no error) - continue polling
+            echo "Backup klaar, S3 sync bezig... ($i/90)"
             sleep 1
           done
           echo "::error::Backup/S3 sync timeout na 90 seconden"
