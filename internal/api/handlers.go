@@ -64,7 +64,7 @@ type ImageDeleteResponse struct {
 // Returns the ID or writes an error response and returns empty string.
 func (s *Server) validateAndGetEntityID(w http.ResponseWriter, r *http.Request, entityType types.EntityType) string {
 	entityID := chi.URLParam(r, "id")
-	if err := util.ValidateEntityID(entityID, types.LabelForEntityType(entityType)); err != nil {
+	if err := util.ValidateEntityID(entityID, string(entityType)); err != nil {
 		respondError(w, http.StatusBadRequest, err.Error())
 		return ""
 	}
@@ -163,7 +163,7 @@ func (s *Server) handleBulkDelete(entityType types.EntityType) http.HandlerFunc 
 			return
 		}
 
-		label := types.LabelForEntityType(entityType)
+		label := string(entityType)
 
 		message := strconv.FormatInt(result.DeletedCount, 10) + " " + label + " images deleted"
 		respondJSON(w, http.StatusOK, BulkDeleteResponse{
@@ -253,7 +253,7 @@ func (s *Server) handleDeleteImage(entityType types.EntityType) http.HandlerFunc
 		}
 
 		response := ImageDeleteResponse{
-			Message: types.LabelForEntityType(entityType) + " image deleted successfully",
+			Message: string(entityType) + " image deleted successfully",
 		}
 		if entityType == types.EntityTypeArtist {
 			response.ArtistID = entityID

@@ -64,7 +64,7 @@ func (r *Repository) GetImage(ctx context.Context, table types.Table, id string)
 	if err != nil {
 		return nil, types.NewValidationError("table", fmt.Sprintf("invalid table configuration: %v", err))
 	}
-	label := types.LabelForTable(table)
+	label := string(table)
 	idCol := types.IDColumnForTable(table)
 
 	query := fmt.Sprintf("SELECT picture FROM %s WHERE %s = $1", qualifiedTableName, idCol)
@@ -91,7 +91,7 @@ func (r *Repository) UpdateImage(ctx context.Context, table types.Table, id stri
 	if err != nil {
 		return types.NewValidationError("table", fmt.Sprintf("invalid table configuration: %v", err))
 	}
-	label := types.LabelForTable(table)
+	label := string(table)
 	idCol := types.IDColumnForTable(table)
 
 	query := fmt.Sprintf("UPDATE %s SET picture = $1 WHERE %s = $2", qualifiedTableName, idCol)
@@ -109,7 +109,7 @@ func (r *Repository) DeleteImage(ctx context.Context, table types.Table, id stri
 	if err != nil {
 		return types.NewValidationError("table", fmt.Sprintf("invalid table configuration: %v", err))
 	}
-	label := types.LabelForTable(table)
+	label := string(table)
 	idCol := types.IDColumnForTable(table)
 
 	query := fmt.Sprintf("UPDATE %s SET picture = NULL WHERE %s = $1", qualifiedTableName, idCol)
@@ -175,7 +175,7 @@ func (r *Repository) DeleteAllImages(ctx context.Context, table types.Table) (in
 
 	result, err := r.db.ExecContext(ctx, query)
 	if err != nil {
-		label := types.LabelForTable(table)
+		label := string(table)
 		return 0, types.NewOperationError(fmt.Sprintf("delete %s images", label), err)
 	}
 

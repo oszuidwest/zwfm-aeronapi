@@ -22,13 +22,6 @@ const (
 	TableTrack Table = "track"
 )
 
-const (
-	// LabelArtist is the display label for artist entities.
-	LabelArtist = "artist"
-	// LabelTrack is the display label for track entities.
-	LabelTrack = "track"
-)
-
 // VoicetrackUserID is the UUID used in Aeron to identify voice tracks.
 const VoicetrackUserID = "021F097E-B504-49BB-9B89-16B64D2E8422"
 
@@ -41,22 +34,6 @@ func TableForEntityType(entityType EntityType) Table {
 		return TableTrack
 	}
 	return TableArtist
-}
-
-// LabelForEntityType returns the display label for the given entity type.
-func LabelForEntityType(entityType EntityType) string {
-	if entityType == EntityTypeTrack {
-		return "track"
-	}
-	return "artist"
-}
-
-// LabelForTable returns the display label for the given table.
-func LabelForTable(table Table) string {
-	if table == TableTrack {
-		return "track"
-	}
-	return "artist"
 }
 
 // IDColumnForTable returns the primary key column name for the given table.

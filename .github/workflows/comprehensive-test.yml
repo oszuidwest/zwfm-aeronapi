@@ -829,10 +829,10 @@ jobs:
             else
               ERROR=$(jq -r '.error' /tmp/vacuum2.json)
             fi
-            if echo "$ERROR" | grep -q "al een maintenance"; then
-              echo "Correct: foutmelding bevat 'al een maintenance'"
+            if echo "$ERROR" | grep -q "maintenance operation already in progress"; then
+              echo "Correct: foutmelding bevat 'maintenance operation already in progress'"
             else
-              echo "::warning::Verwachtte 'al een maintenance' in foutmelding, kreeg: $ERROR"
+              echo "::warning::Verwachtte 'maintenance operation already in progress' in foutmelding, kreeg: $ERROR"
             fi
           elif [ "$GOT_202" -eq 2 ]; then
             # Both succeeded - first completed before second started (race condition timing)
@@ -889,7 +889,7 @@ jobs:
           SUCCESS=$(echo "$RESPONSE" | jq -r '.success')
 
           # Check logs for scheduler started message
-          if grep -q "Scheduler gestart" /tmp/scheduler_output.log && grep -q "maintenance" /tmp/scheduler_output.log; then
+          if grep -q "Scheduler started" /tmp/scheduler_output.log && grep -q "maintenance" /tmp/scheduler_output.log; then
             echo "Correct: scheduler gestart met maintenance job"
           else
             echo "::warning::Scheduler log bericht niet gevonden"
@@ -1038,7 +1038,7 @@ jobs:
               SUCCESS=$(echo "$RESPONSE" | jq -r '.success')
               ERROR=$(echo "$RESPONSE" | jq -r '.error')
 
-              if [ "$HTTP_CODE" = "409" ] && [ "$SUCCESS" = "false" ] && echo "$ERROR" | grep -q "al bezig"; then
+              if [ "$HTTP_CODE" = "409" ] && [ "$SUCCESS" = "false" ] && echo "$ERROR" | grep -q "backup already in progress"; then
                 echo "Correct: concurrent backup afgewezen (HTTP 409, error: $ERROR)"
                 TESTED=true
                 break
@@ -1200,10 +1200,10 @@ jobs:
           # Herstel pg_dump
           sudo mv "${PG_DUMP_PATH}.bak" "$PG_DUMP_PATH"
 
-          if echo "$OUTPUT" | grep -q "pg_dump niet gevonden"; then
+          if echo "$OUTPUT" | grep -q "pg_dump not found"; then
             echo "Correct: applicatie weigert te starten zonder pg_dump"
           else
-            echo "::error::Applicatie zou moeten falen met 'pg_dump niet gevonden' error"
+            echo "::error::Applicatie zou moeten falen met 'pg_dump not found' error"
             exit 1
           fi
 
@@ -1256,7 +1256,7 @@ jobs:
           OUTPUT=$(./zwfm-aerontoolbox -config=test_custom_path.json -port=8893 2>&1 || true)
           echo "Output: $OUTPUT"
 
-          if echo "$OUTPUT" | grep -q "pg_dump niet gevonden op pad"; then
+          if echo "$OUTPUT" | grep -q "pg_dump not found at path"; then
             echo "Correct: custom pad wordt gevalideerd"
           else
             echo "::error::Custom pad zou gevalideerd moeten worden"
@@ -1279,7 +1279,7 @@ jobs:
           OUTPUT=$(./zwfm-aerontoolbox -config=test_custom_restore.json -port=8894 2>&1 || true)
           echo "Output: $OUTPUT"
 
-          if echo "$OUTPUT" | grep -q "pg_restore niet gevonden op pad"; then
+          if echo "$OUTPUT" | grep -q "pg_restore not found at path"; then
             echo "Correct: custom pg_restore pad wordt gevalideerd"
           else
             echo "::error::Custom pg_restore pad zou gevalideerd moeten worden"
@@ -1570,7 +1570,7 @@ jobs:
             -d '{}')
           SUCCESS=$(echo "$RESPONSE" | jq -r '.success')
           ERROR=$(echo "$RESPONSE" | jq -r '.error')
-          if [ "$SUCCESS" = "false" ] && echo "$ERROR" | grep -q 'afbeelding is verplicht'; then
+          if [ "$SUCCESS" = "false" ] && echo "$ERROR" | grep -q 'image is required'; then
             echo "Correct: request zonder afbeelding wordt geweigerd"
             echo "Foutmelding: $ERROR"
           else
@@ -1589,7 +1589,7 @@ jobs:
             -d '{"url":"https://example.com/img.jpg","image":"data:image/jpeg;base64,/9j/4AAQ"}')
           SUCCESS=$(echo "$RESPONSE" | jq -r '.success')
           ERROR=$(echo "$RESPONSE" | jq -r '.error')
-          if [ "$SUCCESS" = "false" ] && echo "$ERROR" | grep -q 'gebruik óf URL óf upload, niet beide'; then
+          if [ "$SUCCESS" = "false" ] && echo "$ERROR" | grep -q 'use either URL or upload, not both'; then
             echo "Correct: zowel URL als image wordt geweigerd"
             echo "Foutmelding: $ERROR"
           else
