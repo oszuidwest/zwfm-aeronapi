@@ -233,12 +233,12 @@ func (c *S3Config) GetPathPrefix() string {
 
 // GetLevel returns the configured log level as an slog.Level.
 func (c *LogConfig) GetLevel() slog.Level {
-	switch strings.ToLower(c.Level) {
-	case "debug":
+	switch {
+	case strings.EqualFold(c.Level, "debug"):
 		return slog.LevelDebug
-	case "warn":
+	case strings.EqualFold(c.Level, "warn"):
 		return slog.LevelWarn
-	case "error":
+	case strings.EqualFold(c.Level, "error"):
 		return slog.LevelError
 	default:
 		return slog.LevelInfo

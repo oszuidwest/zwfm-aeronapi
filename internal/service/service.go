@@ -2,10 +2,6 @@
 package service
 
 import (
-	"encoding/base64"
-	"io"
-	"strings"
-
 	"github.com/jmoiron/sqlx"
 	"github.com/oszuidwest/zwfm-aerontoolbox/internal/config"
 	"github.com/oszuidwest/zwfm-aerontoolbox/internal/database"
@@ -53,12 +49,4 @@ func (s *AeronService) Repository() *database.Repository {
 func (s *AeronService) Close() {
 	s.Maintenance.Close()
 	s.Backup.Close()
-}
-
-// DecodeBase64 decodes a base64 string, stripping any data URL prefix if present.
-func DecodeBase64(data string) ([]byte, error) {
-	if _, after, found := strings.Cut(data, ","); found {
-		data = after
-	}
-	return io.ReadAll(base64.NewDecoder(base64.StdEncoding, strings.NewReader(data)))
 }

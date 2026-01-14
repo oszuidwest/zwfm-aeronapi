@@ -49,11 +49,6 @@ func NewOptimizer(config Config) *Optimizer {
 	return &Optimizer{Config: config}
 }
 
-// DownloadImage downloads an image from a URL with SSRF protection.
-func DownloadImage(urlString string, maxSize int64) ([]byte, error) {
-	return util.ValidateAndDownloadImage(urlString, maxSize)
-}
-
 // getImageInfo extracts format, width, and height metadata from image data.
 func getImageInfo(data []byte) (format string, width, height int, err error) {
 	config, format, err := image.DecodeConfig(bytes.NewReader(data))

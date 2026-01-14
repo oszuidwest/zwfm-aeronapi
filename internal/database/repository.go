@@ -184,6 +184,19 @@ func (r *Repository) DeleteAllImages(ctx context.Context, table types.Table) (in
 
 // --- Playlist operations ---
 
+// buildDateFilter returns a date filter clause and parameters for playlist queries.
+// If date is empty, uses CURRENT_DATE. The tableAlias is the table alias (e.g., "pb" or "pi").
+func buildDateFilter(date, tableAlias string, startParamNum int) (filter string, params []any, nextParamNum int) {
+	if date != "" {
+		filter = fmt.Sprintf("%s.startdatetime >= $%d::date AND %s.startdatetime < $%d::date + INTERVAL '1 day'",
+			tableAlias, startParamNum, tableAlias, startParamNum)
+		return filter, []any{date}, startParamNum + 1
+	}
+	filter = fmt.Sprintf("%s.startdatetime >= CURRENT_DATE AND %s.startdatetime < CURRENT_DATE + INTERVAL '1 day'",
+		tableAlias, tableAlias)
+	return filter, nil, startParamNum
+}
+
 // GetPlaylist retrieves playlist items based on options.
 func (r *Repository) GetPlaylist(ctx context.Context, opts *PlaylistOptions) ([]PlaylistItem, error) {
 	query, params, err := BuildPlaylistQuery(r.schema, opts)
@@ -195,15 +208,7 @@ func (r *Repository) GetPlaylist(ctx context.Context, opts *PlaylistOptions) ([]
 
 // GetPlaylistBlocks retrieves all playlist blocks for a specific date.
 func (r *Repository) GetPlaylistBlocks(ctx context.Context, date string) ([]PlaylistBlock, error) {
-	var dateFilter string
-	params := []any{}
-
-	if date != "" {
-		dateFilter = "pb.startdatetime >= $1::date AND pb.startdatetime < $1::date + INTERVAL '1 day'"
-		params = append(params, date)
-	} else {
-		dateFilter = "pb.startdatetime >= CURRENT_DATE AND pb.startdatetime < CURRENT_DATE + INTERVAL '1 day'"
-	}
+	dateFilter, params, _ := buildDateFilter(date, "pb", 1)
 
 	query := fmt.Sprintf(`
 		SELECT
@@ -242,17 +247,7 @@ func (r *Repository) GetPlaylistWithTracks(ctx context.Context, date string) ([]
 		blockIDs[i] = block.BlockID
 	}
 
-	var dateFilter string
-	params := []any{}
-	paramCount := 0
-
-	if date != "" {
-		dateFilter = "pi.startdatetime >= $1::date AND pi.startdatetime < $1::date + INTERVAL '1 day'"
-		params = append(params, date)
-		paramCount = 1
-	} else {
-		dateFilter = "pi.startdatetime >= CURRENT_DATE AND pi.startdatetime < CURRENT_DATE + INTERVAL '1 day'"
-	}
+	dateFilter, params, paramCount := buildDateFilter(date, "pi", 1)
 
 	placeholders := make([]string, len(blockIDs))
 	for i, id := range blockIDs {

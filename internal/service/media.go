@@ -10,6 +10,7 @@ import (
 	"github.com/oszuidwest/zwfm-aerontoolbox/internal/database"
 	"github.com/oszuidwest/zwfm-aerontoolbox/internal/image"
 	"github.com/oszuidwest/zwfm-aerontoolbox/internal/types"
+	"github.com/oszuidwest/zwfm-aerontoolbox/internal/util"
 )
 
 // MediaService handles artist, track, image, and playlist operations.
@@ -99,7 +100,7 @@ func (s *MediaService) UploadImage(ctx context.Context, params *ImageUploadParam
 	var imageData []byte
 	var err error
 	if params.ImageURL != "" {
-		imageData, err = image.DownloadImage(params.ImageURL, s.config.Image.GetMaxDownloadBytes())
+		imageData, err = util.ValidateAndDownloadImage(params.ImageURL, s.config.Image.GetMaxDownloadBytes())
 		if err != nil {
 			slog.Error("Image download failed", "url", params.ImageURL, "error", err)
 			return nil, types.NewValidationError("image", fmt.Sprintf("download failed: %v", err))
@@ -204,18 +205,8 @@ func (s *MediaService) DeleteAllImages(ctx context.Context, entityType types.Ent
 
 // --- Playlist operations ---
 
-// PlaylistOptions configures playlist queries with filtering and pagination.
-type PlaylistOptions struct {
-	BlockID     string
-	Date        string
-	ExportTypes []int
-	Limit       int
-	Offset      int
-	SortBy      string
-	SortDesc    bool
-	TrackImage  *bool
-	ArtistImage *bool
-}
+// PlaylistOptions is an alias for database.PlaylistOptions to avoid import in handlers.
+type PlaylistOptions = database.PlaylistOptions
 
 // DefaultPlaylistOptions returns playlist query options with sensible defaults.
 func DefaultPlaylistOptions() PlaylistOptions {
@@ -227,18 +218,7 @@ func DefaultPlaylistOptions() PlaylistOptions {
 
 // GetPlaylist retrieves played tracks for a date or block with filtering and pagination.
 func (s *MediaService) GetPlaylist(ctx context.Context, opts *PlaylistOptions) ([]database.PlaylistItem, error) {
-	dbOpts := &database.PlaylistOptions{
-		BlockID:     opts.BlockID,
-		Date:        opts.Date,
-		ExportTypes: opts.ExportTypes,
-		Limit:       opts.Limit,
-		Offset:      opts.Offset,
-		SortBy:      opts.SortBy,
-		SortDesc:    opts.SortDesc,
-		TrackImage:  opts.TrackImage,
-		ArtistImage: opts.ArtistImage,
-	}
-	return s.repo.GetPlaylist(ctx, dbOpts)
+	return s.repo.GetPlaylist(ctx, opts)
 }
 
 // PlaylistBlockWithTracks represents a playlist block with its associated tracks.

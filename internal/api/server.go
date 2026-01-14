@@ -157,10 +157,6 @@ func (s *Server) isValidAPIKey(key string) bool {
 	return key != "" && slices.Contains(s.service.Config().API.Keys, key)
 }
 
-func detectImageContentType(data []byte) string {
-	return http.DetectContentType(data)
-}
-
 func parseQueryBoolParam(value string) *bool {
 	switch value {
 	case "yes", "true", "1":

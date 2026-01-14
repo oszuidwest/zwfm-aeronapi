@@ -23,6 +23,14 @@ type AsyncStartResponse struct {
 	Check   string `json:"check"`
 }
 
+// decodeJSONBody decodes a JSON request body, treating empty bodies as valid.
+func decodeJSONBody(r *http.Request, v any) error {
+	if err := json.NewDecoder(r.Body).Decode(v); err != nil && err.Error() != "EOF" {
+		return err
+	}
+	return nil
+}
+
 func respondJSON(w http.ResponseWriter, statusCode int, data any) {
 	w.WriteHeader(statusCode)
 	if err := json.NewEncoder(w).Encode(Response{

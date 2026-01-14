@@ -187,7 +187,7 @@ func (s *Server) handleGetImage(entityType types.EntityType) http.HandlerFunc {
 		}
 
 		w.Header().Del("Content-Type")
-		w.Header().Set("Content-Type", detectImageContentType(imageData))
+		w.Header().Set("Content-Type", http.DetectContentType(imageData))
 		w.Header().Set("Content-Length", strconv.Itoa(len(imageData)))
 
 		w.WriteHeader(http.StatusOK)
@@ -217,7 +217,7 @@ func (s *Server) handleImageUpload(entityType types.EntityType) http.HandlerFunc
 		}
 
 		if req.Image != "" {
-			imageData, err := service.DecodeBase64(req.Image)
+			imageData, err := util.DecodeBase64(req.Image)
 			if err != nil {
 				respondError(w, http.StatusBadRequest, "Invalid base64 image")
 				return

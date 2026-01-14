@@ -2,7 +2,6 @@
 package api
 
 import (
-	"encoding/json"
 	"log/slog"
 	"net/http"
 
@@ -33,7 +32,7 @@ func (s *Server) handleDatabaseHealth(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleVacuum(w http.ResponseWriter, r *http.Request) {
 	var req VacuumRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err.Error() != "EOF" {
+	if err := decodeJSONBody(r, &req); err != nil {
 		respondError(w, http.StatusBadRequest, "Invalid request content")
 		return
 	}
@@ -61,7 +60,7 @@ func (s *Server) handleVacuum(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleAnalyze(w http.ResponseWriter, r *http.Request) {
 	var req AnalyzeRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err.Error() != "EOF" {
+	if err := decodeJSONBody(r, &req); err != nil {
 		respondError(w, http.StatusBadRequest, "Invalid request content")
 		return
 	}

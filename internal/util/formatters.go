@@ -1,6 +1,11 @@
 package util
 
-import "fmt"
+import (
+	"encoding/base64"
+	"fmt"
+	"io"
+	"strings"
+)
 
 // FormatBytes converts bytes to a human-readable string with binary prefixes.
 func FormatBytes(bytes int64) string {
@@ -20,4 +25,12 @@ func FormatBytes(bytes int64) string {
 	default:
 		return fmt.Sprintf("%d bytes", bytes)
 	}
+}
+
+// DecodeBase64 decodes a base64 string, stripping any data URL prefix if present.
+func DecodeBase64(data string) ([]byte, error) {
+	if _, after, found := strings.Cut(data, ","); found {
+		data = after
+	}
+	return io.ReadAll(base64.NewDecoder(base64.StdEncoding, strings.NewReader(data)))
 }

@@ -2,7 +2,6 @@
 package api
 
 import (
-	"encoding/json"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -17,7 +16,7 @@ type BackupDeleteResponse struct {
 
 func (s *Server) handleCreateBackup(w http.ResponseWriter, r *http.Request) {
 	var req service.BackupRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err.Error() != "EOF" {
+	if err := decodeJSONBody(r, &req); err != nil {
 		respondError(w, http.StatusBadRequest, "Invalid request content")
 		return
 	}

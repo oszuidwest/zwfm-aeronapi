@@ -109,9 +109,11 @@ const trackDetailsQuery = `
 
 func getEntityByID[T any](ctx context.Context, db DB, query, id, label, operation string) (*T, error) {
 	var entity T
-	if err := db.GetContext(ctx, &entity, query, id); err == sql.ErrNoRows {
+	err := db.GetContext(ctx, &entity, query, id)
+	if err == sql.ErrNoRows {
 		return nil, types.NewNotFoundError(label, id)
-	} else if err != nil {
+	}
+	if err != nil {
 		return nil, &types.OperationError{Operation: operation, Err: err}
 	}
 	return &entity, nil
